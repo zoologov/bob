@@ -26,13 +26,13 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import SendMessage
 
 from bob.application.runtime.event_bus import AsyncEventBus
-from bob.application.runtime.events import MESSAGE_RECEIVED, MessageReceived
 from bob.infrastructure.telegram.gateway import (
     PLAIN_TEXT_LIMIT,
     BotIdentitySignals,
     TelegramGateway,
     _chat_type_is_group,
 )
+from bob.kernel.events import MESSAGE_RECEIVED, MessageReceived
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence

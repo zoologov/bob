@@ -14,7 +14,8 @@ the confidence accumulator; both are I/O-free and deterministic.
 
 from __future__ import annotations
 
-from bob.social.gender import Gender, GenderRead, detect_self_gender
+from bob.kernel.interlocutor import Gender
+from bob.social.gender import GenderRead, detect_self_gender
 
 
 class TestDetectSelfGender:

@@ -3,6 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=runtime
+# beadloom:layer=runtime
 
 """Composition-root capability wiring — the registry GUPPI advertises + diagram/introspect.
 
@@ -69,7 +71,7 @@ from bob.runtime.wiring.parameters import (
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from bob.memory.ports import MemoryRecall
+    from bob.kernel.ports import MemoryRecall
 
 
 def _build_registry(
@@ -78,7 +80,7 @@ def _build_registry(
     """Build the capability registry GUPPI advertises and dispatches + the diagram sink.
 
     Always registers the two memory capabilities over the injected
-    :class:`~bob.memory.ports.MemoryRecall` — the live hybrid recall, or (BOB-087.C8, when
+    :class:`~bob.kernel.ports.MemoryRecall` — the live hybrid recall, or (BOB-087.C8, when
     ``memory.register_recall`` is on) the CASUAL-floor port that mutes Bob's ``work``
     recollections on this secondary door: ``recall_memory`` (the thin auto-recall
     wrapper) and ``search_memory`` (BOB-011 — the agentic skill Bob chooses to

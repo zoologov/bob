@@ -12,9 +12,12 @@ The turn's «один поиск, не петля» verify concern in one cohesi
 from ``HandleMessage`` in BOB-062.6b, wave 1, behavior-preserving). BEFORE generation a
 conservative Tier-0 :class:`~bob.conversation.volatility_judgment.VolatilityJudge` decides
 whether the answer hinges on a FRESH volatile fact; on ``needs_check`` Bob makes ONE
-DIRECT ``WebSearchProvider.search`` (NOT via the capability registry / tool-loop → NOT the
-BOB-052 per-sender gate — an internal public-verify exposing only PUBLIC web info) and
-folds the finding into the reply-generation context.
+DIRECT :class:`~bob.conversation.ports.VerifySearch` ``.search`` (NOT via the capability
+registry / tool-loop → NOT the BOB-052 per-sender gate — an internal public-verify exposing
+only PUBLIC web info) and folds the finding into the reply-generation context. The search
+port is the NARROW consumer-side one (BOB-113 E): the step reads only ``answer``, so it
+imports nothing from the capability vertical; that vertical's web-search adapter
+satisfies the port structurally and is wired in unchanged.
 
 🔴 The whole step is DECORATIVE: a judge failure degrades to «no check» (normal answer),
 a search failure/timeout/empty to an honest hedge — the turn is never blocked or broken.
@@ -36,9 +39,9 @@ from bob.conversation.volatility_judgment import VolatilityContext, VolatilityVe
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
-    from bob.capabilities.ports import WebSearchProvider
+    from bob.conversation.ports import VerifySearch
     from bob.conversation.volatility_judgment import VolatilityJudge
-    from bob.social.interlocutor import Interlocutor
+    from bob.kernel.interlocutor import Interlocutor
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +83,7 @@ class VerifyInterimAnnouncer(Protocol):
 
 # Build the per-turn, chat-bound interim announcer from the turn's ``chat_id`` and the
 # perceived ``sender_name``. Injected so the conversation vertical never imports the
-# capabilities announcer (the concrete lives there; the factory is composed in the
+# concrete announcer (it lives in the capability vertical; the factory is composed in the
 # application layer).
 type InterimAnnouncerFactory = Callable[..., VerifyInterimAnnouncer]
 
@@ -92,7 +95,7 @@ class VerifyStep:
         self,
         *,
         verify_judge: VolatilityJudge | None,
-        verify_provider: WebSearchProvider | None,
+        verify_provider: VerifySearch | None,
         verify_timeout_seconds: float,
         announcer_factory: InterimAnnouncerFactory,
     ) -> None:
@@ -198,7 +201,7 @@ class VerifyStep:
         await announcer.announce_verify(topic=verdict.topic)
 
     async def _search_note(
-        self, provider: WebSearchProvider, verdict: VolatilityVerdict
+        self, provider: VerifySearch, verdict: VolatilityVerdict
     ) -> str:
         """Run ONE direct, short-timeout web_search and return the grounded/hedge note.
 

@@ -43,7 +43,7 @@ from bob.conversation.room_reading import (
 )
 
 if TYPE_CHECKING:
-    from bob.social.interlocutor import InterlocutorKind
+    from bob.kernel.interlocutor import InterlocutorKind
 
 __all__ = [
     "BATCH_ROOM_READ_SYSTEM_PROMPT",

@@ -29,12 +29,14 @@ Conversation module («how a turn is conducted») — the full turn-conduct vert
 - `ConversationalFatigue`
 - `DecideResponse`
 - `EngagementModel`
+- `EngagementState`
 - `EngagementThresholds`
 - `FatigueRates`
 - `FloorConfig`
 - `FloorHolder`
 - `FloorManager`
 - `FloorResolution`
+- `HasAnswer`
 - `LlmBatchRoomReader`
 - `LlmInterimLineGenerator`
 - `LlmResponseJudge`
@@ -63,6 +65,7 @@ Conversation module («how a turn is conducted») — the full turn-conduct vert
 - `TurnGate`
 - `VerdictKind`
 - `VerifyInterimAnnouncer`
+- `VerifySearch`
 - `VerifyStep`
 - `VolatilityContext`
 - `VolatilityJudge`
@@ -89,6 +92,7 @@ Conversation module («how a turn is conducted») — the full turn-conduct vert
 - `engagement_mood_lift`
 - `idle_floor`
 - `is_bob_repeat`
+- `is_content_self_dup`
 - `is_floor_participant`
 - `is_phrase_tic`
 - `is_recurring_closer_tic`
@@ -107,34 +111,23 @@ Conversation module («how a turn is conducted») — the full turn-conduct vert
 - `resolve_addressivity`
 - `resolve_outgoing_target`
 - `strip_recurring_closer`
+- `thread_block`
 - `topic_interest`
 - `validate_reaction_emoji`
 
 ## Relationships
 
 - **part_of**: [bob-domain](../domains/bob-domain.md)
-- **depends_on**: [personality](../features/personality.md), [router](../features/router.md)
-- **Used by**: [proactivity](../features/proactivity.md), [runtime](../services/runtime.md), [runtime-app](../features/runtime-app.md), [usecases](../features/usecases.md)
+- **depends_on**: [bob-domain](../domains/bob-domain.md), [personality](../features/personality.md), [router](../features/router.md)
+- **Used by**: [proactivity](../features/proactivity.md), [runtime](../services/runtime.md), [runtime-app](../features/runtime-app.md), [social](../features/social.md), [usecases](../features/usecases.md)
 
 ## Documentation
 
 - [domains/conversation/README.md](/docs/domains/conversation/README.md)
 
-## Diagram
+## Graph
 
-```mermaid
-C4Container
-    System_Boundary(bob_boundary, "Bob") {
-        Container(bob_application, "Bob Application", "", "GUPPI orchestration: AgentRuntime + AsyncEventBus, LLMRouter (tier routing + privacy redaction), use-cases (HandleMessage, RunGenesis, UpdateMoodFromText), resilient heartbeat ticks (retry/backoff), the Authorizer access policy and the capability seam (CapabilityRegistry + ToolLoop + recall_memory). Depends on domain via ports; never imports infrastructure.")
-        Container(bob_domain, "Bob Domain", "", "Domain layer umbrella: the seven module-vertical bounded contexts (personality, conversation, memory, proactivity, coding, capabilities, social) plus the shared 'kernel' (infra-neutral cross-module contracts). Pure logic + Protocol definitions; no I/O, no LLM, no transport.")
-        Container(bob_infrastructure, "Bob Infrastructure", "", "Port adapters: aiogram Telegram gateway (long-polling + authz gate, native draft streaming, Rich Messages, markdown‹-›RichMessage, topic-thread reply pinning), MultiBotGateway (BotRegistry + cross-bot dedup + central identity/scope router) and the GuppiHandler gatekeeper (visible reject + owner commands), OpenAI-compatible LLM provider (Tier 0/1 + tool-calling), SQLite+FTS5 persistence, KvAllowlistStore and SoulStore, two-bot layered config loader.")
-        Container(runtime, "Runtime", "", "Composition root ('src/bob/runtime/' package + the thin 'app.py' shim) — the only layer allowed to wire all layers + all vertical modules at once: 'config.py' loads layered config (incl. '_REPO_ROOT'), 'wiring/*' build infrastructure adapters + compose application policy/use-cases per bounded context, 'composition.py' ('build_application' + 'Application') subscribes handlers to the EventBus and registers ticks + Telegram polling, 'clock.py' provides 'SystemClock', and 'main.py' runs Genesis once and starts the process.")
-    }
-    Rel(bob_application, bob_domain, "depends_on")
-    Rel(bob_infrastructure, bob_application, "depends_on")
-    Rel(bob_infrastructure, bob_domain, "depends_on")
-    Rel(runtime, bob_application, "depends_on")
-    Rel(runtime, bob_domain, "depends_on")
-    Rel(runtime, bob_infrastructure, "depends_on")
-```
+<ClientOnly>
+  <ArchitectureMap focus="conversation" :depth="1" height="60vh" />
+</ClientOnly>
 

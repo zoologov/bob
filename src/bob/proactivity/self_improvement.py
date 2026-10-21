@@ -38,6 +38,8 @@ from difflib import SequenceMatcher
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from bob.kernel.modulators import RuleModulators
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
@@ -58,7 +60,6 @@ __all__ = [
     "ImprovementSignals",
     "Lever",
     "ProposalDefect",
-    "RuleModulators",
     "RuleOrigin",
     "RuleState",
     "active_rules",
@@ -399,43 +400,6 @@ _LENGTH_STEP_THRESHOLD = 0.05
 # (magnitude в [0, 1]), поэтому направление фиксировано и безопасно: один шаг вниз,
 # никогда не раздувание ответа.
 _LENGTH_STEP_DIRECTION = -1
-
-
-@dataclass(frozen=True, slots=True)
-class RuleModulators:
-    """Набор мягких наклонов, собранных из ``active_rules`` — каждый в свою точку.
-
-    Каждое поле — отдельный рычаг :class:`Lever`, который применяется В СВОЕЙ точке
-    поведения (один рычаг → одна точка, без перекрёстных эффектов):
-
-    * ``voice_adjustments`` — человекочитаемые поправки ТОНА / ЮМОРА (``adjustment``
-      одобренных TONE/HUMOR-правил), которые ``voice.improvement_directive`` оборачивает
-      в наклон-голоса для ``_system_prompt_for``. Пустой кортеж → ничего не добавляется
-      (прозу владеет voice — домен отдаёт только данные).
-    * ``length_step`` — целочисленный сдвиг ступени многословия (BOB-024): ``-1``
-      короче, ``0`` без сдвига. Не больше одной ступени — мягкий наклон, не перехват;
-      приёмник клиппит по краям лестницы.
-    * ``proactivity_bias`` — байес к urge/governance (BOB-010) в ``[0, max_magnitude]``.
-    * ``addressivity_bias`` — байес к порогам адресности (BOB-023/025) в
-      ``[0, max_magnitude]``.
-
-    Все величины уже закламплены к ``max_magnitude`` сборщиком. Дефолт (все поля
-    нейтральны) — это «нет применения»: поведение ровно как до BOB-028.
-    """
-
-    voice_adjustments: tuple[str, ...] = ()
-    length_step: int = 0
-    proactivity_bias: float = 0.0
-    addressivity_bias: float = 0.0
-
-    def has_any(self) -> bool:
-        """Есть ли хоть один ненулевой наклон (иначе применять нечего)."""
-        return bool(
-            self.voice_adjustments
-            or self.length_step
-            or self.proactivity_bias
-            or self.addressivity_bias
-        )
 
 
 def _summed_clamped(

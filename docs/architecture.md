@@ -39,7 +39,11 @@ domain`. Домен не импортирует ничего наружу; пр�
 src/bob/
   kernel/            # 🔴 SHARED KERNEL (BOB-062.8): инфра-нейтральные кросс-модульные
                      #   контракты — Clock, DomainEvent, EventBus, EventHandler,
-                     #   JsonValue, LLMMessage, LLMProvider. Чистый inward-safe leaf
+                     #   JsonValue, LLMMessage, LLMProvider; с BOB-113 ещё события
+                     #   интейка, порты памяти/ответа/tool-calling, RuleModulators и
+                     #   социальный словарь (Interlocutor/Trust/Gender, Relationship,
+                     #   RosterMember, SulkState; поведение — в social; инварианты значений
+                     #   — в функциях модульного уровня, под мутацией). Чистый inward-safe leaf
                      #   (только stdlib/typing); любой модуль может импортить,
                      #   kernel НЕ импортит модули (правила kernel-no-*).
   <module>/          # 8 ВЕРТИКАЛЬНЫХ бизнес-модулей (domain-first, BOB-062): coding,
@@ -162,6 +166,105 @@ graph TD
     runtime --> infra
 ```
 
+### Порядок вертикалей и правило размещения контракта (BOB-113)
+
+🔴 **Инвариант: runtime-порядок вертикалей.** Модули, которые раньше замыкали общий цикл,
+выстроены в одну цепочку. Стрелка означает «зависит от»: каждый модуль импортирует только
+модули правее себя и `kernel`, который лежит ниже всех.
+
+```
+usecases → capabilities → social → telegram → proactivity → memory → runtime-app → conversation → personality
+```
+
+Порядок выведен из runtime-рёбер (импортов модульного и функционального уровня), а не
+назначен. Если граф изменится, гард ниже назовёт ребро, которое порядок нарушило.
+
+**Правило размещения.** Сигнатуры модуля называют типы только модулей ниже него или
+`kernel`. Отсюда место для каждого нового имени, в порядке предпочтения:
+
+1. Собственное понятие модуля живёт у владельца. Модули выше импортируют его вниз
+   (`PersonalityState` — `personality/state.py`, `EngagementState` —
+   `conversation/engagement.py`).
+2. Порт, который описывает чтение одного контекста, живёт в `ports.py` этого контекста
+   (социальные читатели хода — `social/ports.py`, `CurrentFascinationReader` —
+   `personality/ports.py`).
+3. Значение или порт, который нужен модулю ниже владельца, уходит в shared kernel (события
+   интейка, `Recalled`, порты памяти и ответа, словарь tool-calling'а, `RuleModulators`,
+   социальный словарь). Поведение остаётся у владельца.
+4. Коллаборатору, у которого потребитель читает одно поле или метод, достаточно узкого
+   Protocol у самого потребителя (ISP): `conversation.ports.VerifySearch` / `HasAnswer`
+   вместо порта веб-поиска `capabilities`.
+
+Ре-экспортов по старым путям нет: у каждого имени один дом. До BOB-113 type-only импорты
+(под `if TYPE_CHECKING:`) замыкали один цикл из девяти модулей. После переезда контрактов
+(29 имён по 22 решениям RFC) `beadloom lint --strict` не находит ни одного цикла, а из 81
+ребра `depends_on` type-only остались 8, и все они направлены вниз или в ядро.
+
+**Кто это держит.** Четыре независимые проверки:
+
+- `no-dependency-cycles` в `.beadloom/_graph/rules.yml` — `severity: error`, без исключений.
+  Beadloom читает и импорты под `TYPE_CHECKING`, поэтому type-only ребро вверх по порядку
+  возвращает цикл.
+- `tests/test_no_runtime_import_cycles.py` — гард, который не зависит от beadloom:
+  - `test_runtime_imports_form_no_cycle_between_modules` — исполняемые импорты (без ветки
+    `TYPE_CHECKING`) не образуют цикла между модулями;
+  - `test_runtime_edges_follow_the_declared_vertical_order` — ни одно runtime-ребро не идёт
+    вверх по порядку (константа `_VERTICAL_ORDER` в тесте);
+  - `test_no_type_checking_import_points_upward_against_the_vertical_order` — ни один
+    `TYPE_CHECKING`-импорт не направлен вверх, а любое ребро ИЗ `kernel` считается
+    направленным вверх.
+
+  Охват гарда направления — только девять узлов `_VERTICAL_ORDER` (в их числе
+  `infrastructure.telegram`) и `kernel`. Узлы вне порядка (`coding`, `interactive`, `identity`,
+  `presence`, `router`, `runtime`/`wiring`, `llm`, `persistence`, `config`) гардом направления
+  не судятся: их границы держат
+  `forbid_import`-правила из `rules.yml` (и только те строки индекса, которые beadloom видит —
+  см. паритетный тест ниже) и правило `architecture-layers`, которое судит 15 из 81 ребра
+  `depends_on` (остальные 66 — рёбра вертикалей, вне слоёв по замыслу BOB-062.6a).
+
+  Оба сборщика импортов читают все формы импорта: `import bob.x`, `import bob.x.y as z`,
+  `from bob.x import y`, `from bob import x`, `from bob.application import usecases` и
+  относительные импорты. Выход относительного импорта за пределы пакета — явная ошибка, а
+  не пропуск. Символ, чьё имя отличается от файла модуля только регистром, остаётся символом
+  и на файловой системе без учёта регистра.
+- `tests/test_beadloom_sees_every_import.py` — сверяет импорты, которые прочитал `ast`, с
+  индексом beadloom (`code_imports`). Тест пересобирает индекс бинарём `beadloom` с PATH в
+  копии `src` и `.beadloom`. Если бинаря на PATH нет, тест даёт SKIP с причиной «НЕ
+  проверялось». Правила `forbid_import` судят только строки этого индекса, поэтому импорт без
+  строки не судит ни одно правило. Замер саботажем на `beadloom==9.0.0` (правило
+  `memory-boundary-no-coding-adapters`, файл `coding/naming.py`): закреплённая сборка не
+  видит четыре формы, и `lint --strict` на каждой из них даёт exit 0.
+  - `import bob.memory.adapters.fts_recall as _f` — строки в индексе нет. Та же строка без
+    `as` даёт exit 1.
+  - `from ..memory.adapters import fts_recall` — относительный импорт, строки нет.
+  - `from bob import memory` — в индексе записано `bob`.
+  - `from bob.memory import adapters` — в индексе записан пакет `bob.memory`, а не
+    подмодуль, поэтому glob `bob/memory/adapters*` его не находит.
+
+  Последняя форма так же слепа внутри своего узла: `from bob.coding import usecases` в
+  `coding/naming.py` записан как `bob.coding`, и правило `coding-internals-no-usecases` не
+  видит, что доменный модуль берёт use-case своей вертикали (lint exit 0, замер ревью .9).
+  Так обходятся все правила вида `*-internals-no-usecases`, `*-internals-no-adapters` и
+  `*-usecases-no-adapters` — 38 из 262 правил `forbid_import` (замер 2026-10-21).
+
+  Тест требует строку с полным модулем для каждого связывания — и в другой узел, и внутри
+  своего, поэтому все четыре формы на нём краснеют в любом месте. Зона закрыта в bob-7fo.10:
+  две инструкции этой формы в `src` (`coding/usecases/coding_assistant.py` и
+  `interactive/usecases/session.py`, три связывания) переписаны в
+  `from bob.<узел>.<модуль> import <имя>`, и после этого lint на чистом индексе находит 0
+  ошибок. Исправление самого резолвера beadloom остаётся записью в
+  `features/BOB-112/BDL-UX-draft.md`.
+- `tests/domain/kernel/test_kernel_isolation.py` — импорт каждого модуля ядра в
+  изолированном интерпретаторе не загружает ни одного `bob.*` вне `bob.kernel`.
+
+🔴 **Слепая зона правила циклов (наблюдение O1 ревью BOB-113).** `no-dependency-cycles` не
+видит рёбер ИЗ ядра: узлы `kernel` и `bob-domain` делят `source: src/bob/kernel/`, импорты
+резолвятся в `bob-domain`, и ребро `kernel → <модуль>` не порождает derived-ребра. Саботаж
+`kernel → memory` правило циклов не заметило. Направление ядра держат правила `kernel-no-*`
+(beadloom), тест изоляции и `tests/test_no_runtime_import_cycles.py` — все три на этом
+саботаже покраснели. Ядро теперь держит события интейка, порты и социальный словарь, поэтому
+полагаться здесь на правило циклов нельзя.
+
 ## Сквозной поток: обработка сообщения (perceive → decide → act → persist)
 
 Когда пользователь пишет в Telegram, Боб проживает один ход. Поток собирается в
@@ -174,7 +277,11 @@ graph TD
 `HandleMessage.handle(event, scope=None)` проводит ход по фазам **perceive → who → gate →
 compose+guard → post-effects**, делегируя каждую ~14 когезивным коллабораторам,
 разложенным по чистым модулям. `HandleMessage.__init__` остаётся композиционным
-корнем (собирает коллабораторов из инъектированных швов). Карта
+корнем (собирает коллабораторов из инъектированных швов). Контракты этих швов живут у
+владельцев, а не в оркестраторе (BOB-113): социальные читатели — `social/ports.py`,
+`CurrentFascinationReader` — `personality/ports.py`, держатели `PersonalityState` —
+`personality/state.py` и `EngagementState` — `conversation/engagement.py`; общие порты
+(`ReplyGateway`, `EpisodeReader`, `MemoryRecall` …) — в `kernel/ports.py`. Карта
 коллаборатор → модуль:
 
 | Коллаборатор | Модуль | Роль |

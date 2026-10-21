@@ -23,15 +23,15 @@ from typing import TYPE_CHECKING
 from pytest_bdd import given, scenarios, then, when
 
 from bob.application.usecases.disclosure_guard import DisclosureGuard
+from bob.kernel.interlocutor import Interlocutor, InterlocutorKind, Trust
 from bob.personality.voice import stranger_directive
 from bob.runtime.wiring.disclosure import build_disclosure_guard
 from bob.runtime.wiring.endorsement import build_endorsement_seeder
-from bob.social.interlocutor import Interlocutor, InterlocutorKind, Trust
 from bob.social.permission.privilege import PrivilegeContext, PrivilegeNeed
 
 if TYPE_CHECKING:
     from bob.application.usecases.endorsement_seeder import EndorsementSeeder
-    from bob.social.relationship import Relationship
+    from bob.kernel.relationship import Relationship
 
 scenarios("../features/eq_live_wiring.feature")
 

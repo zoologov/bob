@@ -15,8 +15,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from bob.kernel.roster import RosterMember
 from bob.social.first_impression import FirstImpression
-from bob.social.roster import RosterMember, build_roster, is_newcomer
+from bob.social.roster import build_roster, is_newcomer
 
 _NOW = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)
 _NEWCOMER_DAYS = 7.0

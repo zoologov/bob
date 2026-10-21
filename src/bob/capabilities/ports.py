@@ -8,28 +8,26 @@
 
 """Capability ports — the GUPPI tool seam and its grounded skills.
 
-The stable :class:`Capability` contract plus the tool-calling provider, the web
-skills (search / url-read, BOB-053/054), the local diagram renderer (BOB-035), and
-the read-only repo introspector (BOB-017). These are *interfaces only*: structural
+The stable :class:`Capability` contract plus the web skills (search / url-read,
+BOB-053/054), the local diagram renderer (BOB-035), and the read-only repo
+introspector (BOB-017). These are *interfaces only*: structural
 :class:`typing.Protocol` definitions with no implementations; adapters in
-``bob.infrastructure`` realise them. The tool-loop value objects (:class:`ToolCall`,
-:class:`ToolCallResult`, …) live here beside the ports that carry them; the only
-cross-bucket dependency is :data:`~bob.kernel.ports.ToolLoopMessage`.
+``bob.infrastructure`` realise them. The LLM tool-calling vocabulary
+(:class:`~bob.kernel.ports.ToolCallingProvider`, :class:`~bob.kernel.ports.ToolCall`,
+:class:`~bob.kernel.ports.ToolCallResult`, :data:`~bob.kernel.ports.ToolDefinition`)
+lives in the shared kernel beside :data:`~bob.kernel.ports.ToolLoopMessage` (BOB-113):
+``personality`` and ``infrastructure/llm`` read it too.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from bob.capabilities.introspection.graph_form import GraphFormKind
-    from bob.kernel.ports import ToolLoopMessage
+    from collections.abc import Mapping
 
-# An OpenAI-shaped tool definition (``{"type": "function", "function": {...}}``),
-# as emitted by the CapabilityRegistry manifest and sent to the LLM as ``tools``.
-type ToolDefinition = Mapping[str, object]
+    from bob.capabilities.introspection.graph_form import GraphFormKind
 
 # A capability's permission seam: "safe" runs straight through; "confirm" marks a
 # capability a HUMAN must clear before GUPPI executes it. Read by the autonomous
@@ -40,32 +38,6 @@ type Permission = Literal["safe", "confirm"]
 
 
 # --- Capability seam (stable, forward-compatible) -----------------------------
-
-
-@dataclass(frozen=True)
-class ToolCall:
-    """One tool invocation the model asked for (OpenAI ``tool_calls`` shape).
-
-    ``id`` correlates the call with the ``tool`` result message fed back into the
-    next turn; ``name`` selects the capability; ``arguments`` are the decoded
-    JSON arguments the capability's ``execute`` receives.
-    """
-
-    id: str
-    name: str
-    arguments: Mapping[str, object] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class ToolCallResult:
-    """A tool-aware completion: free-text ``text`` plus any requested tool calls.
-
-    When ``tool_calls`` is empty the turn is final and ``text`` is the answer;
-    otherwise GUPPI must dispatch each call and feed the results back to loop.
-    """
-
-    text: str
-    tool_calls: tuple[ToolCall, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,27 +217,6 @@ class Capability(Protocol):
 
     async def execute(self, args: Mapping[str, object]) -> object:
         """Run the capability against ``args`` and return its result."""
-        ...
-
-
-@runtime_checkable
-class ToolCallingProvider(Protocol):
-    """An LLM provider that can be handed ``tools`` and return ``tool_calls``.
-
-    The tool-aware sibling of :class:`~bob.kernel.ports.LLMProvider`: given the
-    conversation and a manifest of tool definitions, it returns a
-    :class:`ToolCallResult` (final text, or the tool calls the model requested).
-    Adapters realise this over a native OpenAI ``tools`` round-trip or a prompt-protocol
-    fallback.
-    """
-
-    async def complete_with_tools(
-        self,
-        messages: Sequence[ToolLoopMessage],
-        *,
-        tools: Sequence[ToolDefinition],
-    ) -> ToolCallResult:
-        """Complete a turn that may request tool calls."""
         ...
 
 

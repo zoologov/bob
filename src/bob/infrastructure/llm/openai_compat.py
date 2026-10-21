@@ -30,11 +30,10 @@ from typing import TYPE_CHECKING
 
 import aiohttp
 
-from bob.capabilities.ports import ToolCall, ToolCallResult
+from bob.kernel.ports import ToolCall, ToolCallResult
 
 if TYPE_CHECKING:
-    from bob.capabilities.ports import ToolDefinition
-    from bob.kernel.ports import LLMMessage, ToolLoopMessage
+    from bob.kernel.ports import LLMMessage, ToolDefinition, ToolLoopMessage
 
 logger = logging.getLogger(__name__)
 

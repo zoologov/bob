@@ -28,7 +28,7 @@ from bob.runtime.wiring.self_improvement import _build_self_improvement
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
 
-    from bob.application.usecases.handle_message import ReplyGateway
+    from bob.kernel.ports import ReplyGateway
     from bob.proactivity.adapters import SqliteSelfImprovementStore
     from bob.proactivity.self_improvement import ImprovementRule
 

@@ -42,9 +42,8 @@ from bob.capabilities.usecases.tool_loop import ToolLoop
 
 if TYPE_CHECKING:
     from bob.application.router.voice_canon import VoiceCanon
-    from bob.capabilities.ports import ToolCallingProvider
     from bob.capabilities.usecases.registry import CapabilityRegistry
-    from bob.kernel.ports import LLMMessage
+    from bob.kernel.ports import LLMMessage, ToolCallingProvider
 
 
 class _Router(Protocol):

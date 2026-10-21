@@ -15,10 +15,15 @@
 
 nodes:
   # ── Root service ────────────────────────────────────────────────────────────
+  # BOB-112: NO layer tag on the root. beadloom ≥ 6.0.0 gives every untagged node the
+  # layer of its nearest tagged `part_of` container, so a `layer-runtime` here would make
+  # the seven module-vertical bounded contexts "runtime" (their chain is vertical →
+  # bob-domain → bob) and silently legalise every edge they have. The runtime LAYER is
+  # carried by the `runtime` node (src/bob/runtime/) — `app.py` is annotated
+  # `# beadloom:feature=runtime` so its shim imports are judged there, not unjudged here.
   - ref_id: bob
     kind: service
     source: src/bob/
-    tags: [layer-runtime]
     summary: 'Bob — Telegram-native companion agent: GUPPI process, LLM Tier 0/1 router with privacy redaction, SQLite+FTS5 memory, Higher Mind, Genesis, heartbeat. Two admin bots in one process (BOB-003): a MultiBotGateway (BotRegistry) polls both Bob and GUPPI, dedups cross-bot by (chat_id, message_id), and a central router dispatches by identity+scope — Bob lives in his forum topic, GUPPI is the gatekeeper in General with a visible unauthorized reject + owner commands. aiogram transport (native draft streaming + Rich Messages), owner/allowlist/chat-scope authz, resilient ticks, and a capability seam (registry + tool-loop) executed by GUPPI.'
     docs:
       - architecture.md
@@ -43,17 +48,25 @@ nodes:
 
   # ── Layer: Domain ───────────────────────────────────────────────────────────
   # BOB-062.8: the layer-first `src/bob/domain/` folder was removed (its only
-  # remaining content, the ports re-export shim, was deleted). This node stays the
-  # domain-LAYER umbrella (expressed by the `layer-domain` tag); its part_of
-  # children are the seven module-vertical bounded contexts plus the shared
-  # `kernel`. Its `source:` now anchors on `src/bob/kernel/` (the shared kernel);
+  # remaining content, the ports re-export shim, was deleted). This node is the
+  # umbrella of the seven module-vertical bounded contexts plus the shared
+  # `kernel`. Its `source:` anchors on `src/bob/kernel/` (the shared kernel);
   # kernel files resolve to the deeper `kernel` feature node via their
   # `# beadloom:feature=kernel` annotation.
+  # BOB-112: the umbrella carries NO layer tag any more. Until beadloom 6.0.0 the
+  # `layer-domain` tag here was inert for the verticals (they are tagged
+  # `module-vertical`, a non-layer tag, and the rule skipped them); from 6.0.0 an
+  # untagged node inherits the layer of its nearest tagged `part_of` container, so
+  # the tag turned every vertical into a "domain" node and reported 20 of their
+  # legitimate edges (to router / usecases / runtime-app / telegram / persistence)
+  # as upward violations. A vertical spans domain+usecases+adapters INSIDE one
+  # bounded context and sits in no horizontal layer — its outer boundary and inner
+  # layering are enforced by the generated forbid_import rules. The domain LAYER
+  # proper is the `kernel` node, which carries `layer-domain` itself.
   - ref_id: bob-domain
     kind: domain
     source: src/bob/kernel/
-    tags: [layer-domain]
-    summary: 'Domain layer umbrella: the seven module-vertical bounded contexts (personality, conversation, memory, proactivity, coding, capabilities, social) plus the shared `kernel` (infra-neutral cross-module contracts). Pure logic + Protocol definitions; no I/O, no LLM, no transport.'
+    summary: 'Umbrella of the seven module-vertical bounded contexts (personality, conversation, memory, proactivity, coding, capabilities, social) plus the shared `kernel` (infra-neutral cross-module contracts — the domain LAYER proper). Each vertical spans domain+usecases+adapters inside its own boundary; the kernel is pure logic + Protocol definitions: no I/O, no LLM, no transport.'
     docs:
       - domains/domain/README.md
 
@@ -87,7 +100,7 @@ nodes:
     kind: feature
     source: src/bob/kernel/
     tags: [layer-domain]
-    summary: 'Shared kernel — the infra-neutral contracts every vertical module rests on: the runtime seams (Clock, EventBus, EventHandler, DomainEvent, LLMProvider) and the shared value objects (LLMMessage, JsonValue). Pure Protocol/type definitions; no I/O. Every module may import from here; the kernel imports from no module.'
+    summary: 'Shared kernel — the infra-neutral contracts every vertical module rests on: the runtime seams (Clock, EventBus, EventHandler, DomainEvent, LLMProvider), the shared value objects (LLMMessage, JsonValue), the intake events (MessageReceived, BobMessageReaction), the memory/reply ports (EpisodeReader, MemoryRecall, Recalled, ReplyGateway, BobUserIdSource), the LLM tool-calling vocabulary (ToolDefinition, ToolCall, ToolCallResult, ToolCallingProvider, ToolLoopMessage), the self-improvement RuleModulators, and the social vocabulary — who talks to Bob and how he stands with them (Interlocutor, InterlocutorKind, Trust, Gender, Relationship, RosterMember, SulkState) — whose behaviour stays in `social` (BOB-113). Pure Protocol/type/value definitions; no I/O. Every module may import from here; the kernel imports from no module.'
     docs:
       - domains/domain/features/kernel/SPEC.md
 
@@ -151,7 +164,7 @@ nodes:
     # owns EpisodicEvent/SemanticFact internally — the old `kernel → memory` edge is
     # gone (see the note block in rules.yml).
     tags: [module-vertical]
-    summary: 'Memory module («Bob remembers») — the full vertical capability in one place: `ports.py` + pure `entities`, `usecases/` (extract facts, consolidate, dedup), and `adapters/` (FTS5/hybrid recall + local Ollama embedder/reranker). Domain-first slice BOB-062.2.'
+    summary: 'Memory module («Bob remembers») — the full vertical capability in one place: `ports.py` (MemoryRepo, SelfActionRecorder, Embedder, Reranker — the read ports MemoryRecall/EpisodeReader and `Recalled` live in `kernel`, BOB-113) + pure `entities`, `usecases/` (extract facts, consolidate, dedup), and `adapters/` (FTS5/hybrid recall + local Ollama embedder/reranker). Domain-first slice BOB-062.2.'
     docs:
       - domains/memory/README.md
 
@@ -171,7 +184,7 @@ nodes:
     # durable stores consume the shared persistence kernel via the injected
     # `SqliteConnection` seam (the connection-kernel split out in BOB-062.7b).
     tags: [module-vertical]
-    summary: 'Proactivity module («Bob''s background life») — the full vertical capability in one place: `ports.py` + pure domain (drive-model urge/governance/social-energy, goals graph, self-improvement rules), `usecases/` (engine/tick, plan/pursue goals, detect-patterns/announce-rules), and `adapters/` (proactivity/goal/self-improvement stores + live read-seams). Domain-first slice BOB-062.3.'
+    summary: 'Proactivity module («Bob''s background life») — the full vertical capability in one place: `ports.py` + pure domain (drive-model urge/governance/social-energy, goals graph, self-improvement rules — the RuleModulators value they build lives in `kernel`, BOB-113), `usecases/` (engine/tick, plan/pursue goals, detect-patterns/announce-rules), and `adapters/` (proactivity/goal/self-improvement stores + live read-seams). Domain-first slice BOB-062.3.'
     docs:
       - domains/proactivity/README.md
 
@@ -274,7 +287,7 @@ nodes:
     # its grounded skills are ONE «Bob's tools» capability. `domain/ports/`
     # keeps a thin re-export shim for the 18 capability ports.
     tags: [module-vertical]
-    summary: 'Capabilities module («Bob''s tools») — the full vertical GUPPI tool seam in one place: `ports.py` (Capability contract + tool/web/diagram/introspection ports) + pure `diagrams`/`introspection` cores (PrivacyGuard, tracker intent/digest, graph form + impact digest, health form + health digest — every dynamic argv slot is validated and every long report is condensed BEFORE it reaches a chat), `usecases/` (CapabilityRegistry + ToolLoop and the skills: recall/search memory, read code/url, web search, render diagram, progress announcer; repo navigation — list_dir / find_file / read_code (BOB-067); read-only dev introspection — recent_commits git history + list_tasks / show_task / task_comments over the beads tracker (BOB-081); and the read-only beadloom trio — draw_architecture (the mermaid source of the graph), architecture_impact («что сломается, если тронуть X») and project_health (status / prime / doctor / sync-check / lint / diff) (BOB-091)), and `adapters/` (aiohttp URL reader behind an SSRF guard, mermaid renderer, beadloom/bd/git introspector over a fixed read-only allowlist — never a shell, Qwen web-search transport). Domain-first slice BOB-062.4.'
+    summary: 'Capabilities module («Bob''s tools») — the full vertical GUPPI tool seam in one place: `ports.py` (Capability contract + web/url/diagram/introspection/outbound ports; the LLM tool-calling vocabulary lives in `kernel`, BOB-113) + pure `diagrams`/`introspection` cores (PrivacyGuard, tracker intent/digest, graph form + impact digest, health form + health digest — every dynamic argv slot is validated and every long report is condensed BEFORE it reaches a chat), `usecases/` (CapabilityRegistry + ToolLoop and the skills: recall/search memory, read code/url, web search, render diagram, progress announcer; repo navigation — list_dir / find_file / read_code (BOB-067); read-only dev introspection — recent_commits git history + list_tasks / show_task / task_comments over the beads tracker (BOB-081); and the read-only beadloom trio — draw_architecture (the mermaid source of the graph), architecture_impact («что сломается, если тронуть X») and project_health (status / prime / doctor / sync-check / lint / diff) (BOB-091)), and `adapters/` (aiohttp URL reader behind an SSRF guard, mermaid renderer, beadloom/bd/git introspector over a fixed read-only allowlist — never a shell, Qwen web-search transport). Domain-first slice BOB-062.4.'
     docs:
       - domains/capabilities/README.md
 
@@ -302,7 +315,7 @@ nodes:
     tags: [module-vertical]
     docs:
       - domains/social/README.md
-    summary: 'Social module («Bob distinguishes people») — the full vertical capability in one place: `ports.py` + pure domain (interlocutor identity, first-impression, relationship, sulk) + `permission/` value objects, `usecases/` (authorizer/sender+reactor perception, permission flow/execution, first-impression/relationship/sulk sources, run-genesis), and `adapters/` (first-impression/relationship/sulk/allowlist/permission-request/soul stores + privilege-judge). Domain-first slice BOB-062.5.'
+    summary: 'Social module («Bob distinguishes people») — the full vertical capability in one place: `ports.py` + pure domain behaviour over the shared-kernel social values (classify an interlocutor, self-gender inference, first-impression, relationship accrual, roster building, sulk dynamics — the values Interlocutor/Gender/Relationship/RosterMember/SulkState live in `kernel`, BOB-113) + `permission/` value objects, `usecases/` (authorizer/sender+reactor perception, permission flow/execution, first-impression/relationship/sulk sources, run-genesis), and `adapters/` (first-impression/relationship/sulk/allowlist/permission-request/soul stores + privilege-judge). Domain-first slice BOB-062.5.'
 
   - ref_id: presence
     kind: feature
@@ -345,7 +358,7 @@ nodes:
     kind: feature
     source: src/bob/application/runtime/
     tags: [layer-application]
-    summary: 'Application runtime — AgentRuntime, AsyncEventBus, events, and resilient heartbeat ticks (retry/backoff). Distinct from the `runtime` composition root.'
+    summary: 'Application runtime — AgentRuntime, AsyncEventBus, and resilient heartbeat ticks (retry/backoff); the intake events it carries live in the shared kernel. Distinct from the `runtime` composition root.'
     docs:
       - domains/application/features/runtime-app/SPEC.md
 

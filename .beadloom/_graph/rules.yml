@@ -7,6 +7,18 @@
 # layer-domain). Clean-Architecture direction: imports point INWARD —
 # runtime → infrastructure → application → domain; domain depends on nobody.
 #
+# 🔴 О предупреждении `rule_liveness` («Rule … cannot fire: its glob matches 0 of N …»),
+# beadloom ≥ 9.0.0 — НЕ «мёртвое правило», НЕ снимать и НЕ «чинить» glob. Замерено в BOB-112 .5
+# (2026-10-21) саботажем: `import bob.app` в coding/naming.py → coding-no-composition-root назвало
+# файл и строку; импорт usecases в untrusted_repo.py → coding-internals-no-usecases-untrusted_repo
+# сработало; созданный identity/usecases/probe.py → identity-usecases-no-infra сработало. Ноль
+# совпадений glob здесь — соблюдённый инвариант (bob.app никто не импортирует) или упреждающий
+# гард на пакет, которого пока нет (identity/presence без usecases). Файл untrusted_repo.py
+# существует, просто не индексируется (у него нет импортов). Это ложный сигнал beadloom — BDL-UX
+# #328 «rule_liveness calls a live forbid_import rule dead», закрыт апстримом, в 9.0.0 не вошёл;
+# уйдёт со следующим бампом. Координатор BOB-112 сам сначала прочитал это как 36 мёртвых правил —
+# и был опровергнут ревью. Предупреждение инструмента перемеряется саботажем, а не пересказывается.
+#
 # Severity ratchet (RFC Часть C): error where the code is already clean. As of
 # BOB-062.8 .2 the ratchet is FULLY CLOSED — Фаза 3 (BOB-062) decomposed the known
 # big modules (handle_message split in .6b, app.py → an 82-line runtime shim in
@@ -48,6 +60,16 @@ rules:
   # derived from REAL imports (tree-sitter) + declared layer edges, so this bites
   # actual code. allow_skip: true — infra→domain (port impls) and runtime→domain
   # are legal downward skips.
+  # 🔴 BOB-112 (beadloom ≥ 6.0.0): a node with no layer tag of its own takes the
+  # layer of its nearest tagged `part_of` container. The seven module-vertical
+  # bounded contexts are deliberately in NO layer (they span domain+usecases+
+  # adapters inside one boundary), so neither their umbrella `bob-domain` nor the
+  # root `bob` may carry a layer tag — otherwise every vertical silently becomes
+  # "domain" (20 false upward edges) or "runtime" (every edge legal). The layer
+  # nodes proper are `runtime`, the infra components, `bob-application` + its
+  # three features, and `kernel`. An edge with a vertical at either end is
+  # SKIPPED by this rule (`skipped_untagged` in the lint summary is that count,
+  # not a defect); the verticals' boundaries are the forbid_import rules below.
   - name: architecture-layers
     description: "runtime → infrastructure → application → domain; не обратно"
     severity: error
@@ -1555,7 +1577,8 @@ rules:
 #
 #   2. application/usecases/perceive_reaction → personality + social. RUNTIME imports
 #      of `personality.{mood.MoodDelta,reaction_effect,reaction_meaning}` +
-#      `social.relationship.Relationship` (TYPE_CHECKING: disposition, interlocutor,
+#      `kernel.relationship.Relationship` (BOB-113: value moved to the shared kernel;
+#      TYPE_CHECKING: disposition, kernel.interlocutor,
 #      reaction_judge/meaning). Being-received reaction perception is a CROSS-DOMAIN
 #      use-case over mood + relationship, so it stays in the `application` coordination
 #      layer (like `handle_message`), OUTSIDE both verticals — the inward-boundary

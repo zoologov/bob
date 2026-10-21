@@ -3,6 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=runtime
+# beadloom:layer=runtime
 
 """Composition-root register-recall wiring — behind ``memory.register_recall``.
 
@@ -42,7 +44,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from bob.application.router.llm_router import LLMRouter
-    from bob.memory.ports import MemoryRecall
+    from bob.kernel.ports import MemoryRecall
 
 __all__ = ["build_register_resolver", "build_secondary_recall"]
 

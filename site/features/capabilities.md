@@ -7,17 +7,20 @@ kind: feature
 
 **Kind:** feature
 
-Capabilities module («Bob's tools») — the full vertical GUPPI tool seam in one place: `ports.py` (Capability contract + tool/web/diagram/introspection ports) + pure `diagrams`/`introspection` value objects, `usecases/` (CapabilityRegistry + ToolLoop and the skills: recall/search memory, read code/url, web search, render diagram, inspect architecture, progress announcer), and `adapters/` (aiohttp URL reader behind an SSRF guard, mermaid renderer, beadloom/git introspector, Qwen web-search transport). Domain-first slice BOB-062.4.
+Capabilities module («Bob's tools») — the full vertical GUPPI tool seam in one place: `ports.py` (Capability contract + web/url/diagram/introspection/outbound ports; the LLM tool-calling vocabulary lives in `kernel`, BOB-113) + pure `diagrams`/`introspection` cores (PrivacyGuard, tracker intent/digest, graph form + impact digest, health form + health digest — every dynamic argv slot is validated and every long report is condensed BEFORE it reaches a chat), `usecases/` (CapabilityRegistry + ToolLoop and the skills: recall/search memory, read code/url, web search, render diagram, progress announcer; repo navigation — list_dir / find_file / read_code (BOB-067); read-only dev introspection — recent_commits git history + list_tasks / show_task / task_comments over the beads tracker (BOB-081); and the read-only beadloom trio — draw_architecture (the mermaid source of the graph), architecture_impact («что сломается, если тронуть X») and project_health (status / prime / doctor / sync-check / lint / diff) (BOB-091)), and `adapters/` (aiohttp URL reader behind an SSRF guard, mermaid renderer, beadloom/bd/git introspector over a fixed read-only allowlist — never a shell, Qwen web-search transport). Domain-first slice BOB-062.4.
 
 **Source:** `src/bob/capabilities/`
 
 ## Public symbols
 
+- `ArchitectureDiagram`
 - `Capability`
 - `CapabilityNotAllowedError`
 - `CapabilityRegistry`
 - `CollectingDiagramSink`
+- `DeliveryScope`
 - `DeniedPathError`
+- `DiagramAttachment`
 - `DiagramGateway`
 - `DiagramRenderError`
 - `DiagramRenderer`
@@ -26,72 +29,108 @@ Capabilities module («Bob's tools») — the full vertical GUPPI tool seam in o
 - `DiagramSink`
 - `DisallowedCommandError`
 - `GatewayProgressAnnouncer`
+- `GraphForm`
+- `HealthForm`
+- `HealthRequestError`
 - `HttpUrlReader`
 - `InterimLineGenerator`
 - `IntrospectionError`
+- `InvalidGitRefError`
+- `MaterialOrigin`
+- `MaterialTrailRecall`
+- `OutboundMessenger`
 - `PrivacyGuard`
 - `ProgressAnnouncer`
+- `ProjectHealth`
 - `QwenWebSearchProvider`
 - `RepoIntrospector`
 - `SafeCapabilityDispatcher`
 - `SsrfBlockedError`
 - `SubprocessMmdcRenderer`
 - `SubprocessRepoIntrospector`
-- `ToolCall`
-- `ToolCallResult`
-- `ToolCallingProvider`
 - `ToolLoop`
+- `ToolRequirement`
+- `ToolVerdict`
+- `TrackerPlan`
+- `TurnMaterial`
 - `UnknownCapabilityError`
+- `UnknownCheckError`
 - `UrlReadError`
 - `UrlReader`
 - `WebPage`
 - `WebSearchProvider`
 - `WebSearchResult`
 - `WebSource`
+- `armed_delivery_scope`
+- `armed_turn_material`
+- `assess_tools`
 - `build_url_reader`
+- `clamp_commit_count`
+- `clamp_graph_depth`
 - `commits_mentioning`
+- `current_delivery_scope`
+- `current_turn_material`
+- `describe_unavailable`
+- `diagram_carries_nodes`
+- `digest_health`
+- `digest_impact`
+- `digest_search_results`
+- `drawn_reply`
 - `extract_mermaid_blocks`
 - `feature_doc_dir`
+- `find_bead_key`
+- `is_bead_id`
+- `is_git_ref`
+- `is_graph_ref`
+- `make_architecture_impact_capability`
 - `make_code_rationale_capability`
+- `make_draw_architecture_capability`
 - `make_find_file_capability`
 - `make_inspect_architecture_capability`
 - `make_list_dir_capability`
+- `make_list_tasks_capability`
 - `make_list_work_capability`
+- `make_project_health_capability`
 - `make_read_code_capability`
 - `make_read_url_capability`
 - `make_recall_memory_capability`
+- `make_recent_commits_capability`
 - `make_render_diagram_capability`
 - `make_search_memory_capability`
+- `make_send_to_chat_capability`
+- `make_show_task_capability`
+- `make_task_comments_capability`
 - `make_web_search_capability`
+- `normalize_check`
 - `normalize_mermaid`
+- `normalize_status`
+- `not_found_reply`
 - `parse_bead_refs`
+- `plan_graph_form`
+- `plan_health_form`
+- `plan_tracker_query`
+- `refused_reply`
+- `resolve_tool`
+- `sanitize_search_term`
 - `strip_mermaid_blocks`
+- `unavailable`
+- `validate_bead_id`
+- `validate_git_ref`
+- `validate_graph_ref`
 
 ## Relationships
 
 - **part_of**: [bob-domain](../domains/bob-domain.md)
-- **depends_on**: [bob-application](../domains/bob-application.md)
-- **Used by**: [llm](../other/llm.md), [runtime](../services/runtime.md), [usecases](../features/usecases.md)
+- **depends_on**: [bob-application](../domains/bob-application.md), [bob-domain](../domains/bob-domain.md), [memory](../features/memory.md), [router](../features/router.md), [social](../features/social.md)
+- **Used by**: [coding](../features/coding.md), [llm](../other/llm.md), [runtime](../services/runtime.md), [usecases](../features/usecases.md)
 
 ## Documentation
 
 - [domains/capabilities/README.md](/docs/domains/capabilities/README.md)
 
-## Diagram
+## Graph
 
-```mermaid
-C4Container
-    System_Boundary(bob_boundary, "Bob") {
-        Container(bob_application, "Bob Application", "", "GUPPI orchestration: AgentRuntime + AsyncEventBus, LLMRouter (tier routing + privacy redaction), use-cases (HandleMessage, RunGenesis, UpdateMoodFromText), resilient heartbeat ticks (retry/backoff), the Authorizer access policy and the capability seam (CapabilityRegistry + ToolLoop + recall_memory). Depends on domain via ports; never imports infrastructure.")
-        Container(bob_domain, "Bob Domain", "", "Domain layer umbrella: the seven module-vertical bounded contexts (personality, conversation, memory, proactivity, coding, capabilities, social) plus the shared 'kernel' (infra-neutral cross-module contracts). Pure logic + Protocol definitions; no I/O, no LLM, no transport.")
-        Container(bob_infrastructure, "Bob Infrastructure", "", "Port adapters: aiogram Telegram gateway (long-polling + authz gate, native draft streaming, Rich Messages, markdown‹-›RichMessage, topic-thread reply pinning), MultiBotGateway (BotRegistry + cross-bot dedup + central identity/scope router) and the GuppiHandler gatekeeper (visible reject + owner commands), OpenAI-compatible LLM provider (Tier 0/1 + tool-calling), SQLite+FTS5 persistence, KvAllowlistStore and SoulStore, two-bot layered config loader.")
-        Container(runtime, "Runtime", "", "Composition root ('src/bob/runtime/' package + the thin 'app.py' shim) — the only layer allowed to wire all layers + all vertical modules at once: 'config.py' loads layered config (incl. '_REPO_ROOT'), 'wiring/*' build infrastructure adapters + compose application policy/use-cases per bounded context, 'composition.py' ('build_application' + 'Application') subscribes handlers to the EventBus and registers ticks + Telegram polling, 'clock.py' provides 'SystemClock', and 'main.py' runs Genesis once and starts the process.")
-    }
-    Rel(bob_application, bob_domain, "depends_on")
-    Rel(bob_infrastructure, bob_application, "depends_on")
-    Rel(bob_infrastructure, bob_domain, "depends_on")
-    Rel(runtime, bob_application, "depends_on")
-    Rel(runtime, bob_domain, "depends_on")
-    Rel(runtime, bob_infrastructure, "depends_on")
-```
+<ClientOnly>
+  <ArchitectureMap focus="capabilities" :depth="1" height="60vh" />
+</ClientOnly>
 

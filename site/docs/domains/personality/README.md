@@ -1,12 +1,12 @@
-&lt;!-- beadloom:badge-start -->
+<!-- beadloom:badge-start -->
 > ✅ **fresh**
 > 
-> last synced 2026-07-31T12:12:20.297951+00:00 · coverage 100% (`personality`)
+> last synced 2026-10-21T08:49:35.850635+00:00 · coverage 100% (`personality`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-&lt;!-- beadloom:badge-end -->
+<!-- beadloom:badge-end -->
 
-&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # Модуль personality — «кто Боб есть»
@@ -60,7 +60,7 @@ module), сгенерированные `scripts/gen_boundary_rules.py`.
    домен. Модуль лишь предоставляет чистое ядро (`reaction_effect`, `reaction_meaning`) и
    Tier-0 адаптер `LlmReactionJudge`; сам сшивающий use-case держится вне вертикали.
 5. **Порты живут в `personality/ports.py`** (`MessageReactor` / `ReflectionReader` /
-   `FascinationStore` / `NotableReactionStore`); канонический импорт —
+   `FascinationStore` / `NotableReactionStore` / `CurrentFascinationReader`); канонический импорт —
    `from bob.personality.ports import MessageReactor` (транзитный ports-шим
    `bob.domain.ports` удалён, BOB-062.8).
 
@@ -70,7 +70,8 @@ module), сгенерированные `scripts/gen_boundary_rules.py`.
 
 ```
 src/bob/personality/
-  ports.py            # layer=domain          — personality-порты (MessageReactor/ReflectionReader/Fascination/NotableReaction)
+  ports.py            # layer=domain          — personality-порты (MessageReactor/ReflectionReader/Fascination/NotableReaction/CurrentFascinationReader)
+  state.py            # layer=domain          — PersonalityState: живой per-boot снимок SOUL, общий для хода/тиков/проактивности (BOB-113)
   __init__.py         # layer=domain          — фасад модуля
   mood.py             # layer=domain          — Mood (5 осей [-1,1]) + MoodDelta, update/drift/lift, tone()
   disposition.py      # layer=domain          — Disposition (optimism/resilience) — черта-аттрактор (BOB-033)
@@ -81,7 +82,7 @@ src/bob/personality/
   fascination.py      # layer=domain          — Fascination (topic/intensity/created_at), старение-полураспад, has_faded
   phantom_evolution.py# layer=domain          — evolve_phantoms: медленный дрейф фантомных предпочтений (заземлён)
   expression.py       # layer=domain          — ExpressionMode/FormHint + 🔴 Verbosity/EngagementLevel + decide_expression
-  voice.py            # layer=domain          — тон/директивы стиля (tone/brevity/engagement/sulk/relationship-tone)
+  voice.py            # layer=domain          — тон/директивы стиля (tone/brevity/engagement/sulk/relationship-tone + formatting_directive: форматируй под читателя по содержимому, BOB-086)
   language.py         # layer=domain          — language_directive (персона говорит на своём языке)
   profanity.py        # layer=domain          — is_directed_hostility: направленная враждебность vs бытовой мат
   reaction.py         # layer=domain          — reaction_emoji_for(mood): picker emoji из стандартного набора
@@ -161,15 +162,73 @@ THE анти-runaway-гардрейл. `mood_taste.modulate` — mood време
 источник тона), `brevity_directive(verbosity)` / `brevity_few_shot` (длина хода из решённой
 `Verbosity`), `engagement_directive(level)`, `sulk_directive`, `relationship_tone_directive`,
 `who_is_writing_directive` / `stranger_directive` (читают уже-вычисленный `kind.value`
-собеседника — БЕЗ runtime-импорта `InterlocutorKind`), `profanity_stance`,
+собеседника — БЕЗ runtime-импорта `InterlocutorKind`; `who_is_writing_directive` также
+доклеивает родовую клаузу по уже-вычисленному `gender.value` — «обращайся в женском/мужском
+роде», UNKNOWN → ничего, BOB-078 A, тоже без runtime-импорта Enum'а `Gender` из
+`kernel.interlocutor`), `profanity_stance`,
 `user_repeat_directive`, `improvement_directive`, `tactful_withhold_directive`
 (BOB-066.2.6 — тёплый отказ такта разглашения: гейт привилегий по-прежнему НЕ раскрывает
 приватные данные owner'а гостю, а эта строка лишь заменяет сухую стену на человечное «это
 лучше у него самого спросить», не роняя ни детали, ни намёка; чистая, application
-дописывает её ТОЛЬКО на guest owner_data-запрос). `language.py` — `language_directive`
+дописывает её ТОЛЬКО на guest owner_data-запрос). `operator_stance` (BOB-087.B2 —
+позитивная рамка поверх `guppi_canon`: когда доходит до работы с кодом, Боб — **оператор**,
+который направляет GUPPI и по-человечески реагирует на вехи своими словами (взялся / позеленело
+/ сломалось / готово-PR), а не построчный робот-нарратор; усиливает анти-нарратив-гейт BOB-074
+из голого запрета в позу — dev-реплики Боба короткие живые реакции, его характер, а не лог;
+чистая, вплетена в базовую персону). `guppi_no_roleplay_directive` (BOB-090.D3 — Боб НЕ
+отыгрывает GUPPI: живые эпизоды показали «GUPPI упрямо твердит…», «GUPPI посмотрел на меня с тем
+самым выражением, которое бывает у камня», «GUPPI, перенеси мой ответ в общий чат» — сразу два
+нарушения канона: приписал личность тому, у кого её нет, и подменил действие рассказом о
+действии (класс BOB-074). Директива запрещает говорить ЗА GUPPI, приписывать ему мнения, чувства
+и реплики и пересказывать свой приказ вместо самого дела — и НЕСЁТ ПОЛОЖИТЕЛЬНУЮ ЗАМЕНУ (вызови
+инструмент, дай результат, дальше говори от себя), потому что голый запрет recall-яд обходит.
+Разрешённое каноном ворчание про буквализм GUPPI она не трогает: это про характер Боба, а не про
+чувства исполнителя. Механику при этом озвучивает сам GUPPI своим ботом — см. ядро
+`bob.coding.speaker`. Чистая, вплетена в базовую персону рядом с `operator_stance`).
+`recall_has_work` / `recalled_work_directive`
+(BOB-087.C3 — провенанс-директива register-aware recall, зеркало self_action-строки: когда
+recall поднял ОДИН из СОБСТВЕННЫХ `work` dev-эпизодов Боба — его операторскую вспоминку, как
+он вёл GUPPI по коду — вплетается ЛЁГКИЙ анти-конфабуляционный бэкстоп: говори о ней от
+первого лица («я попросил GUPPI…»), честно про сбои и промахи, и НЕ выдумывай деталей — не
+смешивай работу с болтовнёй. `recall_has_work` — чистый предикат: True, если среди
+припомненного есть память с `category` `work` ИЛИ любым work-тегом (`work`/`dev`/`actor:bob`
+— документированное зеркало `memory.work_journal`, чтобы чистый personality-домен ничего не
+импортил из memory). Ортогональна self_action-строке: work-эпизод несёт event_type `work`,
+не `self_action`, поэтому обе могут сработать на одном ходу; нет work → строки нет,
+дефолтный путь байт-в-байт). `recalled_origin_directive`
+(BOB-090.C1 — провенанс «ГДЕ это было сказано», третий член того же семейства. Живой баг:
+Боб уверенно заявлял «я объяснил Норману в группе пару сообщений назад», хотя писал в
+личку (эпизод 3092) — метка `visibility` в памяти была, но в промпт не попадала, и место
+он домысливал. Чистая функция читает `visibility` припомненного и строит ОДНУ живую
+строку: всё сказано наедине, всё сказано при всех, либо и то и другое — и тогда строка
+предупреждает не путать одно с другим. 🔴 Неизвестный источник — пустой recall, старые
+строки без метки, незнакомое значение — не называется ВОВСЕ: молчание о месте честно,
+выдуманное место и есть чинимый дефект. Ничего не фильтрует: выборка recall читается
+целиком, сквозная память BOB-082 не тронута. Ось «где сказано» ортогональна оси регистра
+«про что» (`recalled_work_directive`), поэтому приватный work-эпизод поднимает обе строки.
+Метки видимости здесь — документированное ЗЕРКАЛО `bob.social.disclosure` под
+drift-guard-тестом, чтобы `personality` не импортировал `social`. За флагом
+`memory.origin_provenance`, ВЫКЛЮЧЕННЫМ по умолчанию. Флаг стоит на `VoiceComposer`, а не
+на ходе, чтобы регенерация анти-повтора видела тот же провенанс; OFF → системный промпт
+байт-в-байт). `language.py` — `language_directive`
 (персона говорит на своём языке). `reflection.py` — `build_reflection_prompt`: вплетает
 свежий контекст (недавние эпизоды + текущий тон) в промпт заземлённого монолога, лечит
 «застрявшую пластинку»; без свежего контекста возвращает generic-промпт дословно.
+
+🔴 **`guppi_voice_canon(*, prose_answer)` — досягаемость канона, а не второй канон
+(BOB-096.3).** До этого среза запрет отыгрывать GUPPI стоял в базовой персоне, то есть
+доезжал ровно до одной двери — разговорного хода. Рефлексия, переоценка, дайджест,
+проактивная реплика, дневник работы и выжимка фактов его не видели, а их вывод ложится в
+память и возвращается к модели её собственным few-shot (механизм BOB-074). Теперь текст
+канона отдаётся наружу одной функцией в двух формах: прозаической двери — ДОСЛОВНО
+`guppi_no_roleplay_directive()` (второго канона у Боба не завелось, это пинается тестом),
+машинной (`prose_answer=False`: JSON фактов, JSON правил, профиль пробуждения) — та же
+суть клаузой о записи, без прозаических указаний. Различать обязательно: в полной
+директиве есть «вызови инструмент… говори от себя, своим голосом», и канон без различения
+формы молча сломал бы JSON-контракт извлечения фактов. Функция чистая и о роутере ничего
+не знает: роутер получает её инъекцией и сообщает единственный факт о двери — читает ли
+ответ человек. Само вплетение живёт в `application/router` и в петле инструментов
+(`capabilities`), поэтому `personality` по-прежнему не импортирует ни того ни другого.
 
 ### Семейство реакций (BOB-050)
 
@@ -179,7 +238,9 @@ THE анти-runaway-гардрейл. `mood_taste.modulate` — mood време
 `parse_reaction_meaning`, `ReactionJudgeParseError` на мусоре). `reaction_effect.py` — чистое
 ядро «реакция меняет Боба»: `apply_reaction_to_mood` (тёплая реакция сперва тянет mood к
 baseline, потом ложится bounded-дельта — тот же путь соц. контагиона, что и текст),
-`nudge_relationship_warmth`, `NotableReaction` (лёгкая запись «меня получили», только когда
+`nudge_relationship_warmth` (клампит теплоту границами `kernel.relationship.MIN_AXIS`/
+`MAX_AXIS` — единственный источник инварианта оси, своей копии нет, bob-etb.8),
+`NotableReaction` (лёгкая запись «меня получили», только когда
 `worth_acknowledging`). `reaction_aloud.acknowledgment_hint` — редкий hint упомянуть это
 вслух; `reaction.reaction_emoji_for(mood)` — picker emoji из стандартного набора.
 
@@ -236,6 +297,15 @@ intake-воркер за `presence.series_budget.enabled` (см. `conversation`/
 на reflect-тике (идемпотентны в периоде). `RepoFascinationGrounding` / `StoreFascinationReader`
 (`fascination_sources.py`) — live-швы заземления и чтения.
 
+🔴 **Выбор увлечения ходит своей дверью `FASCINATION_PICK` (BOB-096.8).** Раньше он шёл
+`INNER_MONOLOGUE`, то есть числился служебным ходом, — а ответ модели ложится в
+`fascination_state` (SQLite) и неделями вплетается в контекст ответа как «меня сейчас
+занимает…». То есть дверь производит долгоживущий материал речи Боба: ей нужен канон о
+голосе (иначе тема вида «упрямство GUPPI» месяц звучала бы его увлечением и возвращалась
+припоминанием — механизм BOB-074), и аварийный дублёр выбирать её не вправе. При отвале
+шаг не теряется: тему даёт детерминированная опора на тот же реальный материал
+(последняя мысль + сильные вкусы), которая ничего не выдумывает.
+
 **Коллабораторы хода (BOB-062.6b, #9).** Декомпозиция `handle_message` вынесла «кто есть Боб»
 — его голос — в method-object'ы personality, собираемые в `HandleMessage.__init__`. Seeded-draw
 методы принимают опциональный турновый `rng`: при прямом unit-вызове без него — откат на
@@ -266,7 +336,11 @@ intake-воркер за `presence.series_budget.enabled` (см. `conversation`/
 ### Адаптеры (infrastructure)
 
 `LlmReactionJudge` (`adapters/reaction_judge.py`) — Tier-0 реализация `ReactionJudge`:
-чистый билдер промпта + router-вызов + чистый парсер → `ReactionMeaning`.
+чистый билдер промпта + router-вызов + чистый парсер → `ReactionMeaning`. 🔴 Его дверь
+`REACTION_JUDGE` числилась служебной, но `interpretation` вплетается в эпизод «X
+отреагировал 👍 на моё «…» — <прочтение>» и в стор заметных реакций, откуда возвращается
+припоминанием: с BOB-096.8 у неё `output_is_kept`, то есть канон о голосе ей досылается
+(в машинной форме — ответ разбирает код).
 `SqliteFascinationStore` (`adapters/fascination_store.py`) — per-persona увлечённость через
 `SqliteMemoryRepo.connection()`-шов. `KvNotableReactionStore`
 (`adapters/notable_reaction_store.py`) — единственная последняя запись «меня заметили» в
@@ -274,10 +348,15 @@ kv-таблице (`record`/`latest`/`clear` — hint всплывает не б
 
 ## Инварианты
 
-- **personality — стабильное ядро.** 0 runtime-зависимостей на `conversation`/`social`;
+- **personality — стабильное ядро, самый нижний модуль runtime-порядка вертикалей.**
+  Ни одного импорта `conversation`/`social`, в том числе под `TYPE_CHECKING` (с BOB-113
+  чужие понятия приходят из `kernel`: `Interlocutor`, `Relationship`, `RosterMember`,
+  `SulkState`, `RuleModulators`, `Recalled`, `MemoryRecall`, `MessageReceived`,
+  `ToolCallingProvider`).
   `voice.py` не импортит ни `Verbosity`/`EngagementLevel` из conversation (они теперь
-  здесь), ни `InterlocutorKind` из social (читает `kind.value`). Цикл `voice↔brevity/
-  engagement` разорван — `no-dependency-cycles` зелёный.
+  здесь), ни Enum'ы `InterlocutorKind`/`Gender` в runtime (читает `kind.value` и
+  `gender.value`). Цикл `voice↔brevity/engagement` разорван — `no-dependency-cycles`
+  зелёный.
 - **Mood/taste ограничены и не убегают.** Оси Mood в `[-1, 1]` (клампятся); эволюция вкуса
   масштабируется на `(1 - conviction)` — устоявшееся мнение почти не движется, tone
   детерминирован (тестируем без модели). `mood_taste.modulate` окрашивает вердикт ≤1 шага и
@@ -287,7 +366,10 @@ kv-таблице (`record`/`latest`/`clear` — hint всплывает не б
   `BOB_PERSONAL`/`SHARED` твёрдая позиция эскалирует от согласия к `PROPOSE_ALTERNATIVE`.
 - **Fascination заземлён и распадается.** Топик всегда из реальной внутренней жизни (не
   случаен), интенсивность гаснет по полураспаду в `[MIN, MAX]`, сдвиг — только когда страсть
-  выдохлась; фантом-эволюция ≤1 изменение за шаг, идемпотентна.
+  выдохлась; фантом-эволюция ≤1 изменение за шаг, идемпотентна. С BOB-096.8 тему не
+  выбирает и аварийный дублёр: дверь `FASCINATION_PICK` — «голос, который остаётся», а при
+  отвале облака шаг берёт детерминированную опору (последняя мысль + сильные вкусы), то
+  есть тема рождается без модели, а не теряется.
 - **Реакция → bounded MoodDelta от СМЫСЛА.** Знак и величина `mood_delta` идут от значения
   реакции, не от emoji; каждый сдвиг внутри BOB-030-полосы (нудж, не свинг); `NotableReaction`
   пишется только при `worth_acknowledging`.
@@ -318,7 +400,7 @@ kv-таблице (`record`/`latest`/`clear` — hint всплывает не б
 
 ## API
 
-&lt;!-- beadloom:track=src/bob/personality/ports.py -->
+<!-- beadloom:track=src/bob/personality/ports.py -->
 
 Модуль `src/bob/personality/ports.py` (порты-протоколы, только интерфейсы):
 - `MessageReactor` — react-only шов: поставить нативную emoji-реакцию на сообщение
@@ -329,6 +411,8 @@ kv-таблице (`record`/`latest`/`clear` — hint всплывает не б
   `SqliteFascinationStore`.
 - `NotableReactionStore` — лёгкий стор последней «меня получили»-реакции. Реализация —
   `KvNotableReactionStore`.
+- `CurrentFascinationReader` — шов чтения ТЕКУЩЕЙ живой увлечённости (состаренной, не
+  угасшей; `None` = нет, упоминание no-op). Переехал сюда из `handle_message.py` (BOB-113).
 
 Фасад `src/bob/personality/__init__.py` — вход в модуль. Канонический импорт портов —
 `from bob.personality.ports import MessageReactor` (транзитный ports-шим
@@ -339,9 +423,13 @@ kv-таблице (`record`/`latest`/`clear` — hint всплывает не б
   `taste_evolution.reinforce`, `mood_taste.modulate`, `negotiation.Negotiation`/`Stance`,
   `fascination.Fascination`, `phantom_evolution.evolve_phantoms`, `expression.decide_expression`
   (+ `Verbosity`/`EngagementLevel`/`ExpressionMode`/`FormHint`), `voice.tone_directive`/
-  `brevity_directive`/`engagement_directive`/`tactful_withhold_directive`,
-  `reaction_meaning.ReactionMeaning`,
-  `reaction_effect.apply_reaction_to_mood`, `reflection.build_reflection_prompt`, `soul.SOUL`,
+  `brevity_directive`/`engagement_directive`/`tactful_withhold_directive`/
+  `recall_has_work`/`recalled_work_directive` (BOB-087.C3),
+  `recalled_origin_directive` (BOB-090.C1), `guppi_no_roleplay_directive` (BOB-090.D3),
+  `guppi_voice_canon` (BOB-096.3 — тот же запрет в двух формах, реализация порта
+  `VoiceCanon` роутера), `reaction_meaning.ReactionMeaning`,
+  `reaction_effect.apply_reaction_to_mood`/`nudge_relationship_warmth`,
+  `reflection.build_reflection_prompt`, `soul.SOUL`, `state.PersonalityState` (BOB-113),
   `room_tone.room_tone_directive`/`room_engagement_bias` (+ `RoomToneThresholds`).
 - Use-case'ы: `usecases.UpdateMoodFromText`, `ApplyReflection`, `ReappraiseReflection`,
   `EvolveFascination`, `EvolvePhantoms`, `HeuristicReflectionParser`.
@@ -365,6 +453,19 @@ use-case в `application/usecases/`, вне вертикали. Долговеч
 - BDD-приёмка второго слоя: `tests/acceptance/features/room_tone.feature` +
   `tests/acceptance/steps/test_room_tone.py` (тяжёлая/поляризованная комната гасит игривость,
   личный mood не тронут).
+- Провенанс источника (BOB-090.C1): `tests/domain/personality/test_voice_origin_provenance.py`
+  (личка / комната / смесь / неизвестный источник → пустая строка) +
+  `tests/domain/personality/test_voice_composer_work_provenance.py` (ортогональность оси
+  регистра); BDD — `tests/acceptance/features/origin_provenance.feature` +
+  `tests/acceptance/steps/test_origin_provenance.py`.
+- Канон GUPPI в голосе (BOB-090.D3): `tests/domain/personality/test_voice_guppi_no_roleplay.py`
+  (там же обе формы `guppi_voice_canon` и то, что прозаическая совпадает с базовой
+  директивой ДОСЛОВНО); BDD — `tests/acceptance/features/guppi_canon.feature`.
+- Досягаемость канона до дверей personality (BOB-096): `tests/test_canon_reaches_every_door.py`
+  (тема увлечения настоящим `EvolveFascination`, прочтение реакции настоящим
+  `LlmReactionJudge`) и `tests/test_the_understudy_never_speaks_for_bob.py` (дублёр не
+  выбирает увлечение, но шаг переживает отвал); BDD —
+  `tests/acceptance/features/voice_that_stays.feature`.
 - Use-case'ы: `tests/application/usecases/test_update_mood_from_text.py`,
   `test_apply_reflection.py`, `test_reappraise_reflection.py`, `test_reflection_parser.py`,
   `test_evolve_fascination.py`, `test_evolve_phantoms.py`, `test_fascination_sources.py`.

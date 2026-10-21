@@ -16,7 +16,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from bob.social.interlocutor import Interlocutor, InterlocutorKind, Trust
+from bob.kernel.interlocutor import Interlocutor, InterlocutorKind, Trust
 from bob.social.usecases.first_impression_sources import FirstImpressionTracker
 
 if TYPE_CHECKING:

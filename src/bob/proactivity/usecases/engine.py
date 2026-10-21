@@ -28,7 +28,7 @@ flow, cheapest-first (so most ticks do nothing and make ZERO LLM calls):
    something worth saying right now, and what is the seed?". It leans to skip; a
    ``SKIP`` ends the tick with one cheap call and no message.
 5. **Compose + post** — on a non-skip seed, first recall relevant REAL memory via
-   :class:`~bob.memory.ports.MemoryRecall` and hand it to the compose prompt so Bob
+   :class:`~bob.kernel.ports.MemoryRecall` and hand it to the compose prompt so Bob
    grounds the message in something that actually happened (never confabulates a
    shared moment), pinning the persona language (BOB-012). Compose via the router
    (reply-tier selection: usually the fast model, the quality model for something
@@ -70,14 +70,11 @@ if TYPE_CHECKING:
     from random import Random
 
     from bob.application.router.llm_router import LLMRouter
-    from bob.application.usecases.handle_message import (
-        CurrentFascinationReader,
-        PersonalityState,
-        ReplyGateway,
-    )
-    from bob.kernel.ports import Clock
-    from bob.memory.ports import MemoryRecall, Recalled
+    from bob.kernel.episode_types import Recalled
+    from bob.kernel.ports import Clock, MemoryRecall, ReplyGateway
     from bob.personality.mood import Mood
+    from bob.personality.ports import CurrentFascinationReader
+    from bob.personality.state import PersonalityState
     from bob.proactivity.decision import ProactiveDecider
     from bob.proactivity.social_energy import SocialEnergy
 

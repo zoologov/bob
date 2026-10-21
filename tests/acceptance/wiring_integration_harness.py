@@ -31,7 +31,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from bob.app import build_application
-from bob.application.runtime.events import MessageReceived
+from bob.kernel.events import MessageReceived
 from bob.runtime.config import _BOB_PERSONA
 from tests.acceptance.fake_gateway import (
     CHAT_ID,

@@ -3,6 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=runtime
+# beadloom:layer=runtime
 
 """Composition-root proactivity wiring — the proactivity engine + background-task schedule.
 
@@ -43,7 +45,6 @@ if TYPE_CHECKING:
 
     from bob.application.router import LLMRouter
     from bob.application.runtime.agent import BackgroundTask
-    from bob.application.usecases.handle_message import PersonalityState, ReplyGateway
     from bob.application.usecases.heartbeat import (
         InnerMonologueTick,
         MoodDriftTick,
@@ -52,9 +53,9 @@ if TYPE_CHECKING:
     from bob.conversation.conversation import RepeatThresholds
     from bob.infrastructure.telegram.multibot import MultiBotGateway
     from bob.infrastructure.telegram.restart_notifier import _PlainNotifyBot
-    from bob.kernel.ports import Clock
+    from bob.kernel.ports import Clock, MemoryRecall, ReplyGateway
     from bob.memory.adapters import SqliteMemoryRepo
-    from bob.memory.ports import MemoryRecall
+    from bob.personality.state import PersonalityState
     from bob.personality.usecases.fascination_sources import StoreFascinationReader
     from bob.proactivity.adapters import SqliteProactivityStore
     from bob.proactivity.adapters.restart_marker_store import _KvStore

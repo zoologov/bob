@@ -14,7 +14,7 @@ perceiving use-case folds this identity into the reaction judgment, keyed per-pe
 
 from __future__ import annotations
 
-from bob.social.interlocutor import InterlocutorKind, Trust
+from bob.kernel.interlocutor import InterlocutorKind, Trust
 from bob.social.usecases import Authorizer, ReactorPerception
 
 _OWNER = 1

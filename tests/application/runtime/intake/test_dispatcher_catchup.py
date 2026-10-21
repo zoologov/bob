@@ -19,8 +19,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.application.runtime.catch_up_reentry import CatchUpReentry
-from bob.application.runtime.events import MessageReceived
 from bob.application.runtime.intake.dispatcher import ChatDispatcher
+from bob.kernel.events import MessageReceived
 
 if TYPE_CHECKING:
     from bob.application.runtime.intake.scope import TurnScope

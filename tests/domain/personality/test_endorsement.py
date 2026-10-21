@@ -15,12 +15,12 @@ by requiring the endorsement to name them, so a warm word about Лёша never w
 
 from __future__ import annotations
 
+from bob.kernel.relationship import Relationship
 from bob.social.endorsement import (
     detected_endorsement,
     endorsement_seed,
     owner_endorsed_sender,
 )
-from bob.social.relationship import Relationship
 
 
 def test_plain_message_is_not_an_endorsement() -> None:

@@ -19,7 +19,7 @@ path (privacy: inner life never escalates to the remote API):
 * :class:`ReflectTick` — a periodic Tier 0 reflection, logged as an episode so the
   experience is remembered.
 
-All three read/write the shared :class:`~bob.application.usecases.handle_message.PersonalityState`
+All three read/write the shared :class:`~bob.personality.state.PersonalityState`
 so ticks and message handling see one consistent mood.
 """
 
@@ -44,8 +44,8 @@ if TYPE_CHECKING:
     from random import Random
 
     from bob.application.router.llm_router import LLMRouter
-    from bob.application.usecases.handle_message import PersonalityState
     from bob.kernel.ports import Clock, JsonValue
+    from bob.personality.state import PersonalityState
     from bob.personality.taste import TasteEngine
     from bob.personality.usecases.apply_reflection import ApplyReflection
     from bob.personality.usecases.reappraise_reflection import ReappraisalOutcome

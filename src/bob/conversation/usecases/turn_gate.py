@@ -48,7 +48,6 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
     from random import Random
 
-    from bob.application.runtime.events import MessageReceived
     from bob.conversation.conversation_floor import FloorHolder
     from bob.conversation.response_choice import ResponseChoice
     from bob.conversation.room_reading import RoomMood, RoomReading
@@ -60,11 +59,12 @@ if TYPE_CHECKING:
     from bob.conversation.usecases.floor_manager import FloorManager
     from bob.conversation.usecases.read_the_room import ReadTheRoom
     from bob.conversation.usecases.recall_assembler import RecallAssembler
+    from bob.kernel.events import MessageReceived
+    from bob.kernel.interlocutor import Interlocutor
+    from bob.kernel.modulators import RuleModulators
     from bob.personality.expression import ExpressionPlan
     from bob.personality.ports import MessageReactor
     from bob.personality.soul import SOUL
-    from bob.proactivity.self_improvement import RuleModulators
-    from bob.social.interlocutor import Interlocutor
 
 logger = logging.getLogger(__name__)
 

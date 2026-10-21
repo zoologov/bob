@@ -6,3 +6,11 @@ scan_paths:
 - src
 sync:
   hook_mode: warn
+# Идентичность портала (`beadloom docs site`, BOB-112 .4). Контент портала коммитится под site/;
+# рукописное — только оверлей `.beadloom/site/` (копируется последним): домашняя страница и
+# лендинг `public/bob-architecture.html`.
+site:
+  title: Bob
+  description: "Автономный Telegram-компаньон со своей личностью: живая документация — архитектура, домены и весь Higher Mind."
+  base: /bob/
+  repo_url: https://github.com/zoologov/bob

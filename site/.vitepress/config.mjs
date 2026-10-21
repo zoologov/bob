@@ -1,55 +1,80 @@
-// Committed VitePress scaffold for the Bob showcase site.
+// beadloom:generated version=9.0.0 sha256=95ca1b75478efe40923e6be1009a9273a977ffbaea7c56de6724b42dac4c1d8e; written by `beadloom docs site`, a change belongs in .beadloom/site/.vitepress/config.mjs
+// The VitePress config of a portal written by `beadloom docs site`.
 //
-// Beadloom produces, VitePress renders: `beadloom docs site --out site`
-// regenerates the content tree (index.md, per-node pages, config.generated.mjs
-// with nav/sidebar). This file is the stable shell that imports that generated
-// nav/sidebar, enables Mermaid, and publishes the full architecture landing.
+// Beadloom produces, VitePress renders. `beadloom docs site` writes this file
+// from the installed beadloom package, next to two modules it generates on
+// every run:
+// - `site.generated.mjs`: the portal's identity (title, description, base path,
+//   repository link and its icon, the project's logo and how it is drawn, the
+//   favicons, the footer switch), from the `site:` block of `.beadloom/config.yml`;
+// - `config.generated.mjs`: the nav and the sidebar, from the graph.
+// Nothing here names a project. To change the portal, put a file under
+// `.beadloom/site/` at the same path: it is copied over the output last.
 //
-// Served as a GitHub *project page* at https://zoologov.github.io/bob/.
-// Run `npm ci && npm run docs:build` to render (CI does this in deploy-site.yml).
+// Render with `npm ci && npm run docs:build`.
 
 import { withMermaid } from "vitepress-plugin-mermaid";
+import { importGenerated } from "./generated.mjs";
 
-// The generated nav/sidebar. Regenerate with `beadloom docs site` before build.
-let nav = [];
-let sidebar = [];
-try {
-  const generated = await import("./config.generated.mjs");
-  nav = generated.nav ?? [];
-  sidebar = generated.sidebar ?? [];
-} catch {
-  // config.generated.mjs is produced by `beadloom docs site`; absent on a
-  // fresh checkout before the first generation.
+// Empty before the first generation; a module that exists and fails to load stops the build.
+const { nav = [], sidebar = [] } = await importGenerated(
+  new URL("./config.generated.mjs", import.meta.url)
+);
+const { site = {} } = await importGenerated(new URL("./site.generated.mjs", import.meta.url));
+const base = site.base || "/";
+/** A path the identity names from the portal's root, under the base. */
+const underBase = (path) => `${base}${path.replace(/^\//, "")}`;
+// The favicons the identity names: the project's logo when it has one of its own,
+// Beadloom's icon and its two PNGs otherwise, the second behind a dark-scheme media
+// query. A `head` entry is written as it is, so the base is prepended here.
+const favicons = (site.favicons || []).map((icon) => [
+  "link",
+  { rel: "icon", ...icon, href: underBase(icon.href) },
+]);
+
+/**
+ * The project's logo in the nav; none without one. A logo drawn in `currentColor`
+ * is marked for the theme's stylesheet (`theme/app/styles/nav-logo.css`), which
+ * draws it in the text's colour through the file as a mask: an image cannot
+ * inherit the page's colour, and would be black on the dark theme.
+ */
+function navLogo() {
+  if (!site.logo) return undefined;
+  if (!site.logoMonochrome) return site.logo;
+  const mask = `--bl-nav-logo: url("${underBase(site.logo)}")`;
+  return { src: site.logo, "data-monochrome": "", style: mask };
 }
 
-// The full multi-layer architecture landing (mermaid + click-zoom) shipped as a
-// self-contained HTML asset in public/ — linked from the top nav.
-const archLink = { text: "Схема архитектуры", link: "https://zoologov.github.io/bob/bob-architecture.html", target: "_self" };
-
 export default withMermaid({
-  title: "Bob",
-  description:
-    "Автономный Telegram-компаньон со своей личностью: живая документация — архитектура, домены и весь Higher Mind.",
-  base: "/bob/",
+  title: site.title,
+  description: site.description,
+  // VitePress prepends the base to Markdown and nav links during the build. The
+  // Mermaid `click "/services/…"` directives are raw strings the plugin does not
+  // rewrite, so the diagram viewer prepends `import.meta.env.BASE_URL` to them at
+  // runtime, which keeps the generated Markdown independent of the base.
+  base,
+  head: favicons,
   lastUpdated: false,
-  // Bare `<` in Bob's raw Markdown (docs/ mirror) reads as an unclosed HTML tag
-  // and trips Vue's template compiler — sanitize-content.py escapes those before
-  // the build, so the whole docs tree ships (no 404 on sidebar links).
-  ignoreDeadLinks: true,
-  // vitepress-plugin-mermaid: keep mermaid + its ESM deps bundled for the client
-  // so the C4/flowchart diagrams render in the browser under the /bob/ base.
-  vite: {
-    optimizeDeps: { include: ["mermaid"] },
-    ssr: { noExternal: ["vitepress-plugin-mermaid", "mermaid"] },
-  },
   themeConfig: {
-    nav: [...nav, archLink],
+    nav,
     sidebar,
-    socialLinks: [
-      { icon: "github", link: "https://github.com/zoologov/bob" },
-    ],
+    // The project's own logo, copied under `public/` by `docs site`; none without one.
+    logo: navLogo(),
+    socialLinks: site.repoUrl ? [{ icon: site.repoIcon, link: site.repoUrl }] : [],
+    // The "Powered by Beadloom" footer; on unless the project switched it off.
+    poweredBy: site.poweredBy !== false,
   },
-  mermaid: {
-    // Mermaid renderer options (C4 + flowchart render natively).
+  mermaid: {},
+  // The Mermaid plugin loads `mermaid` from inside VitePress's own client, which
+  // the dev server serves without pre-bundling, so Mermaid's CommonJS
+  // dependencies (`fastdom` first) reach the browser as they are and a page
+  // throws before it mounts. Pre-bundling Mermaid turns them into ES modules.
+  // The layout worker's ELK engine is named too: the optimizer does not scan
+  // workers, so it would find the engine only on the first visit to the
+  // architecture page and reload that page under the reader. The build bundles
+  // everything and is not affected; `npm run dev-check` loads the pages under
+  // the dev server to keep it that way.
+  vite: {
+    optimizeDeps: { include: ["mermaid", "elkjs/lib/elk-worker.min.js"] },
   },
 });

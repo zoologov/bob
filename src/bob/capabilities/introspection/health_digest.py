@@ -265,15 +265,57 @@ def _is_machine(line: str) -> bool:
 
 
 def _digest_diff(lines: list[str]) -> list[str]:
-    """``diff``: the changes, keeping the trailing counts line even when truncated."""
+    """``diff``: the changes, keeping the trailing counts line even when truncated.
+
+    A diff that fits is passed through whole. One that does not is first reduced to its
+    SKELETON — every added/removed/changed entry, every ``tags:`` change, the section
+    names and the counts line — because the CLI reprints a changed node's old AND new
+    summary (a paragraph each), and two such nodes push every ``+`` entry past the
+    budget: the owner asked what changed, and an added node IS the change while a
+    reprinted paragraph is not (BOB-112, caught live). Each dropped description is owned
+    up to with one marker per changed node, never silently. Only then is the head cap
+    applied, with the same honest tail as before.
+    """
     if len(lines) <= MAX_REPORT_LINES:
         return lines
-    hidden = len(lines) - MAX_REPORT_LINES + 1
+    skeleton = _diff_skeleton(lines)
+    if len(skeleton) <= MAX_REPORT_LINES:
+        return skeleton
+    hidden = len(skeleton) - MAX_REPORT_LINES + 1
     return [
-        *lines[: MAX_REPORT_LINES - 2],
+        *skeleton[: MAX_REPORT_LINES - 2],
         f"…ещё {hidden} строк(и) изменений.",
-        lines[-1],
+        skeleton[-1],
     ]
+
+
+# A node or edge entry of ``diff`` (de-framed): ``+ name (kind)``, ``- name (kind)``,
+# ``~ name (kind)``, ``+ a --[kind]--> b`` / ``+ a ----> b``.
+_DIFF_ENTRY_RE = re.compile(r"^[+~-] \S+( \([a-z][a-z-]*\)| --.*--> \S+)$")
+# What else the skeleton keeps: the header, the section names, a tag change.
+_DIFF_KEEP_RE = re.compile(r"^(Graph diff|Nodes:|Edges:|tags: )")
+_DESCRIPTION_CHANGED = "описание изменено ({count} строк(и) скрыто)"
+
+
+def _diff_skeleton(lines: list[str]) -> list[str]:
+    """The structural lines of a de-framed ``diff``; dropped descriptions are marked once.
+
+    The marker carries the COUNT of lines it stands for, so the reader knows how much
+    was folded under it — the same honesty as the "…ещё N строк" tail.
+    """
+    kept: list[str] = []
+    dropped = 0
+    for line in lines[:-1]:
+        if _DIFF_ENTRY_RE.match(line) or _DIFF_KEEP_RE.match(line):
+            if dropped:
+                kept.append(_DESCRIPTION_CHANGED.format(count=dropped))
+                dropped = 0
+            kept.append(line)
+        elif line:
+            dropped += 1
+    if dropped:
+        kept.append(_DESCRIPTION_CHANGED.format(count=dropped))
+    return [*kept, lines[-1]]
 
 
 def _capped_line(entry: str) -> str:

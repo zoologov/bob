@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.capabilities.ports import WebSearchProvider, WebSearchResult
+from bob.capabilities.ports import WebSearchResult
 from bob.conversation.usecases.verify_step import (
     _FORCED_TOPIC_MAX_CHARS,
     _VERIFY_HEDGE_NOTE,
@@ -27,6 +27,7 @@ from bob.conversation.usecases.verify_step import (
 )
 
 if TYPE_CHECKING:
+    from bob.conversation.ports import VerifySearch
     from bob.conversation.volatility_judgment import VolatilityContext, VolatilityVerdict
 
 
@@ -59,7 +60,7 @@ def _no_announcer(*, chat_id: int, sender_name: str) -> VerifyInterimAnnouncer:
     raise AssertionError("no interim without chat_id")
 
 
-def _step(provider: WebSearchProvider, *, timeout: float = 1.0) -> VerifyStep:
+def _step(provider: VerifySearch, *, timeout: float = 1.0) -> VerifyStep:
     return VerifyStep(
         verify_judge=_ExplodingJudge(),  # must not be called on a forced verify
         verify_provider=provider,

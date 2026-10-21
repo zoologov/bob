@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from bob.social.interlocutor import Trust
+from bob.kernel.interlocutor import Trust
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence

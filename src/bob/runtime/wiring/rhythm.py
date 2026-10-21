@@ -3,6 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=runtime
+# beadloom:layer=runtime
 
 """Composition-root rhythm wiring — the presence rhythm layer behind ``presence.rhythm``.
 

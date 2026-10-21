@@ -57,11 +57,39 @@ from contextlib import aclosing
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
 
-from bob.coding import session_voice
 from bob.coding.entities import CodingOutcome, CodingSession
 from bob.coding.naming import worktree_branch
 from bob.coding.narrate import narrate
-from bob.coding.ports import LiveRunStreamer, OwnerCheck, OwnerNotifier
+from bob.coding.ports import (
+    LiveRunStreamer,
+    OwnerCheck,
+    OwnerNotifier,
+    StatusPanel,
+    TypingKeepalive,
+)
+from bob.coding.session_voice import (
+    accepted,
+    busy,
+    cannot_approve,
+    dev_pointer,
+    failed,
+    narration_capped,
+    no_changes,
+    no_session,
+    panel_executing,
+    panel_failed,
+    panel_plan_ready,
+    panel_planning,
+    panel_pr,
+    panel_ready_for_pr,
+    panel_stopped,
+    plan,
+    pr,
+    ready_for_pr,
+    status_idle,
+    status_line,
+    stopped,
+)
 from bob.coding.speaker import MessageKind, channel_for
 from bob.coding.state import CodingSessionState, can_approve_plan, is_terminal
 from bob.coding.work_facts import WorkFactsAccumulator, WorkOutcome
@@ -69,7 +97,6 @@ from bob.memory.self_action import SelfAction, SelfActionKind, coding_terminal_k
 from bob.social.disclosure import VISIBILITY_OWNER_PRIVATE
 
 if TYPE_CHECKING:
-    from contextlib import AbstractAsyncContextManager
     from datetime import datetime
 
     from bob.coding.ports import ClaudeCodeRunner, CodingSessionStore, PullRequestOpener, Worktree
@@ -130,40 +157,6 @@ def notifier_for(
     нотификатор, и любой вердикт приводит в него же — поведение байт-в-байт как раньше.
     """
     return channel_for(kind, bob=bob, guppi=guppi)
-
-
-class TypingKeepalive(Protocol):
-    """Сейм индикатора «Боб печатает…» на время долгих немых прогонов claude (BOB-046 .2).
-
-    Ноль-арг фабрика async-контекст-менеджера: на вход — typing-action в топик Боба, на
-    выход — он гаснет. Реализуется в композиции адаптером над ботом Боба (реюз идиомы
-    BOB-009 ``typing_indicator`` с keepalive-рефрешем, чтобы 5-секундный typing не
-    истекал в минутной паузе). Use-case ОБОРАЧИВАЕТ им plan- и execute-прогоны; незавязан
-    (``None``) → no-op (индикатор просто отсутствует, без падения).
-    """
-
-    def __call__(self) -> AbstractAsyncContextManager[None]:
-        """Открыть keepalive на время прогона (закрытие гасит индикатор)."""
-        ...
-
-
-class StatusPanel(Protocol):
-    """Сейм одного editable сообщения-статуса по фазам сессии (BOB-046 .2).
-
-    «Живая панель»: ОДНО сообщение, отправленное на старте (``open``) и РЕДАКТИРУЕМОЕ по
-    фазам (``update``: план → выполняю → PR/провал/стоп) — не спам новых сообщений.
-    Реализуется адаптером над ботом Боба (``editMessageText``); если редактировать нечем
-    (нет id / не поддержано) — деградирует в no-op (current behavior: без статус-строки).
-    Незавязан (``None``) → no-op. Дополняет, а НЕ заменяет гейт/нарратив-сообщения.
-    """
-
-    async def open(self, text: str) -> None:
-        """Послать стартовое сообщение-статус (best-effort, транспорт за адаптером)."""
-        ...
-
-    async def update(self, text: str) -> None:
-        """Отредактировать то же сообщение под новую фазу (no-op, если нечего править)."""
-        ...
 
 
 class CodingContext(Protocol):
@@ -290,14 +283,14 @@ class CodingAssistant:
         if not self._owner.is_owner(sender):
             return _refused()
         if await self._active_session() is not None:
-            return await self._reply(False, session_voice.busy(), session=None)
+            return await self._reply(False, busy(), session=None)
         # Bob's voice: he takes the task on (first person) and directs GUPPI — sent
         # before planning so the owner sees Bob accept immediately (BOB-041 .3).
-        await self._say(MessageKind.SESSION_GATE, session_voice.accepted())
+        await self._say(MessageKind.SESSION_GATE, accepted())
         # Work indicator (BOB-046 .2): one editable status panel opened up front, so the
         # owner sees "⏳ Прикидываю план…" during the silent claude wait instead of a minute
         # of nothing. It is EDITED (never re-sent) through the phases below.
-        await self._panel.open(session_voice.panel_planning())
+        await self._panel.open(panel_planning())
         now = self._clock.now()
         branch = worktree_branch(task)
         path = await self._worktree.create(branch)
@@ -313,17 +306,17 @@ class CodingAssistant:
         await self._store.save(session)
         try:
             async with self._typing():  # "Bob is typing…" through the long plan wait
-                plan = await self._run_plan(session, path)
+                plan_text = await self._run_plan(session, path)
         except Exception as exc:  # fault isolation: a runner fault is an honest FAILED
             logger.exception("coding: plan run failed for %s", session.id)
             return await self._fail(session, exc, cleanup=True, sender=sender)
-        session = session.with_plan(plan, at=self._clock.now()).with_state(
+        session = session.with_plan(plan_text, at=self._clock.now()).with_state(
             CodingSessionState.PLAN_READY, at=self._clock.now()
         )
         await self._store.save(session)
         await self._record(SelfAction(SelfActionKind.CODING_STARTED, target=task), sender)
-        await self._panel.update(session_voice.panel_plan_ready())
-        return await self._reply(True, session_voice.plan(plan), session=session)
+        await self._panel.update(panel_plan_ready())
+        return await self._reply(True, plan(plan_text), session=session)
 
     async def approve_plan(self, sender: int | None) -> CodingOutcome:
         """Owner-only гейт плана: ``PLAN_READY → EXECUTING`` → нарратив → открыть PR.
@@ -337,10 +330,10 @@ class CodingAssistant:
             return _refused()
         session = await self._active_session()
         if session is None or not can_approve_plan(session.state):
-            return await self._reply(False, session_voice.cannot_approve(), session=session)
+            return await self._reply(False, cannot_approve(), session=session)
         path = session.worktree_path
         if path is None:  # pragma: no cover - PLAN_READY always carries a worktree
-            return await self._reply(False, session_voice.cannot_approve(), session=session)
+            return await self._reply(False, cannot_approve(), session=session)
         session = session.with_state(CodingSessionState.EXECUTING, at=self._clock.now())
         await self._store.save(session)
         try:
@@ -360,15 +353,15 @@ class CodingAssistant:
             return _refused()
         session = await self._active_session()
         if session is None:
-            return await self._reply(False, session_voice.no_session(), session=None)
+            return await self._reply(False, no_session(), session=None)
         # Signal any in-flight narrate loop to break (→ runner closed → process killed).
         self._cancelled.add(session.id)
         session = session.with_state(CodingSessionState.CANCELLED, at=self._clock.now())
         await self._store.save(session)
         await self._record(SelfAction(SelfActionKind.CODING_ABORTED, target=session.task), sender)
         await self._cleanup(session.worktree_path)
-        await self._panel.update(session_voice.panel_stopped())
-        return await self._reply(True, session_voice.stopped(), session=session)
+        await self._panel.update(panel_stopped())
+        return await self._reply(True, stopped(), session=session)
 
     async def status(self, sender: int | None) -> CodingOutcome:
         """Owner-only: доложить состояние текущей сессии (или что её нет)."""
@@ -376,7 +369,7 @@ class CodingAssistant:
             return _refused()
         session = await self._active_session()
         if session is None:
-            return await self._reply(True, session_voice.status_idle(), session=None)
+            return await self._reply(True, status_idle(), session=None)
         return await self._reply(True, _status_message(session), session=session)
 
     async def active_state(self) -> CodingSessionState | None:
@@ -421,11 +414,11 @@ class CodingAssistant:
         # stream events by ``_narrate_run`` — the DISTILLED substance of the session (files /
         # tests / what-broke), never the firehose. Journaled ONCE at the terminal below.
         facts = WorkFactsAccumulator()
-        await self._panel.update(session_voice.panel_executing())
+        await self._panel.update(panel_executing())
         async with self._typing():  # "Bob is typing…" through the long execute wait
             await self._narrate_run(session, path, sender, facts)
         if session.id in self._cancelled:  # a stop landed mid-run — do not open a PR
-            return CodingOutcome(ok=False, message=session_voice.stopped(), session=session)
+            return CodingOutcome(ok=False, message=stopped(), session=session)
         committed = await self._worktree.commit_and_push(
             path, session.branch, _commit_message(session)
         )
@@ -443,8 +436,8 @@ class CodingAssistant:
                 sender,
             )
             await self._journal(session.task, facts, WorkOutcome.FAILED, sender)
-            await self._panel.update(session_voice.panel_failed())
-            return await self._reply(False, session_voice.no_changes(), session=session)
+            await self._panel.update(panel_failed())
+            return await self._reply(False, no_changes(), session=session)
         pr_url = await self._pr_opener.open(
             session.branch, _pr_title(session), _pr_body(session)
         )
@@ -462,10 +455,10 @@ class CodingAssistant:
         # Голос идёт ЗА фактом (BOB-089.D): PR открыт — «вот PR»; работа лишь доведена до
         # ветки в форке Боба — честная реплика со ссылкой на форму, где создаёт PR owner.
         if self._opens_pr:
-            await self._panel.update(session_voice.panel_pr())
-            return await self._reply(True, session_voice.pr(pr_url), session=session)
-        await self._panel.update(session_voice.panel_ready_for_pr())
-        return await self._reply(True, session_voice.ready_for_pr(pr_url), session=session)
+            await self._panel.update(panel_pr())
+            return await self._reply(True, pr(pr_url), session=session)
+        await self._panel.update(panel_ready_for_pr())
+        return await self._reply(True, ready_for_pr(pr_url), session=session)
 
     async def _run_plan(self, session: CodingSession, path: str) -> str:
         """Run plan-mode, collecting the plan text (a plan with NO edits — the gate).
@@ -536,7 +529,7 @@ class CodingAssistant:
         """
         # The pointer is Bob telling a PERSON where to look — addressed speech, not
         # mechanics — so the canon core keeps it on his channel (BOB-090.D).
-        await self._say(MessageKind.ADDRESSED_TO_PERSON, session_voice.dev_pointer())
+        await self._say(MessageKind.ADDRESSED_TO_PERSON, dev_pointer())
         assert self._live_streamer is not None  # narrowed by the caller
         await self._live_streamer.stream(
             stream, is_cancelled=lambda: session.id in self._cancelled
@@ -577,7 +570,7 @@ class CodingAssistant:
             if capped:  # past the cap: swallow interim progress until the result
                 continue
             if progress >= _MAX_NARRATION:  # cap hit: one notice, then go quiet
-                await self._say(MessageKind.REACTION, session_voice.narration_capped())
+                await self._say(MessageKind.REACTION, narration_capped())
                 # Autobiographical trace of the flood (BOB-076): recorded EXACTLY ONCE
                 # per run — right here where the cap trips, not per narration line.
                 await self._record(
@@ -617,10 +610,10 @@ class CodingAssistant:
             SelfAction(SelfActionKind.CODING_FAILED, target=session.task, detail=str(exc)),
             sender,
         )
-        await self._panel.update(session_voice.panel_failed())
+        await self._panel.update(panel_failed())
         if cleanup:
             await self._cleanup(session.worktree_path)
-        return await self._reply(False, session_voice.failed(str(exc)), session=session)
+        return await self._reply(False, failed(str(exc)), session=session)
 
     async def _record(self, action: SelfAction, sender: int | None) -> None:
         """Best-effort autobiography write — a recording fault NEVER breaks coding.
@@ -799,7 +792,7 @@ def _refused() -> CodingOutcome:
 
 def _status_message(session: CodingSession) -> str:
     """Render the owner-facing status line for the in-flight session (Bob's voice)."""
-    return session_voice.status_line(
+    return status_line(
         task=session.task, state=session.state.value, branch=session.branch
     )
 
@@ -817,8 +810,11 @@ def _pr_title(session: CodingSession) -> str:
 
 def _pr_body(session: CodingSession) -> str:
     """The PR body — the task plus the approved plan (transparency for the owner)."""
-    plan = session.plan or ""
-    return f"Задача: {session.task}\n\nПлан:\n{plan}".strip()
+    # ``plan_text``, not ``plan``: the bare name ``plan`` is the imported voice function
+    # (BOB-112.10 rewrote ``from bob.coding import session_voice`` into direct names), and a
+    # local that shadows it is a trap for the next edit (review .13 nit).
+    plan_text = session.plan or ""
+    return f"Задача: {session.task}\n\nПлан:\n{plan_text}".strip()
 
 
 def _with_preamble(preamble: str, prompt: str) -> str:

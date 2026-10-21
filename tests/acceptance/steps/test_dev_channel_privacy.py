@@ -33,12 +33,12 @@ from bob.application.usecases.disclosure_consent_gate import DisclosureConsentGa
 from bob.coding import session_voice
 from bob.coding.adapters.live_stream import _DmLiveStreamer
 from bob.coding.narrate import narrate
+from bob.kernel.interlocutor import Trust
 from bob.social.disclosure import (
     VISIBILITY_OWNER_PRIVATE,
     VISIBILITY_PUBLIC,
     filter_surfaceable,
 )
-from bob.social.interlocutor import Trust
 from tests.acceptance.dev_channel_harness import (
     RecordingNotifier,
     RecordingPanel,

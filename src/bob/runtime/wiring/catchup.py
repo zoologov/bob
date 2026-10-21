@@ -3,6 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=runtime
+# beadloom:layer=runtime
 
 """Composition-root catch-up wiring — «догоняющий» behind ``presence.catchup``.
 
@@ -27,8 +29,7 @@ from bob.runtime.config import _flag, _float_or, _int, _section
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from bob.application.usecases.handle_message import BobUserIdSource
-    from bob.kernel.ports import Clock
+    from bob.kernel.ports import BobUserIdSource, Clock
 
 # The gap (hours) beyond which a drained batch reads as a re-entry (Bob was away), and the
 # default total action budget for one catch-up pass (every focal message plus ambient up to it).

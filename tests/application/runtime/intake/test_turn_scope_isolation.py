@@ -20,9 +20,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.application.runtime.events import MessageReceived
 from bob.application.runtime.intake.dispatcher import ChatDispatcher
 from bob.application.runtime.intake.scope import new_turn_scope
+from bob.kernel.events import MessageReceived
 
 if TYPE_CHECKING:
     from bob.application.runtime.intake.scope import TurnScope

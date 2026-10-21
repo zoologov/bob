@@ -39,11 +39,11 @@ from bob.coding.usecases.work_journal_recorder import (
     NoOpWorkJournalRecorder,
 )
 from bob.coding.work_facts import WorkFactsAccumulator, WorkOutcome
+from bob.kernel.interlocutor import Trust
 from bob.memory.adapters.fts_recall import Fts5MemoryRecall
 from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 from bob.memory.work_journal import WORK_EVENT_TYPE
 from bob.social.disclosure import filter_surfaceable
-from bob.social.interlocutor import Trust
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence

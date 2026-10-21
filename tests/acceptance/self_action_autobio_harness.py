@@ -34,18 +34,18 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from bob.conversation.conversation import recalled_excluding_reflections
+from bob.kernel.interlocutor import Trust
 from bob.memory.adapters.fts_recall import Fts5MemoryRecall
 from bob.memory.adapters.self_action_recorder import MemoryBackedSelfActionRecorder
 from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 from bob.personality.voice import recall_has_self_action, recalled_self_action_directive
 from bob.social.disclosure import VISIBILITY_OWNER_PRIVATE, filter_surfaceable
-from bob.social.interlocutor import Trust
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from bob.memory.ports import Recalled
+    from bob.kernel.episode_types import Recalled
     from bob.memory.self_action import SelfAction
 
 _OWNER_ID = 27468732

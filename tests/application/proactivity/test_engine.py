@@ -22,10 +22,10 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from bob.application.router.llm_router import LLMRouter
-from bob.application.usecases.handle_message import PersonalityState
 from bob.conversation.conversation import RepeatThresholds
 from bob.personality.mood import Mood
 from bob.personality.soul import SOUL
+from bob.personality.state import PersonalityState
 from bob.personality.taste import TasteEngine
 from bob.proactivity.decision import ProactiveDecider
 from bob.proactivity.governance import (

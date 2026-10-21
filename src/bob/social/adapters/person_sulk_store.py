@@ -11,7 +11,7 @@
 Realises :class:`bob.social.ports.PersonSulkStore` over the ``person_sulk`` table: one
 row per ``(persona_id, sender_id)`` so Bob can cool toward a SINGLE participant of a
 multi-party thread without it touching his tone toward anyone else. The domain
-:class:`~bob.social.sulk.SulkState` (the active flag, the decaying intensity, the
+:class:`~bob.kernel.sulk.SulkState` (the active flag, the decaying intensity, the
 low/hostile streak, the entry stamp, and the one-shot ``announced`` flag) is mapped to
 and from a row here, so the domain stays I/O-free.
 
@@ -30,7 +30,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
-from bob.social.sulk import SulkState
+from bob.kernel.sulk import SulkState
 
 if TYPE_CHECKING:
     import aiosqlite

@@ -18,9 +18,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from bob.application.runtime.events import MessageReceived
 from bob.application.runtime.intake import ChatDispatcher, make_focus_predicate
 from bob.conversation.addressivity import ResponseOutcome
+from bob.kernel.events import MessageReceived
 
 if TYPE_CHECKING:
     from bob.application.runtime.intake.scope import TurnScope

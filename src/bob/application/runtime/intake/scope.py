@@ -28,8 +28,8 @@ from bob.conversation.addressivity import ResponseOutcome
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from bob.application.runtime.events import MessageReceived
     from bob.conversation.room_reading import RoomReading
+    from bob.kernel.events import MessageReceived
 
     type _PeekArrivals = Callable[[], tuple[MessageReceived, ...]]
 

@@ -23,22 +23,19 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.application.router.llm_router import LLMRouter
-from bob.application.runtime.events import MessageReceived
 from bob.application.runtime.intake.scope import TurnScope, new_turn_scope
 from bob.application.runtime.staleness_reassessor import StalenessReassessor
 from bob.application.usecases.disclosure_consent_gate import DisclosureConsentGate
 from bob.application.usecases.disclosure_guard import DisclosureGuard
 from bob.application.usecases.endorsement_seeder import EndorsementSeeder
 from bob.application.usecases.handle_message import (
-    EngagementState,
     HandleMessage,
     OwnerActivityRecorder,
-    PersonalityState,
     _recalled_bob_replies,
     _recalled_without_copied_exemplars,
 )
 from bob.capabilities.adapters.diagrams.mmdc_renderer import DiagramRenderError
-from bob.capabilities.ports import ToolCall, ToolCallResult, WebSearchResult
+from bob.capabilities.ports import WebSearchResult
 from bob.capabilities.usecases.delivery_scope import current_delivery_scope
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.render_diagram import (
@@ -59,6 +56,7 @@ from bob.conversation.conversation_floor import (
 )
 from bob.conversation.engagement import (
     ConversationalFatigue,
+    EngagementState,
     EngagementThresholds,
     FatigueRates,
 )
@@ -84,6 +82,12 @@ from bob.conversation.volatility_judgment import (
 )
 from bob.infrastructure.llm.fallback_provider import build_fallback_provider
 from bob.infrastructure.telegram.gateway import TelegramGateway
+from bob.kernel.events import MessageReceived
+from bob.kernel.interlocutor import Interlocutor, InterlocutorKind, Trust
+from bob.kernel.ports import ToolCall, ToolCallResult
+from bob.kernel.relationship import Relationship
+from bob.kernel.roster import RosterMember
+from bob.kernel.sulk import SulkState
 from bob.memory.adapters.casual_floor_recall import CasualFloorRecall
 from bob.memory.usecases.extract_facts import ExtractFacts
 from bob.memory.usecases.resolve_register import RegisterResolver
@@ -97,6 +101,7 @@ from bob.personality.reaction import (
 )
 from bob.personality.reaction_effect import NotableReaction
 from bob.personality.soul import SOUL
+from bob.personality.state import PersonalityState
 from bob.personality.taste import TasteAxis, TasteEngine, Verdict
 from bob.personality.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.presence.staleness import StalenessContext, StalenessGate, StalenessReading
@@ -106,15 +111,7 @@ from bob.proactivity.self_improvement import (
     RuleOrigin,
     RuleState,
 )
-from bob.social.interlocutor import (
-    Interlocutor,
-    InterlocutorKind,
-    Trust,
-)
 from bob.social.permission.privilege import PrivilegeContext, PrivilegeNeed
-from bob.social.relationship import Relationship
-from bob.social.roster import RosterMember
-from bob.social.sulk import SulkState
 
 if TYPE_CHECKING:
     from collections.abc import (
@@ -132,13 +129,19 @@ if TYPE_CHECKING:
         NaturalCodingRouter,
         PermissionFlowLike,
     )
-    from bob.capabilities.ports import DiagramSink, Permission, ToolCallingProvider, ToolDefinition
+    from bob.capabilities.ports import DiagramSink, Permission
     from bob.capabilities.usecases.delivery_scope import DeliveryScope
     from bob.capabilities.usecases.diagram_sender import DiagramSendMode
     from bob.conversation.ports import ZoneClassifier
     from bob.infrastructure.telegram.gateway import UpdateLike
-    from bob.kernel.ports import LLMProvider, ToolLoopMessage
-    from bob.memory.ports import MemoryRecall, Recalled
+    from bob.kernel.episode_types import Recalled
+    from bob.kernel.ports import (
+        LLMProvider,
+        MemoryRecall,
+        ToolCallingProvider,
+        ToolDefinition,
+        ToolLoopMessage,
+    )
 
 _PHANTOM_PREF = "phantom-coffee-craving"  # shareable taste material (shapes the reply)
 _RECALL_MEMORY = "the user said earlier they enjoy pour-over"  # shareable recalled memory

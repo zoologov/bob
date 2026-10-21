@@ -13,8 +13,8 @@ and same-author detection) and the two structural rails (empty burst / no-judge)
 
 from __future__ import annotations
 
-from bob.application.runtime.events import MessageReceived
 from bob.application.runtime.staleness_reassessor import StalenessReassessor
+from bob.kernel.events import MessageReceived
 from bob.presence.staleness import (
     StalenessContext,
     StalenessGate,

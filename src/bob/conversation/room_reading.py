@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from bob.conversation.addressivity import Addressivity
-    from bob.social.interlocutor import Interlocutor, InterlocutorKind
+    from bob.kernel.interlocutor import Interlocutor, InterlocutorKind
 
 __all__ = [
     "BatchAmbientMessage",
@@ -218,7 +218,7 @@ class BatchAmbientMessage:
     used only for ordering) — plus the per-message floor/interest HINTS the read weighs
     (``floor_holder`` — who holds the live floor, ``floor_participant`` — whether this sender is
     in Bob's live exchange, ``interest`` — how interesting the topic is to Bob, by value).
-    ``kind`` is the sender's social :class:`~bob.social.interlocutor.InterlocutorKind` (BOB-078 B)
+    ``kind`` is the sender's social :class:`~bob.kernel.interlocutor.InterlocutorKind` (BOB-078 B)
     — so a warm reply from a GUEST/newcomer reads as socially salient instead of low-salience
     chatter (the live «Лиля» bug); ``None`` when unperceived (baseline, no marker). Participant-
     agnostic (a replica-Bob is just another author). Every field is a signal, none forces the

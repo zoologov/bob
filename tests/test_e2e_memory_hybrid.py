@@ -27,9 +27,9 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from bob.app import build_application
-from bob.application.runtime.events import MessageReceived
-from bob.capabilities.ports import ToolCall, ToolCallResult
 from bob.capabilities.usecases.turn_material import MaterialTrailRecall
+from bob.kernel.events import MessageReceived
+from bob.kernel.ports import ToolCall, ToolCallResult
 from bob.memory.adapters import HybridMemoryRecall
 from bob.memory.entities import SemanticFact
 from bob.social.adapters.soul_store import SoulStore
@@ -39,10 +39,9 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
     from pathlib import Path
 
-    from bob.capabilities.ports import ToolDefinition
     from bob.infrastructure.telegram.gateway import UpdateLike
-    from bob.kernel.ports import LLMProvider
-    from bob.memory.ports import Recalled
+    from bob.kernel.episode_types import Recalled
+    from bob.kernel.ports import LLMProvider, ToolDefinition
 
 _OWNER = 1
 _CHAT = 100

@@ -6,26 +6,28 @@
 # beadloom:feature=memory
 # beadloom:layer=domain
 
-"""Memory ports — persistence, relevance retrieval, and the semantic seams.
+"""Memory ports — persistence, the autobiography recorder, and the semantic seams.
 
-The durable episode/fact store (:class:`MemoryRepo`), relevance recall
-(:class:`MemoryRecall`), and the additive semantic-memory seams
-(:class:`Embedder`, :class:`Reranker`). These are *interfaces only*: structural
+The durable episode/fact store (:class:`MemoryRepo`), the self-action recorder
+(:class:`SelfActionRecorder`), and the additive semantic-memory seams
+(:class:`Embedder`, :class:`Reranker`). Relevance recall
+(:class:`~bob.kernel.ports.MemoryRecall`) and the item it returns
+(:data:`~bob.kernel.episode_types.Recalled`) live in the shared kernel (BOB-113): they
+are read below ``memory``. These are *interfaces only*: structural
 :class:`typing.Protocol` definitions with no implementations; the SQLite/FTS5 and
 Ollama-backed adapters live in ``bob.infrastructure``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
+    from bob.kernel.episode_types import Recalled
     from bob.memory.entities import SemanticFact
     from bob.memory.self_action import SelfAction
-
-# A single recalled memory item (content + relevance score), returned by recall.
-type Recalled = Mapping[str, object]
 
 
 @runtime_checkable
@@ -49,25 +51,6 @@ class MemoryRepo(Protocol):
 
         Oldest-first within the window so callers can replay recent conversation
         history into a reply prompt; a non-positive ``k`` yields an empty sequence.
-        """
-        ...
-
-
-@runtime_checkable
-class MemoryRecall(Protocol):
-    """Relevance retrieval over memory (P0: FTS5 keyword; seam for vectors)."""
-
-    async def recall(
-        self, query: str, *, k: int, surface_old: bool = False
-    ) -> Sequence[Recalled]:
-        """Return the top-``k`` memories relevant to ``query``.
-
-        ``surface_old`` is an ADDITIVE opt-in (BOB-021 mechanism 1): when set, an
-        implementation MAY blend ONE old-but-relevant memory into the result (relevant
-        by embedding, biased toward an older timestamp) so a deep cut can surface that
-        recency ordering would otherwise drop. It defaults off — the default call is a
-        drop-in, unchanged contract — and an implementation with no age signal
-        (keyword-only) treats it as a graceful no-op.
         """
         ...
 
@@ -120,8 +103,8 @@ class Embedder(Protocol):
 class Reranker(Protocol):
     """Re-scores recall candidates by relevance (an additive quality boost).
 
-    Sits *on top of* :class:`MemoryRecall`: the hybrid recall surfaces a wide
-    top-``K`` pool (RRF over keyword + vector), and the reranker re-orders that
+    Sits *on top of* :class:`~bob.kernel.ports.MemoryRecall`: the hybrid recall
+    surfaces a wide top-``K`` pool (RRF over keyword + vector), and the reranker re-orders that
     pool by a sharper relevance judgement and trims it to a tight top-``N``. It is
     deliberately ADDITIVE — a recall that cannot reach a reranker (disabled, model
     absent, endpoint down) returns the hybrid order unchanged, so reranking never

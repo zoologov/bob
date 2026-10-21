@@ -12,7 +12,7 @@ while he was drafting. This collaborator is that check as one decision: given th
 drafted reply and what landed during generation — a non-draining
 :meth:`~bob.application.runtime.intake.inbox.ChatInbox.peek_since` of the intake buffer
 from Срез 2.1, passed IN so no second buffer is built — it maps each
-:class:`~bob.application.runtime.events.MessageReceived` to the presence domain's
+:class:`~bob.kernel.events.MessageReceived` to the presence domain's
 value-shaped :class:`~bob.presence.staleness.ArrivedMessage`, consults the semantic
 :class:`~bob.presence.ports.StalenessJudge` ONLY when something landed, and returns the
 pure :class:`~bob.presence.staleness.StalenessGate` outcome (SEND / REWRITE /
@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING
 from bob.presence.staleness import ArrivedMessage, StalenessContext, nothing_arrived
 
 if TYPE_CHECKING:
-    from bob.application.runtime.events import MessageReceived
+    from bob.kernel.events import MessageReceived
     from bob.presence.ports import StalenessJudge
     from bob.presence.staleness import StalenessGate, StalenessOutcome
 

@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.application.runtime.events import MessageReceived
 from bob.conversation.addressivity import Addressivity, ResponseOutcome
 from bob.conversation.conversation_floor import FloorHolder
 from bob.conversation.room_reading import (
@@ -35,12 +34,13 @@ from bob.conversation.room_reading import (
 from bob.conversation.usecases.addressivity_perceiver import _AddressivitySignals
 from bob.conversation.usecases.read_the_room import ReadTheRoom
 from bob.conversation.usecases.turn_gate import TurnGate, _directed_engage, _ReplyGate
+from bob.kernel.events import MessageReceived
+from bob.kernel.interlocutor import Interlocutor, InterlocutorKind, Trust
+from bob.kernel.modulators import RuleModulators
 from bob.personality.expression import ExpressionMode, ExpressionPlan, FormHint
 from bob.personality.mood import Mood
 from bob.personality.soul import SOUL
 from bob.personality.taste import TasteAxis, TasteEngine
-from bob.proactivity.self_improvement import RuleModulators
-from bob.social.interlocutor import Interlocutor, InterlocutorKind, Trust
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence

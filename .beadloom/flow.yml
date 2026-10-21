@@ -2,3 +2,17 @@ tools: [claude]            # IDE adapter set to generate
 architecture: [ddd]        # methodology: ddd | fsd
 stack: [python]            # stack/framework overlays
 quality: [clean-code, tdd] # quality bars (informational)
+language: ru               # язык документов проекта (PRD/RFC/CONTEXT/PLAN/ACTIVE/BRIEF) — решение 2026-06-18
+
+# Объявленные расхождения с ядром beadloom. Слой append-only и не может удалить строку ядра,
+# поэтому факт репозитория, противоречащий ядру, объявляется здесь — с причиной и условием
+# снятия — и печатается уведомлением в конце каждого композированного файла (BOB-112 .3).
+overlays:
+  suppress:
+    # rule — путь заголовка в композиции (сегменты через «/», латиницей): так его находит config-check.
+    - rule: "Git — Trunk-based development"
+      reason: "в CLAUDE.md §6 ядро утверждает «main is branch-protected», «beadloom ci is a REQUIRED status check» и что setup-branch-protection настраивает защиту — в этом репозитории всё три не действуют: репозиторий приватный на плане GitHub Free, API защиты ветки и rulesets отвечают «403 Upgrade to GitHub Pro or make this repository public»; main держится дисциплиной PR, перепроверкой гейтов координатором на финальном дереве и видимым (не required) CI по PR — раздел П.6 проектного слоя; беада на снятие — bob-933"
+      until: "репозиторий станет публичным или план — GitHub Pro: тогда выполняется beadloom setup-branch-protection и эта запись снимается"
+    - rule: "Template rules"
+      reason: "в /task-init ядро 9.0.0 пишет «ALL documents MUST be in English» и «(in English)» в чеклисте, хотя язык документов задан здесь как language: ru и auto-блок doc-language в CLAUDE.md уже печатает Russian — ядро task-init тег языка не читает, расхождение внутри самого beadloom (запись для лога BDL-UX подготовлена в features/BOB-112/BDL-UX-draft.md, номер появится при переносе); в этом проекте все документы по-русски, остальные пункты раздела (статусы, формат метаданных) действуют; беада на снятие — bob-yjv"
+      until: "ядро /task-init в beadloom читает language из flow.yml и печатает тот же язык, что auto-блок doc-language"

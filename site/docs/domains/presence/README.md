@@ -1,12 +1,12 @@
-&lt;!-- beadloom:badge-start -->
+<!-- beadloom:badge-start -->
 > ✅ **fresh**
 > 
-> last synced 2026-07-31T12:12:20.297951+00:00 · coverage 100% (`presence`)
+> last synced 2026-10-21T08:49:35.850635+00:00 · coverage 100% (`presence`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-&lt;!-- beadloom:badge-end -->
+<!-- beadloom:badge-end -->
 
-&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # Модуль presence — «живой ритм Боба»

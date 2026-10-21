@@ -22,11 +22,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.application.runtime.event_bus import AsyncEventBus
-from bob.application.runtime.events import (
+from bob.infrastructure.telegram.gateway import TelegramGateway
+from bob.kernel.events import (
     BOB_MESSAGE_REACTION,
     BobMessageReaction,
 )
-from bob.infrastructure.telegram.gateway import TelegramGateway
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

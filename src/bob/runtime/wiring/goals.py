@@ -3,6 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=runtime
+# beadloom:layer=runtime
 
 """Composition-root goal wiring — the Goal Engine + the self-directed pursuit tick.
 
@@ -36,11 +38,11 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from bob.application.router import LLMRouter
-    from bob.application.usecases.handle_message import PersonalityState, ReplyGateway
     from bob.capabilities.usecases import CapabilityRegistry
     from bob.infrastructure.persistence import SqliteConnection
-    from bob.kernel.ports import Clock
+    from bob.kernel.ports import Clock, ReplyGateway
     from bob.memory.adapters import SqliteMemoryRepo
+    from bob.personality.state import PersonalityState
     from bob.proactivity.adapters import SqliteProactivityStore
 
 

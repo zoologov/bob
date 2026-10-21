@@ -16,16 +16,16 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from bob.capabilities.ports import ToolCall, ToolCallResult
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.tool_loop import ToolLoop, _assistant_turn
+from bob.kernel.ports import ToolCall, ToolCallResult
 from bob.memory.self_action import SelfActionKind
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bob.capabilities.ports import Permission, ToolDefinition
-    from bob.kernel.ports import ToolLoopMessage
+    from bob.capabilities.ports import Permission
+    from bob.kernel.ports import ToolDefinition, ToolLoopMessage
     from bob.memory.self_action import SelfAction
 
 

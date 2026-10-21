@@ -73,20 +73,19 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
     from random import Random
 
-    from bob.capabilities.ports import ToolCallingProvider
-    from bob.kernel.ports import LLMMessage
-    from bob.memory.ports import Recalled
+    from bob.kernel.episode_types import Recalled
+    from bob.kernel.interlocutor import Interlocutor
+    from bob.kernel.modulators import RuleModulators
+    from bob.kernel.ports import LLMMessage, ToolCallingProvider
+    from bob.kernel.relationship import Relationship
+    from bob.kernel.roster import RosterMember
+    from bob.kernel.sulk import SulkState
     from bob.personality.expression import ExpressionPlan
     from bob.personality.negotiation import NegotiationZone, Stance
     from bob.personality.soul import SOUL
     from bob.personality.taste import Verdict
     from bob.personality.usecases.grounded_addons import GroundedAddons
     from bob.personality.voice import OffDayThresholds
-    from bob.proactivity.self_improvement import RuleModulators
-    from bob.social.interlocutor import Interlocutor
-    from bob.social.relationship import Relationship
-    from bob.social.roster import RosterMember
-    from bob.social.sulk import SulkState
 
 # The base persona (assembled once at import), then the voice concerns Bob's persona leans on
 # (BOB-016): the anti-bait directive + few-shot (so he lands like a person, not an assistant

@@ -1,28 +1,9 @@
 {
+  "beadloom_version": "9.0.0",
   "edges": [
     {
       "dst": "bob",
       "kind": "part_of",
-      "src": "bob"
-    },
-    {
-      "dst": "coding",
-      "kind": "depends_on",
-      "src": "bob"
-    },
-    {
-      "dst": "runtime",
-      "kind": "depends_on",
-      "src": "bob"
-    },
-    {
-      "dst": "social",
-      "kind": "depends_on",
-      "src": "bob"
-    },
-    {
-      "dst": "telegram",
-      "kind": "depends_on",
       "src": "bob"
     },
     {
@@ -33,8 +14,7 @@
     {
       "dst": "bob-domain",
       "kind": "depends_on",
-      "src": "bob-application",
-      "violation": false
+      "src": "bob-application"
     },
     {
       "dst": "bob",
@@ -50,19 +30,22 @@
       "dst": "bob-application",
       "kind": "depends_on",
       "src": "bob-infrastructure",
-      "violation": true
+      "violation": false
     },
     {
       "dst": "bob-domain",
       "kind": "depends_on",
-      "src": "bob-infrastructure",
-      "violation": true
+      "src": "bob-infrastructure"
     },
     {
       "dst": "bob-application",
       "kind": "depends_on",
-      "src": "capabilities",
-      "violation": true
+      "src": "capabilities"
+    },
+    {
+      "dst": "bob-domain",
+      "kind": "depends_on",
+      "src": "capabilities"
     },
     {
       "dst": "bob-domain",
@@ -70,26 +53,69 @@
       "src": "capabilities"
     },
     {
+      "dst": "memory",
+      "kind": "depends_on",
+      "src": "capabilities"
+    },
+    {
+      "dst": "router",
+      "kind": "depends_on",
+      "src": "capabilities"
+    },
+    {
+      "dst": "social",
+      "kind": "depends_on",
+      "src": "capabilities"
+    },
+    {
+      "dst": "bob-domain",
+      "kind": "depends_on",
+      "src": "coding"
+    },
+    {
       "dst": "bob-domain",
       "kind": "part_of",
       "src": "coding"
     },
     {
+      "dst": "capabilities",
+      "kind": "depends_on",
+      "src": "coding"
+    },
+    {
+      "dst": "identity",
+      "kind": "depends_on",
+      "src": "coding"
+    },
+    {
+      "dst": "memory",
+      "kind": "depends_on",
+      "src": "coding"
+    },
+    {
       "dst": "router",
       "kind": "depends_on",
-      "src": "coding",
-      "violation": true
+      "src": "coding"
+    },
+    {
+      "dst": "social",
+      "kind": "depends_on",
+      "src": "coding"
     },
     {
       "dst": "telegram",
       "kind": "depends_on",
-      "src": "coding",
-      "violation": false
+      "src": "coding"
     },
     {
       "dst": "bob-infrastructure",
       "kind": "part_of",
       "src": "config"
+    },
+    {
+      "dst": "bob-domain",
+      "kind": "depends_on",
+      "src": "conversation"
     },
     {
       "dst": "bob-domain",
@@ -99,19 +125,47 @@
     {
       "dst": "personality",
       "kind": "depends_on",
-      "src": "conversation",
-      "violation": true
+      "src": "conversation"
     },
     {
       "dst": "router",
       "kind": "depends_on",
-      "src": "conversation",
-      "violation": true
+      "src": "conversation"
+    },
+    {
+      "dst": "bob-domain",
+      "kind": "depends_on",
+      "src": "identity"
+    },
+    {
+      "dst": "bob-domain",
+      "kind": "part_of",
+      "src": "identity"
+    },
+    {
+      "dst": "bob-domain",
+      "kind": "part_of",
+      "src": "interactive"
+    },
+    {
+      "dst": "coding",
+      "kind": "depends_on",
+      "src": "interactive"
+    },
+    {
+      "dst": "identity",
+      "kind": "depends_on",
+      "src": "interactive"
     },
     {
       "dst": "bob-domain",
       "kind": "part_of",
       "src": "kernel"
+    },
+    {
+      "dst": "bob-domain",
+      "kind": "depends_on",
+      "src": "llm"
     },
     {
       "dst": "bob-infrastructure",
@@ -121,8 +175,18 @@
     {
       "dst": "capabilities",
       "kind": "depends_on",
+      "src": "llm"
+    },
+    {
+      "dst": "router",
+      "kind": "depends_on",
       "src": "llm",
-      "violation": true
+      "violation": false
+    },
+    {
+      "dst": "bob-domain",
+      "kind": "depends_on",
+      "src": "memory"
     },
     {
       "dst": "bob-domain",
@@ -132,31 +196,32 @@
     {
       "dst": "persistence",
       "kind": "depends_on",
-      "src": "memory",
-      "violation": false
+      "src": "memory"
     },
     {
       "dst": "personality",
       "kind": "depends_on",
-      "src": "memory",
-      "violation": true
+      "src": "memory"
     },
     {
       "dst": "router",
       "kind": "depends_on",
-      "src": "memory",
-      "violation": true
+      "src": "memory"
     },
     {
       "dst": "runtime-app",
       "kind": "depends_on",
-      "src": "memory",
-      "violation": true
+      "src": "memory"
     },
     {
       "dst": "bob-infrastructure",
       "kind": "part_of",
       "src": "persistence"
+    },
+    {
+      "dst": "bob-domain",
+      "kind": "depends_on",
+      "src": "personality"
     },
     {
       "dst": "bob-domain",
@@ -166,8 +231,7 @@
     {
       "dst": "router",
       "kind": "depends_on",
-      "src": "personality",
-      "violation": true
+      "src": "personality"
     },
     {
       "dst": "bob-domain",
@@ -177,8 +241,12 @@
     {
       "dst": "router",
       "kind": "depends_on",
-      "src": "presence",
-      "violation": true
+      "src": "presence"
+    },
+    {
+      "dst": "bob-domain",
+      "kind": "depends_on",
+      "src": "proactivity"
     },
     {
       "dst": "bob-domain",
@@ -188,30 +256,31 @@
     {
       "dst": "conversation",
       "kind": "depends_on",
-      "src": "proactivity",
-      "violation": true
+      "src": "proactivity"
     },
     {
       "dst": "memory",
       "kind": "depends_on",
-      "src": "proactivity",
-      "violation": true
+      "src": "proactivity"
     },
     {
       "dst": "personality",
       "kind": "depends_on",
-      "src": "proactivity",
-      "violation": true
+      "src": "proactivity"
     },
     {
       "dst": "router",
       "kind": "depends_on",
-      "src": "proactivity",
-      "violation": true
+      "src": "proactivity"
     },
     {
       "dst": "bob-application",
       "kind": "part_of",
+      "src": "router"
+    },
+    {
+      "dst": "bob-domain",
+      "kind": "depends_on",
       "src": "router"
     },
     {
@@ -222,7 +291,8 @@
     {
       "dst": "bob-application",
       "kind": "depends_on",
-      "src": "runtime"
+      "src": "runtime",
+      "violation": false
     },
     {
       "dst": "bob-domain",
@@ -232,7 +302,8 @@
     {
       "dst": "bob-infrastructure",
       "kind": "depends_on",
-      "src": "runtime"
+      "src": "runtime",
+      "violation": false
     },
     {
       "dst": "capabilities",
@@ -247,7 +318,8 @@
     {
       "dst": "config",
       "kind": "depends_on",
-      "src": "runtime"
+      "src": "runtime",
+      "violation": false
     },
     {
       "dst": "conversation",
@@ -255,9 +327,20 @@
       "src": "runtime"
     },
     {
-      "dst": "llm",
+      "dst": "identity",
       "kind": "depends_on",
       "src": "runtime"
+    },
+    {
+      "dst": "interactive",
+      "kind": "depends_on",
+      "src": "runtime"
+    },
+    {
+      "dst": "llm",
+      "kind": "depends_on",
+      "src": "runtime",
+      "violation": false
     },
     {
       "dst": "memory",
@@ -267,7 +350,8 @@
     {
       "dst": "persistence",
       "kind": "depends_on",
-      "src": "runtime"
+      "src": "runtime",
+      "violation": false
     },
     {
       "dst": "personality",
@@ -287,12 +371,14 @@
     {
       "dst": "router",
       "kind": "depends_on",
-      "src": "runtime"
+      "src": "runtime",
+      "violation": false
     },
     {
       "dst": "runtime-app",
       "kind": "depends_on",
-      "src": "runtime"
+      "src": "runtime",
+      "violation": false
     },
     {
       "dst": "social",
@@ -302,12 +388,14 @@
     {
       "dst": "telegram",
       "kind": "depends_on",
-      "src": "runtime"
+      "src": "runtime",
+      "violation": false
     },
     {
       "dst": "usecases",
       "kind": "depends_on",
-      "src": "runtime"
+      "src": "runtime",
+      "violation": false
     },
     {
       "dst": "bob-application",
@@ -315,16 +403,24 @@
       "src": "runtime-app"
     },
     {
+      "dst": "bob-domain",
+      "kind": "depends_on",
+      "src": "runtime-app"
+    },
+    {
       "dst": "conversation",
       "kind": "depends_on",
-      "src": "runtime-app",
-      "violation": false
+      "src": "runtime-app"
     },
     {
       "dst": "presence",
       "kind": "depends_on",
-      "src": "runtime-app",
-      "violation": false
+      "src": "runtime-app"
+    },
+    {
+      "dst": "bob-domain",
+      "kind": "depends_on",
+      "src": "social"
     },
     {
       "dst": "bob-domain",
@@ -332,28 +428,35 @@
       "src": "social"
     },
     {
+      "dst": "conversation",
+      "kind": "depends_on",
+      "src": "social"
+    },
+    {
       "dst": "personality",
       "kind": "depends_on",
-      "src": "social",
-      "violation": true
+      "src": "social"
     },
     {
       "dst": "router",
       "kind": "depends_on",
-      "src": "social",
-      "violation": true
+      "src": "social"
     },
     {
       "dst": "telegram",
       "kind": "depends_on",
-      "src": "social",
-      "violation": false
+      "src": "social"
     },
     {
       "dst": "bob-application",
       "kind": "depends_on",
       "src": "telegram",
-      "violation": true
+      "violation": false
+    },
+    {
+      "dst": "bob-domain",
+      "kind": "depends_on",
+      "src": "telegram"
     },
     {
       "dst": "bob-infrastructure",
@@ -361,22 +464,20 @@
       "src": "telegram"
     },
     {
-      "dst": "proactivity",
+      "dst": "memory",
       "kind": "depends_on",
-      "src": "telegram",
-      "violation": true
+      "src": "telegram"
     },
     {
-      "dst": "runtime-app",
+      "dst": "proactivity",
       "kind": "depends_on",
-      "src": "telegram",
-      "violation": true
+      "src": "telegram"
     },
     {
       "dst": "bob-application",
       "kind": "depends_on",
       "src": "usecases",
-      "violation": true
+      "violation": false
     },
     {
       "dst": "bob-application",
@@ -384,80 +485,466 @@
       "src": "usecases"
     },
     {
+      "dst": "bob-domain",
+      "kind": "depends_on",
+      "src": "usecases"
+    },
+    {
       "dst": "capabilities",
       "kind": "depends_on",
-      "src": "usecases",
-      "violation": false
+      "src": "usecases"
     },
     {
       "dst": "conversation",
       "kind": "depends_on",
-      "src": "usecases",
-      "violation": false
+      "src": "usecases"
     },
     {
       "dst": "memory",
       "kind": "depends_on",
-      "src": "usecases",
-      "violation": false
+      "src": "usecases"
     },
     {
       "dst": "personality",
       "kind": "depends_on",
-      "src": "usecases",
-      "violation": false
+      "src": "usecases"
     },
     {
       "dst": "presence",
       "kind": "depends_on",
-      "src": "usecases",
-      "violation": false
+      "src": "usecases"
     },
     {
       "dst": "proactivity",
       "kind": "depends_on",
-      "src": "usecases",
-      "violation": false
+      "src": "usecases"
     },
     {
       "dst": "router",
       "kind": "depends_on",
       "src": "usecases",
-      "violation": true
+      "violation": false
+    },
+    {
+      "dst": "runtime-app",
+      "kind": "depends_on",
+      "src": "usecases",
+      "violation": false
     },
     {
       "dst": "social",
       "kind": "depends_on",
-      "src": "usecases",
-      "violation": false
+      "src": "usecases"
     }
   ],
+  "generated_at": "2026-10-21T08:51:35.594070+00:00",
+  "layer_order": "top-down",
+  "layer_rules": [
+    {
+      "edge_kind": "depends_on",
+      "layers": [
+        {
+          "name": "runtime",
+          "rank": 0,
+          "tag": "layer-runtime",
+          "token": "runtime"
+        },
+        {
+          "name": "infrastructure",
+          "rank": 1,
+          "tag": "layer-infra",
+          "token": "infrastructure"
+        },
+        {
+          "name": "application",
+          "rank": 2,
+          "tag": "layer-application",
+          "token": "application"
+        },
+        {
+          "name": "domain",
+          "rank": 3,
+          "tag": "layer-domain",
+          "token": "domain"
+        }
+      ],
+      "name": "architecture-layers",
+      "scope": "bob",
+      "title": ""
+    }
+  ],
+  "layers": [
+    {
+      "name": "runtime",
+      "rank": 0,
+      "tag": "layer-runtime",
+      "token": "runtime"
+    },
+    {
+      "name": "infrastructure",
+      "rank": 1,
+      "tag": "layer-infra",
+      "token": "infra"
+    },
+    {
+      "name": "application",
+      "rank": 2,
+      "tag": "layer-application",
+      "token": "application"
+    },
+    {
+      "name": "domain",
+      "rank": 3,
+      "tag": "layer-domain",
+      "token": "domain"
+    }
+  ],
+  "lint": {
+    "errors": 0,
+    "nodeless": [
+      {
+        "file": "",
+        "line": null,
+        "message": "this rule evaluated 15 of 81 live `depends_on` edge(s) and skipped 66 for an end in no declared layer",
+        "rule": "architecture-layers",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'capabilities-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "capabilities-no-composition-root",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'coding-internals-no-adapters-untrusted_repo' cannot fire: its `from` glob 'src/bob/coding/untrusted_repo.py' matches 0 of 385 indexed source files. It is counted as evaluated but checks nothing",
+        "rule": "coding-internals-no-adapters-untrusted_repo",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'coding-internals-no-usecases-untrusted_repo' cannot fire: its `from` glob 'src/bob/coding/untrusted_repo.py' matches 0 of 385 indexed source files. It is counted as evaluated but checks nothing",
+        "rule": "coding-internals-no-usecases-untrusted_repo",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'coding-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "coding-no-composition-root",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'conversation-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "conversation-no-composition-root",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'identity-boundary-no-capabilities-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "identity-boundary-no-capabilities-usecases",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'identity-boundary-no-coding-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "identity-boundary-no-coding-usecases",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'identity-boundary-no-conversation-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "identity-boundary-no-conversation-usecases",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'identity-boundary-no-interactive-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "identity-boundary-no-interactive-usecases",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'identity-boundary-no-memory-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "identity-boundary-no-memory-usecases",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'identity-boundary-no-personality-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "identity-boundary-no-personality-usecases",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'identity-boundary-no-presence-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "identity-boundary-no-presence-usecases",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'identity-boundary-no-proactivity-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "identity-boundary-no-proactivity-usecases",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'identity-boundary-no-social-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "identity-boundary-no-social-usecases",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'identity-internals-no-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "identity-internals-no-usecases",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'identity-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "identity-no-composition-root",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'identity-usecases-no-adapters' cannot fire: its `from` glob 'src/bob/identity/usecases/*' matches 0 of 385 indexed source files. It is counted as evaluated but checks nothing",
+        "rule": "identity-usecases-no-adapters",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'identity-usecases-no-infra' cannot fire: its `from` glob 'src/bob/identity/usecases/*' matches 0 of 385 indexed source files. It is counted as evaluated but checks nothing",
+        "rule": "identity-usecases-no-infra",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'interactive-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "interactive-no-composition-root",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'memory-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "memory-no-composition-root",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'personality-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "personality-no-composition-root",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'presence-boundary-no-capabilities-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "presence-boundary-no-capabilities-usecases",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'presence-boundary-no-coding-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "presence-boundary-no-coding-usecases",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'presence-boundary-no-conversation-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "presence-boundary-no-conversation-usecases",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'presence-boundary-no-identity-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "presence-boundary-no-identity-usecases",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'presence-boundary-no-interactive-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "presence-boundary-no-interactive-usecases",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'presence-boundary-no-memory-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "presence-boundary-no-memory-usecases",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'presence-boundary-no-personality-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "presence-boundary-no-personality-usecases",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'presence-boundary-no-proactivity-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "presence-boundary-no-proactivity-usecases",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'presence-boundary-no-social-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "presence-boundary-no-social-usecases",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'presence-internals-no-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "presence-internals-no-usecases",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'presence-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "presence-no-composition-root",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'presence-usecases-no-adapters' cannot fire: its `from` glob 'src/bob/presence/usecases/*' matches 0 of 385 indexed source files. It is counted as evaluated but checks nothing",
+        "rule": "presence-usecases-no-adapters",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'presence-usecases-no-infra' cannot fire: its `from` glob 'src/bob/presence/usecases/*' matches 0 of 385 indexed source files. It is counted as evaluated but checks nothing",
+        "rule": "presence-usecases-no-infra",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'proactivity-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "proactivity-no-composition-root",
+        "severity": "warn"
+      },
+      {
+        "file": "",
+        "line": null,
+        "message": "Rule 'social-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "rule": "social-no-composition-root",
+        "severity": "warn"
+      }
+    ],
+    "nodes_with_findings": 0,
+    "warnings": 37
+  },
   "nodes": [
     {
+      "activity": {
+        "commits_30d": 8,
+        "level": "hot",
+        "lines_30d": 2271
+      },
+      "debt": {
+        "inside": {
+          "by_reason": {
+            "dormant": 1,
+            "high_fan_out": 2,
+            "oversized": 1
+          },
+          "nodes": 4,
+          "score": 4.5
+        },
+        "reasons": [],
+        "score": 0.0
+      },
       "depended_on_by": [],
-      "depends_on": [
-        "coding",
-        "runtime",
-        "social",
-        "telegram"
-      ],
+      "depends_on": [],
       "doc_links": [
         "/docs/architecture.html"
       ],
       "doc_status": "fresh",
+      "docs": [
+        {
+          "path": "architecture.md",
+          "status": "ok"
+        }
+      ],
+      "findings": [],
       "group": "services",
       "id": "bob",
       "kind": "service",
       "label": "bob",
       "layer": "",
       "layer_rank": null,
+      "layer_rule": "",
+      "layer_rule_rank": null,
+      "lifecycle": "active",
       "lint_clean": true,
       "parent": "bob",
+      "public_symbols": {
+        "names": [],
+        "omitted": 0
+      },
+      "source": "src/bob/",
+      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob",
       "summary": "Bob — Telegram-native companion agent: GUPPI process, LLM Tier 0/1 router with privacy redaction, SQLite+FTS5 memory, Higher Mind, Genesis, heartbeat. Two admin bots in one process (BOB-003): a MultiBotGateway (BotRegistry) polls both Bob and GUPPI, dedups cross-bot by (chat_id, message_id), and a central router dispatches by identity+scope — Bob lives in his forum topic, GUPPI is the gatekeeper in General with a visible unauthorized reject + owner commands. aiogram transport (native draft streaming + Rich Messages), owner/allowlist/chat-scope authz, resilient ticks, and a capability seam (registry + tool-loop) executed by GUPPI.",
-      "symbols": 1117,
-      "url": "/services/bob"
+      "symbols": 0,
+      "tags": [],
+      "tests": {
+        "count": 0,
+        "file_count": 0,
+        "files": [],
+        "placement": {}
+      },
+      "url": "/services/bob",
+      "used_by": [],
+      "uses": []
     },
     {
+      "activity": {
+        "commits_30d": 3,
+        "level": "cool",
+        "lines_30d": 359
+      },
+      "debt": {
+        "inside": {
+          "by_reason": {
+            "high_fan_out": 1
+          },
+          "nodes": 1,
+          "score": 1.0
+        },
+        "reasons": [],
+        "score": 0.0
+      },
       "depended_on_by": [
         "bob-infrastructure",
         "capabilities",
@@ -472,42 +959,168 @@
         "/docs/domains/application/README.html"
       ],
       "doc_status": "fresh",
+      "docs": [
+        {
+          "path": "domains/application/README.md",
+          "status": "ok"
+        }
+      ],
+      "findings": [],
       "group": "domains",
       "id": "bob-application",
       "kind": "domain",
       "label": "bob-application",
       "layer": "application",
-      "layer_rank": 1,
+      "layer_rank": 2,
+      "layer_rule": "architecture-layers",
+      "layer_rule_rank": 2,
+      "lifecycle": "active",
       "lint_clean": true,
       "parent": "bob",
+      "public_symbols": {
+        "names": [
+          "call_with_retry"
+        ],
+        "omitted": 0
+      },
+      "source": "src/bob/application/",
+      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/application",
       "summary": "GUPPI orchestration: AgentRuntime + AsyncEventBus, LLMRouter (tier routing + privacy redaction), use-cases (HandleMessage, RunGenesis, UpdateMoodFromText), resilient heartbeat ticks (retry/backoff), the Authorizer access policy and the capability seam (CapabilityRegistry + ToolLoop + recall_memory). Depends on domain via ports; never imports infrastructure.",
-      "symbols": 98,
-      "url": "/domains/bob-application"
+      "symbols": 1,
+      "tags": [
+        "layer-application"
+      ],
+      "tests": {
+        "count": 0,
+        "file_count": 0,
+        "files": [],
+        "placement": {}
+      },
+      "url": "/domains/bob-application",
+      "used_by": [],
+      "uses": []
     },
     {
+      "activity": {
+        "commits_30d": 8,
+        "level": "warm",
+        "lines_30d": 1779
+      },
+      "debt": {
+        "inside": {
+          "by_reason": {
+            "dormant": 1,
+            "oversized": 1
+          },
+          "nodes": 2,
+          "score": 2.5
+        },
+        "reasons": [],
+        "score": 0.0
+      },
       "depended_on_by": [
         "bob-application",
         "bob-infrastructure",
-        "runtime"
+        "capabilities",
+        "coding",
+        "conversation",
+        "identity",
+        "llm",
+        "memory",
+        "personality",
+        "proactivity",
+        "router",
+        "runtime",
+        "runtime-app",
+        "social",
+        "telegram",
+        "usecases"
       ],
       "depends_on": [],
       "doc_links": [
         "/docs/domains/domain/README.html"
       ],
       "doc_status": "fresh",
+      "docs": [
+        {
+          "path": "domains/domain/README.md",
+          "status": "ok"
+        }
+      ],
+      "findings": [],
       "group": "domains",
       "id": "bob-domain",
       "kind": "domain",
       "label": "bob-domain",
-      "layer": "domain",
-      "layer_rank": 2,
+      "layer": "",
+      "layer_rank": null,
+      "layer_rule": "",
+      "layer_rule_rank": null,
+      "lifecycle": "active",
       "lint_clean": true,
       "parent": "bob",
-      "summary": "Domain layer umbrella: the seven module-vertical bounded contexts (personality, conversation, memory, proactivity, coding, capabilities, social) plus the shared `kernel` (infra-neutral cross-module contracts). Pure logic + Protocol definitions; no I/O, no LLM, no transport.",
-      "symbols": 4,
-      "url": "/domains/bob-domain"
+      "public_symbols": {
+        "names": [
+          "BobMessageReaction",
+          "BobUserIdSource",
+          "Clock",
+          "DomainEvent",
+          "EpisodeReader",
+          "EventBus",
+          "Gender",
+          "Interlocutor",
+          "InterlocutorKind",
+          "LLMProvider",
+          "MemoryRecall",
+          "MessageReceived",
+          "Relationship",
+          "ReplyGateway",
+          "RosterMember",
+          "RuleModulators",
+          "SulkState",
+          "ToolCall",
+          "ToolCallResult",
+          "ToolCallingProvider",
+          "Trust",
+          "UnderstudyBackedProvider",
+          "is_owner_private",
+          "next_backoff",
+          "outage_state",
+          "strictest_visibility",
+          "under_root"
+        ],
+        "omitted": 0
+      },
+      "source": "src/bob/kernel/",
+      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/kernel",
+      "summary": "Umbrella of the seven module-vertical bounded contexts (personality, conversation, memory, proactivity, coding, capabilities, social) plus the shared `kernel` (infra-neutral cross-module contracts — the domain LAYER proper). Each vertical spans domain+usecases+adapters inside its own boundary; the kernel is pure logic + Protocol definitions: no I/O, no LLM, no transport.",
+      "symbols": 30,
+      "tags": [],
+      "tests": {
+        "count": 0,
+        "file_count": 0,
+        "files": [],
+        "placement": {}
+      },
+      "url": "/domains/bob-domain",
+      "used_by": [],
+      "uses": []
     },
     {
+      "activity": {
+        "commits_30d": 2,
+        "level": "cool",
+        "lines_30d": 31
+      },
+      "debt": {
+        "inside": {
+          "by_reason": {},
+          "nodes": 0,
+          "score": 0.0
+        },
+        "reasons": [],
+        "score": 0.0
+      },
       "depended_on_by": [
         "runtime"
       ],
@@ -519,69 +1132,291 @@
         "/docs/domains/infrastructure/README.html"
       ],
       "doc_status": "fresh",
+      "docs": [
+        {
+          "path": "domains/infrastructure/README.md",
+          "status": "ok"
+        }
+      ],
+      "findings": [],
       "group": "domains",
       "id": "bob-infrastructure",
       "kind": "domain",
       "label": "bob-infrastructure",
       "layer": "infra",
-      "layer_rank": 3,
+      "layer_rank": 1,
+      "layer_rule": "architecture-layers",
+      "layer_rule_rank": 1,
+      "lifecycle": "active",
       "lint_clean": true,
       "parent": "bob",
+      "public_symbols": {
+        "names": [],
+        "omitted": 0
+      },
+      "source": "src/bob/infrastructure/",
+      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/infrastructure",
       "summary": "Port adapters: aiogram Telegram gateway (long-polling + authz gate, native draft streaming, Rich Messages, markdown<->RichMessage, topic-thread reply pinning), MultiBotGateway (BotRegistry + cross-bot dedup + central identity/scope router) and the GuppiHandler gatekeeper (visible reject + owner commands), OpenAI-compatible LLM provider (Tier 0/1 + tool-calling), SQLite+FTS5 persistence, KvAllowlistStore and SoulStore, two-bot layered config loader.",
-      "symbols": 80,
-      "url": "/domains/bob-infrastructure"
+      "symbols": 0,
+      "tags": [
+        "layer-infra"
+      ],
+      "tests": {
+        "count": 0,
+        "file_count": 0,
+        "files": [],
+        "placement": {}
+      },
+      "url": "/domains/bob-infrastructure",
+      "used_by": [],
+      "uses": []
     },
     {
+      "activity": {
+        "commits_30d": 3,
+        "level": "warm",
+        "lines_30d": 163
+      },
+      "debt": {
+        "reasons": [
+          "oversized"
+        ],
+        "score": 2.0
+      },
       "depended_on_by": [
+        "coding",
         "llm",
         "runtime",
         "usecases"
       ],
       "depends_on": [
-        "bob-application"
+        "bob-application",
+        "bob-domain",
+        "memory",
+        "router",
+        "social"
       ],
       "doc_links": [
         "/docs/domains/capabilities/README.html"
       ],
       "doc_status": "fresh",
+      "docs": [
+        {
+          "path": "domains/capabilities/README.md",
+          "status": "ok"
+        }
+      ],
+      "findings": [],
       "group": "features",
       "id": "capabilities",
       "kind": "feature",
       "label": "capabilities",
       "layer": "",
-      "layer_rank": 2,
+      "layer_rank": null,
+      "layer_rule": "",
+      "layer_rule_rank": null,
+      "lifecycle": "active",
       "lint_clean": true,
       "parent": "bob-domain",
-      "summary": "Capabilities module («Bob's tools») — the full vertical GUPPI tool seam in one place: `ports.py` (Capability contract + tool/web/diagram/introspection ports) + pure `diagrams`/`introspection` value objects, `usecases/` (CapabilityRegistry + ToolLoop and the skills: recall/search memory, read code/url, web search, render diagram, inspect architecture, progress announcer), and `adapters/` (aiohttp URL reader behind an SSRF guard, mermaid renderer, beadloom/git introspector, Qwen web-search transport). Domain-first slice BOB-062.4.",
-      "symbols": 115,
-      "url": "/features/capabilities"
+      "public_symbols": {
+        "names": [
+          "ArchitectureDiagram",
+          "Capability",
+          "CapabilityNotAllowedError",
+          "CapabilityRegistry",
+          "CollectingDiagramSink",
+          "DeliveryScope",
+          "DeniedPathError",
+          "DiagramAttachment",
+          "DiagramGateway",
+          "DiagramRenderError",
+          "DiagramRenderer",
+          "DiagramResult",
+          "DiagramSender",
+          "DiagramSink",
+          "DisallowedCommandError",
+          "GatewayProgressAnnouncer",
+          "GraphForm",
+          "HealthForm",
+          "HealthRequestError",
+          "HttpUrlReader",
+          "InterimLineGenerator",
+          "IntrospectionError",
+          "InvalidGitRefError",
+          "MaterialOrigin",
+          "MaterialTrailRecall",
+          "OutboundMessenger",
+          "PrivacyGuard",
+          "ProgressAnnouncer",
+          "ProjectHealth",
+          "QwenWebSearchProvider",
+          "RepoIntrospector",
+          "SafeCapabilityDispatcher",
+          "SsrfBlockedError",
+          "SubprocessMmdcRenderer",
+          "SubprocessRepoIntrospector",
+          "ToolLoop",
+          "ToolRequirement",
+          "ToolVerdict",
+          "TrackerPlan",
+          "TurnMaterial",
+          "UnknownCapabilityError",
+          "UnknownCheckError",
+          "UrlReadError",
+          "UrlReader",
+          "WebPage",
+          "WebSearchProvider",
+          "WebSearchResult",
+          "WebSource",
+          "armed_delivery_scope",
+          "armed_turn_material"
+        ],
+        "omitted": 54
+      },
+      "source": "src/bob/capabilities/",
+      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/capabilities",
+      "summary": "Capabilities module («Bob's tools») — the full vertical GUPPI tool seam in one place: `ports.py` (Capability contract + web/url/diagram/introspection/outbound ports; the LLM tool-calling vocabulary lives in `kernel`, BOB-113) + pure `diagrams`/`introspection` cores (PrivacyGuard, tracker intent/digest, graph form + impact digest, health form + health digest — every dynamic argv slot is validated and every long report is condensed BEFORE it reaches a chat), `usecases/` (CapabilityRegistry + ToolLoop and the skills: recall/search memory, read code/url, web search, render diagram, progress announcer; repo navigation — list_dir / find_file / read_code (BOB-067); read-only dev introspection — recent_commits git history + list_tasks / show_task / task_comments over the beads tracker (BOB-081); and the read-only beadloom trio — draw_architecture (the mermaid source of the graph), architecture_impact («что сломается, если тронуть X») and project_health (status / prime / doctor / sync-check / lint / diff) (BOB-091)), and `adapters/` (aiohttp URL reader behind an SSRF guard, mermaid renderer, beadloom/bd/git introspector over a fixed read-only allowlist — never a shell, Qwen web-search transport). Domain-first slice BOB-062.4.",
+      "symbols": 228,
+      "tags": [
+        "module-vertical"
+      ],
+      "tests": {
+        "count": 0,
+        "file_count": 0,
+        "files": [],
+        "placement": {}
+      },
+      "url": "/features/capabilities",
+      "used_by": [],
+      "uses": []
     },
     {
+      "activity": {
+        "commits_30d": 2,
+        "level": "warm",
+        "lines_30d": 167
+      },
+      "debt": {
+        "reasons": [],
+        "score": 0.0
+      },
       "depended_on_by": [
-        "bob",
+        "interactive",
         "runtime"
       ],
       "depends_on": [
+        "bob-domain",
+        "capabilities",
+        "identity",
+        "memory",
         "router",
+        "social",
         "telegram"
       ],
       "doc_links": [
         "/docs/domains/coding/README.html"
       ],
       "doc_status": "fresh",
+      "docs": [
+        {
+          "path": "domains/coding/README.md",
+          "status": "ok"
+        }
+      ],
+      "findings": [],
       "group": "features",
       "id": "coding",
       "kind": "feature",
       "label": "coding",
       "layer": "",
-      "layer_rank": 2,
+      "layer_rank": null,
+      "layer_rule": "",
+      "layer_rule_rank": null,
+      "lifecycle": "active",
       "lint_clean": true,
       "parent": "bob-domain",
-      "summary": "Coding module («Bob writes code») — the full vertical capability in one place: `ports.py` + pure domain logic, `usecases/` orchestration, and `adapters/` (Claude Code CLI, git worktree, gh PR, session store, indicator). Domain-first slice BOB-062.1.",
-      "symbols": 109,
-      "url": "/features/coding"
+      "public_symbols": {
+        "names": [
+          "ClassifyCodingIntent",
+          "ClaudeCodeRunner",
+          "ClaudeRunError",
+          "CloneError",
+          "CodingAssistant",
+          "CodingContext",
+          "CodingIntentClassifierLike",
+          "CodingIntentRouter",
+          "CodingOutcome",
+          "CodingSession",
+          "CodingSessionState",
+          "CodingSessionStore",
+          "CommandError",
+          "CommandRunner",
+          "DistillingWorkJournalRecorder",
+          "EditableStatusBot",
+          "ExecRunner",
+          "ForkCompareLink",
+          "GatedCoder",
+          "GhPullRequestOpener",
+          "GitClone",
+          "GitWorktree",
+          "InteractiveRunner",
+          "LiveRunStreamer",
+          "MessageKind",
+          "NoOpWorkJournalRecorder",
+          "OwnerCheck",
+          "OwnerNotifier",
+          "PersistentWorkspace",
+          "PullRequestError",
+          "PullRequestOpener",
+          "ResumableSessionLookup",
+          "SessionKeyFacts",
+          "Speaker",
+          "SqliteCodingSessionStore",
+          "StatusPanel",
+          "StreamLineRunner",
+          "SubprocessClaudeRunner",
+          "Tier0WorkJournalDistiller",
+          "TypingActionBot",
+          "TypingKeepalive",
+          "WorkEpisodeStore",
+          "WorkFactsAccumulator",
+          "WorkJournalDistiller",
+          "WorkJournalRecorder",
+          "WorkOutcome",
+          "WorkspaceVerdict",
+          "Worktree",
+          "WorktreeError",
+          "accepted"
+        ],
+        "omitted": 61
+      },
+      "source": "src/bob/coding/",
+      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/coding",
+      "summary": "Coding module («Bob writes code») — the GATED vertical (plan → approve → PR) plus the shared coding-session surface: `ports.py` + pure domain logic (state/naming/sandbox+push policy/stream-json), `usecases/` orchestration, and `adapters/` (Claude Code CLI, git worktree, gh PR, session store, indicator). Domain-first slice BOB-062.1; the live terminal split out into `interactive` in BOB-087.E.",
+      "symbols": 200,
+      "tags": [
+        "module-vertical"
+      ],
+      "tests": {
+        "count": 0,
+        "file_count": 0,
+        "files": [],
+        "placement": {}
+      },
+      "url": "/features/coding",
+      "used_by": [],
+      "uses": []
     },
     {
+      "activity": {
+        "commits_30d": 0,
+        "level": "quiet",
+        "lines_30d": 0
+      },
+      "debt": {
+        "reasons": [],
+        "score": 0.0
+      },
       "depended_on_by": [
         "runtime"
       ],
@@ -590,26 +1425,66 @@
         "/docs/domains/infrastructure/features/config/SPEC.html"
       ],
       "doc_status": "fresh",
+      "docs": [
+        {
+          "path": "domains/infrastructure/features/config/SPEC.md",
+          "status": "ok"
+        }
+      ],
+      "findings": [],
       "group": "other",
       "id": "config",
       "kind": "component",
       "label": "config",
       "layer": "infra",
-      "layer_rank": 3,
+      "layer_rank": 1,
+      "layer_rule": "architecture-layers",
+      "layer_rule_rank": 1,
+      "lifecycle": "active",
       "lint_clean": true,
       "parent": "bob-infrastructure",
+      "public_symbols": {
+        "names": [
+          "ConfigLoader"
+        ],
+        "omitted": 0
+      },
+      "source": "src/bob/infrastructure/config/",
+      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/infrastructure/config",
       "summary": "Config adapter — two-bot layered config loader (env + files) for the running process.",
       "symbols": 3,
-      "url": ""
+      "tags": [
+        "layer-infra"
+      ],
+      "tests": {
+        "count": 0,
+        "file_count": 0,
+        "files": [],
+        "placement": {}
+      },
+      "url": "/other/config",
+      "used_by": [],
+      "uses": []
     },
     {
+      "activity": {
+        "commits_30d": 3,
+        "level": "warm",
+        "lines_30d": 140
+      },
+      "debt": {
+        "reasons": [],
+        "score": 0.0
+      },
       "depended_on_by": [
         "proactivity",
         "runtime",
         "runtime-app",
+        "social",
         "usecases"
       ],
       "depends_on": [
+        "bob-domain",
         "personality",
         "router"
       ],
@@ -617,67 +1492,473 @@
         "/docs/domains/conversation/README.html"
       ],
       "doc_status": "fresh",
+      "docs": [
+        {
+          "path": "domains/conversation/README.md",
+          "status": "ok"
+        }
+      ],
+      "findings": [],
       "group": "features",
       "id": "conversation",
       "kind": "feature",
       "label": "conversation",
       "layer": "",
-      "layer_rank": 2,
+      "layer_rank": null,
+      "layer_rule": "",
+      "layer_rule_rank": null,
+      "lifecycle": "active",
       "lint_clean": true,
       "parent": "bob-domain",
+      "public_symbols": {
+        "names": [
+          "Addressivity",
+          "AddressivityPerceiver",
+          "AddressivityThresholds",
+          "AnswerDemand",
+          "AntiRepeatGuard",
+          "BatchAmbientMessage",
+          "BatchRoomReader",
+          "BatchRoomReading",
+          "BatchRoomReadingContext",
+          "BrevityThresholds",
+          "CloserLog",
+          "ConversationFloor",
+          "ConversationFloorStore",
+          "ConversationalFatigue",
+          "DecideResponse",
+          "EngagementModel",
+          "EngagementState",
+          "EngagementThresholds",
+          "FatigueRates",
+          "FloorConfig",
+          "FloorHolder",
+          "FloorManager",
+          "FloorResolution",
+          "HasAnswer",
+          "LlmBatchRoomReader",
+          "LlmInterimLineGenerator",
+          "LlmResponseJudge",
+          "LlmRoomReader",
+          "LlmVolatilityJudge",
+          "OutgoingTarget",
+          "ReadTheRoom",
+          "RecallAssembler",
+          "ReflectiveIntent",
+          "ReflectiveVerdict",
+          "RepeatThresholds",
+          "ResponseChoice",
+          "ResponseContext",
+          "ResponseIntent",
+          "ResponseJudge",
+          "ResponseJudgeParseError",
+          "ResponseOutcome",
+          "RoomMood",
+          "RoomReader",
+          "RoomReading",
+          "RoomReadingContext",
+          "RoomReadingParseError",
+          "SqliteCloserLog",
+          "SqliteConversationFloorStore",
+          "TasteZoneClassifier",
+          "TurnGate"
+        ],
+        "omitted": 51
+      },
+      "source": "src/bob/conversation/",
+      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/conversation",
       "summary": "Conversation module («how a turn is conducted») — the full turn-conduct vertical in one place: `ports.py` (conversation-floor store, closer log, ZoneClassifier) + pure domain (addressivity, conversation + floor continuity, brevity, engagement, zone classifier, interim line, response choice, response/volatility judgments), `usecases/` (decide_response), and `adapters/` (Tier-0 response/volatility/interim judges + SQLite conversation-floor & closer-log stores). Depends on personality one-directionally. Domain-first slice BOB-062.6a.",
-      "symbols": 174,
-      "url": "/features/conversation"
+      "symbols": 185,
+      "tags": [
+        "module-vertical"
+      ],
+      "tests": {
+        "count": 0,
+        "file_count": 0,
+        "files": [],
+        "placement": {}
+      },
+      "url": "/features/conversation",
+      "used_by": [],
+      "uses": []
     },
     {
+      "activity": {
+        "commits_30d": 0,
+        "level": "quiet",
+        "lines_30d": 0
+      },
+      "debt": {
+        "reasons": [],
+        "score": 0.0
+      },
+      "depended_on_by": [
+        "coding",
+        "interactive",
+        "runtime"
+      ],
+      "depends_on": [
+        "bob-domain"
+      ],
+      "doc_links": [
+        "/docs/domains/identity/README.html"
+      ],
+      "doc_status": "fresh",
+      "docs": [
+        {
+          "path": "domains/identity/README.md",
+          "status": "ok"
+        }
+      ],
+      "findings": [],
+      "group": "features",
+      "id": "identity",
+      "kind": "feature",
+      "label": "identity",
+      "layer": "",
+      "layer_rank": null,
+      "layer_rule": "",
+      "layer_rule_rank": null,
+      "lifecycle": "active",
+      "lint_clean": true,
+      "parent": "bob-domain",
+      "public_symbols": {
+        "names": [
+          "AiohttpGitHubAppApi",
+          "AppCredentials",
+          "Freshness",
+          "GitHubAppApi",
+          "GitHubInstallationTokens",
+          "IdentityConfigError",
+          "IdentityError",
+          "InstallationToken",
+          "InstallationTokenSource",
+          "OpensslRs256Signer",
+          "Principal",
+          "Purpose",
+          "Rs256Signer",
+          "SigningError",
+          "SpawnIsolation",
+          "SpawnIsolationFiles",
+          "TokenMintError",
+          "assemble_jwt",
+          "b64url",
+          "build_installation_tokens",
+          "controlled_ssh_command",
+          "credential_store_line",
+          "credentials_for",
+          "isolation_config_pairs",
+          "isolation_env",
+          "jwt_claims",
+          "parse_expiry",
+          "principal_for",
+          "sign_argv",
+          "signing_input",
+          "token_freshness"
+        ],
+        "omitted": 0
+      },
+      "source": "src/bob/identity/",
+      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/identity",
+      "summary": "Identity module («кем Боб представляется GitHub'у») — github-идентичность как отдельный bounded context: чистые ядра (Purpose→Principal — work пушит только в форк, propose лишь читает апстрим; реквизиты принципала из конфига с проверкой формы; claims App-JWT RS256 с поправкой на расхождение часов и предел GitHub; вердикт «токен годен / пора обновить» с обновлением ЗАРАНЕЕ, а не по факту 401) и `adapters/` (подпись настоящим `openssl dgst -sha256 -sign` — без новых зависимостей; транспорт двух ручек GitHub App API на aiohttp — секрет только в заголовке, никогда в argv; кэш installation-токенов на принципала). Заведён в BOB-089 срез B; `coding` его не импортит, провайдер приходит на композиции.",
+      "symbols": 40,
+      "tags": [
+        "module-vertical"
+      ],
+      "tests": {
+        "count": 0,
+        "file_count": 0,
+        "files": [],
+        "placement": {}
+      },
+      "url": "/features/identity",
+      "used_by": [],
+      "uses": []
+    },
+    {
+      "activity": {
+        "commits_30d": 1,
+        "level": "cool",
+        "lines_30d": 81
+      },
+      "debt": {
+        "reasons": [],
+        "score": 0.0
+      },
+      "depended_on_by": [
+        "runtime"
+      ],
+      "depends_on": [
+        "coding",
+        "identity"
+      ],
+      "doc_links": [
+        "/docs/domains/interactive/README.html"
+      ],
+      "doc_status": "fresh",
+      "docs": [
+        {
+          "path": "domains/interactive/README.md",
+          "status": "ok"
+        }
+      ],
+      "findings": [],
+      "group": "features",
+      "id": "interactive",
+      "kind": "feature",
+      "label": "interactive",
+      "layer": "",
+      "layer_rank": null,
+      "layer_rule": "",
+      "layer_rule_rank": null,
+      "lifecycle": "active",
+      "lint_clean": true,
+      "parent": "bob-domain",
+      "public_symbols": {
+        "names": [
+          "DenialWatch",
+          "InteractiveClaudeRunner",
+          "InteractiveIntakeRouter",
+          "InteractiveManagerLike",
+          "InteractiveProcess",
+          "InteractiveProcessSpawner",
+          "InteractiveRunError",
+          "InteractiveSessionManager",
+          "LiveSession",
+          "OwnerDmNotifierLike",
+          "PermissionDenial",
+          "PermissionGranted",
+          "PermissionNegotiation",
+          "PermissionRefused",
+          "RecoverInteractiveSessions",
+          "ResumeConfirmed",
+          "ResumeNegotiation",
+          "ResumeRejected",
+          "ResumeSupportLike",
+          "SessionTeardown",
+          "build_interactive_argv",
+          "encode_user_message",
+          "extract_session_id",
+          "interactive_busy",
+          "interactive_ended",
+          "interactive_ended_persistent",
+          "interactive_failed",
+          "interactive_opened",
+          "interactive_setup_failed",
+          "is_confirmation",
+          "is_confirmation_fresh",
+          "is_interactive_exit",
+          "is_rejection",
+          "parse_interactive_entry",
+          "parse_interactive_resume",
+          "parse_interactive_workspace",
+          "permission_declined",
+          "permission_lifted",
+          "permission_question",
+          "permission_retry_frame",
+          "permission_stuck",
+          "permission_unreachable",
+          "pipeline_first_frame",
+          "resume_cancelled",
+          "resume_confirm",
+          "resume_failed",
+          "resume_nothing",
+          "resumed",
+          "select_resumable",
+          "stopped_persistent"
+        ],
+        "omitted": 2
+      },
+      "source": "src/bob/interactive/",
+      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/interactive",
+      "summary": "Interactive module («Боб держит живой терминал») — the live bidirectional `claude` session in the owner's DM: pure domain (mode intent, resume policy + negotiation, argv policy, the mode's voice, the live-session holder), `usecases/` (session manager, teardown, DM intake router, boot-time sweep of orphaned sessions), and `adapters/` (the persistent stream-json runner). Rests on coding's shared session surface; coding never imports it. Split out of `coding` in BOB-087.E.",
+      "symbols": 76,
+      "tags": [
+        "module-vertical"
+      ],
+      "tests": {
+        "count": 0,
+        "file_count": 0,
+        "files": [],
+        "placement": {}
+      },
+      "url": "/features/interactive",
+      "used_by": [],
+      "uses": []
+    },
+    {
+      "activity": {
+        "commits_30d": 0,
+        "level": "dormant",
+        "lines_30d": 0
+      },
+      "debt": {
+        "reasons": [
+          "dormant"
+        ],
+        "score": 0.5
+      },
       "depended_on_by": [],
       "depends_on": [],
       "doc_links": [
         "/docs/domains/domain/features/kernel/SPEC.html"
       ],
       "doc_status": "fresh",
+      "docs": [
+        {
+          "path": "domains/domain/features/kernel/SPEC.md",
+          "status": "ok"
+        }
+      ],
+      "findings": [],
       "group": "features",
       "id": "kernel",
       "kind": "feature",
       "label": "kernel",
       "layer": "domain",
-      "layer_rank": 2,
+      "layer_rank": 3,
+      "layer_rule": "architecture-layers",
+      "layer_rule_rank": 3,
+      "lifecycle": "active",
       "lint_clean": true,
       "parent": "bob-domain",
-      "summary": "Shared kernel — the infra-neutral contracts every vertical module rests on: the runtime seams (Clock, EventBus, EventHandler, DomainEvent, LLMProvider) and the shared value objects (LLMMessage, JsonValue). Pure Protocol/type definitions; no I/O. Every module may import from here; the kernel imports from no module.",
-      "symbols": 4,
-      "url": "/features/kernel"
+      "public_symbols": {
+        "names": [
+          "BobMessageReaction",
+          "BobUserIdSource",
+          "Clock",
+          "DomainEvent",
+          "EpisodeReader",
+          "EventBus",
+          "Gender",
+          "Interlocutor",
+          "InterlocutorKind",
+          "LLMProvider",
+          "MemoryRecall",
+          "MessageReceived",
+          "Relationship",
+          "ReplyGateway",
+          "RosterMember",
+          "RuleModulators",
+          "SulkState",
+          "ToolCall",
+          "ToolCallResult",
+          "ToolCallingProvider",
+          "Trust",
+          "UnderstudyBackedProvider",
+          "is_owner_private",
+          "next_backoff",
+          "outage_state",
+          "strictest_visibility",
+          "under_root"
+        ],
+        "omitted": 0
+      },
+      "source": "src/bob/kernel/",
+      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/kernel",
+      "summary": "Shared kernel — the infra-neutral contracts every vertical module rests on: the runtime seams (Clock, EventBus, EventHandler, DomainEvent, LLMProvider), the shared value objects (LLMMessage, JsonValue), the intake events (MessageReceived, BobMessageReaction), the memory/reply ports (EpisodeReader, MemoryRecall, Recalled, ReplyGateway, BobUserIdSource), the LLM tool-calling vocabulary (ToolDefinition, ToolCall, ToolCallResult, ToolCallingProvider, ToolLoopMessage), the self-improvement RuleModulators, and the social vocabulary — who talks to Bob and how he stands with them (Interlocutor, InterlocutorKind, Trust, Gender, Relationship, RosterMember, SulkState) — whose behaviour stays in `social` (BOB-113). Pure Protocol/type/value definitions; no I/O. Every module may import from here; the kernel imports from no module.",
+      "symbols": 30,
+      "tags": [
+        "layer-domain"
+      ],
+      "tests": {
+        "count": 0,
+        "file_count": 0,
+        "files": [],
+        "placement": {}
+      },
+      "url": "/features/kernel",
+      "used_by": [],
+      "uses": []
     },
     {
+      "activity": {
+        "commits_30d": 1,
+        "level": "cool",
+        "lines_30d": 20
+      },
+      "debt": {
+        "reasons": [],
+        "score": 0.0
+      },
       "depended_on_by": [
         "runtime"
       ],
       "depends_on": [
-        "capabilities"
+        "bob-domain",
+        "capabilities",
+        "router"
       ],
       "doc_links": [
         "/docs/domains/infrastructure/features/llm/SPEC.html"
       ],
       "doc_status": "fresh",
+      "docs": [
+        {
+          "path": "domains/infrastructure/features/llm/SPEC.md",
+          "status": "ok"
+        }
+      ],
+      "findings": [],
       "group": "other",
       "id": "llm",
       "kind": "component",
       "label": "llm",
       "layer": "infra",
-      "layer_rank": 3,
+      "layer_rank": 1,
+      "layer_rule": "architecture-layers",
+      "layer_rule_rank": 1,
+      "lifecycle": "active",
       "lint_clean": true,
       "parent": "bob-infrastructure",
+      "public_symbols": {
+        "names": [
+          "FallbackLLMProvider",
+          "OpenAICompatProvider",
+          "ToolCallingFallbackLLMProvider",
+          "build_fallback_provider",
+          "build_tier_providers",
+          "build_web_search_provider"
+        ],
+        "omitted": 0
+      },
+      "source": "src/bob/infrastructure/llm/",
+      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/infrastructure/llm",
       "summary": "LLM adapter — OpenAI-compatible provider for Tier 0/1 completion + tool-calling (Ollama/Qwen backend).",
-      "symbols": 20,
-      "url": ""
+      "symbols": 24,
+      "tags": [
+        "layer-infra"
+      ],
+      "tests": {
+        "count": 0,
+        "file_count": 0,
+        "files": [],
+        "placement": {}
+      },
+      "url": "/other/llm",
+      "used_by": [],
+      "uses": []
     },
     {
+      "activity": {
+        "commits_30d": 2,
+        "level": "cool",
+        "lines_30d": 69
+      },
+      "debt": {
+        "reasons": [],
+        "score": 0.0
+      },
       "depended_on_by": [
+        "capabilities",
+        "coding",
         "proactivity",
         "runtime",
+        "telegram",
         "usecases"
       ],
       "depends_on": [
+        "bob-domain",
         "persistence",
         "personality",
         "router",
@@ -687,19 +1968,98 @@
         "/docs/domains/memory/README.html"
       ],
       "doc_status": "fresh",
+      "docs": [
+        {
+          "path": "domains/memory/README.md",
+          "status": "ok"
+        }
+      ],
+      "findings": [],
       "group": "features",
       "id": "memory",
       "kind": "feature",
       "label": "memory",
       "layer": "",
-      "layer_rank": 2,
+      "layer_rank": null,
+      "layer_rule": "",
+      "layer_rule_rank": null,
+      "lifecycle": "active",
       "lint_clean": true,
       "parent": "bob-domain",
-      "summary": "Memory module («Bob remembers») — the full vertical capability in one place: `ports.py` + pure `entities`, `usecases/` (extract facts, consolidate, dedup), and `adapters/` (FTS5/hybrid recall + local Ollama embedder/reranker). Domain-first slice BOB-062.2.",
-      "symbols": 51,
-      "url": "/features/memory"
+      "public_symbols": {
+        "names": [
+          "CasualFloorRecall",
+          "ClassifyWorkTalk",
+          "ConsolidateMemory",
+          "ConsolidationStore",
+          "DedupFacts",
+          "DedupStore",
+          "Embedder",
+          "EpisodicEvent",
+          "ExtractFacts",
+          "FactWriter",
+          "Fts5MemoryRecall",
+          "HybridMemoryRecall",
+          "MemoryBackedSelfActionRecorder",
+          "MemoryRepo",
+          "MemoryVectorStore",
+          "NoOpSelfActionRecorder",
+          "OllamaEmbedder",
+          "OllamaReranker",
+          "Register",
+          "RegisterResolver",
+          "RenderedSelfAction",
+          "Reranker",
+          "SelfAction",
+          "SelfActionEpisodeStore",
+          "SelfActionKind",
+          "SelfActionRecorder",
+          "SemanticFact",
+          "SqliteMemoryRepo",
+          "WorkEpisode",
+          "WorkTalkClassifier",
+          "build_embedder",
+          "build_reranker",
+          "coding_terminal_kind",
+          "describe_self_action",
+          "filter_by_register",
+          "may_recall_in_register",
+          "parse_provenance_window",
+          "parse_work_talk_verdict",
+          "pool_has_work",
+          "provenance_window",
+          "register_ranked",
+          "work_episode_event"
+        ],
+        "omitted": 0
+      },
+      "source": "src/bob/memory/",
+      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/memory",
+      "summary": "Memory module («Bob remembers») — the full vertical capability in one place: `ports.py` (MemoryRepo, SelfActionRecorder, Embedder, Reranker — the read ports MemoryRecall/EpisodeReader and `Recalled` live in `kernel`, BOB-113) + pure `entities`, `usecases/` (extract facts, consolidate, dedup), and `adapters/` (FTS5/hybrid recall + local Ollama embedder/reranker). Domain-first slice BOB-062.2.",
+      "symbols": 87,
+      "tags": [
+        "module-vertical"
+      ],
+      "tests": {
+        "count": 0,
+        "file_count": 0,
+        "files": [],
+        "placement": {}
+      },
+      "url": "/features/memory",
+      "used_by": [],
+      "uses": []
     },
     {
+      "activity": {
+        "commits_30d": 0,
+        "level": "quiet",
+        "lines_30d": 0
+      },
+      "debt": {
+        "reasons": [],
+        "score": 0.0
+      },
       "depended_on_by": [
         "memory",
         "runtime"
@@ -709,19 +2069,57 @@
         "/docs/domains/infrastructure/features/persistence/SPEC.html"
       ],
       "doc_status": "fresh",
+      "docs": [
+        {
+          "path": "domains/infrastructure/features/persistence/SPEC.md",
+          "status": "ok"
+        }
+      ],
+      "findings": [],
       "group": "other",
       "id": "persistence",
       "kind": "component",
       "label": "persistence",
       "layer": "infra",
-      "layer_rank": 3,
+      "layer_rank": 1,
+      "layer_rule": "architecture-layers",
+      "layer_rule_rank": 1,
+      "lifecycle": "active",
       "lint_clean": true,
       "parent": "bob-infrastructure",
+      "public_symbols": {
+        "names": [
+          "SqliteConnection"
+        ],
+        "omitted": 0
+      },
+      "source": "src/bob/infrastructure/persistence/",
+      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/infrastructure/persistence",
       "summary": "Persistence kernel — the shared `SqliteConnection` (open/WAL/foreign_keys/sqlite-vec load/`schema.sql`/kv/close) that the memory adapter and the 13 per-module durable stores read through the injected `connection` seam. Pure I/O: carries no memory/business logic — those realisations live in their owning modules' `adapters/` (BOB-062.2–.7b).",
       "symbols": 2,
-      "url": ""
+      "tags": [
+        "layer-infra"
+      ],
+      "tests": {
+        "count": 0,
+        "file_count": 0,
+        "files": [],
+        "placement": {}
+      },
+      "url": "/other/persistence",
+      "used_by": [],
+      "uses": []
     },
     {
+      "activity": {
+        "commits_30d": 5,
+        "level": "warm",
+        "lines_30d": 116
+      },
+      "debt": {
+        "reasons": [],
+        "score": 0.0
+      },
       "depended_on_by": [
         "conversation",
         "memory",
@@ -731,25 +2129,113 @@
         "usecases"
       ],
       "depends_on": [
+        "bob-domain",
         "router"
       ],
       "doc_links": [
         "/docs/domains/personality/README.html"
       ],
       "doc_status": "fresh",
+      "docs": [
+        {
+          "path": "domains/personality/README.md",
+          "status": "ok"
+        }
+      ],
+      "findings": [],
       "group": "features",
       "id": "personality",
       "kind": "feature",
       "label": "personality",
       "layer": "",
-      "layer_rank": 2,
+      "layer_rank": null,
+      "layer_rule": "",
+      "layer_rule_rank": null,
+      "lifecycle": "active",
       "lint_clean": true,
       "parent": "bob-domain",
+      "public_symbols": {
+        "names": [
+          "ApplyReflection",
+          "CurrentFascinationReader",
+          "Disposition",
+          "EngagementLevel",
+          "EvolveFascination",
+          "EvolvePhantoms",
+          "ExpressionFreqs",
+          "ExpressionMode",
+          "ExpressionPlan",
+          "ExpressionSignals",
+          "Fascination",
+          "FascinationGrounding",
+          "FascinationStore",
+          "FormHint",
+          "GroundedAddons",
+          "HeuristicReflectionParser",
+          "KvNotableReactionStore",
+          "LlmReactionJudge",
+          "MessageReactor",
+          "Mood",
+          "MoodDelta",
+          "MoodPerceiver",
+          "Negotiation",
+          "NegotiationZone",
+          "NotableReaction",
+          "NotableReactionStore",
+          "OffDayThresholds",
+          "PersonalityState",
+          "PhantomProfileWriter",
+          "PhantomSignals",
+          "ReactionContext",
+          "ReactionJudge",
+          "ReactionJudgeParseError",
+          "ReactionMeaning",
+          "ReappraisalOutcome",
+          "ReappraiseReflection",
+          "ReflectionOutcome",
+          "ReflectionParser",
+          "ReflectionReader",
+          "ReflectionSignal",
+          "RelationshipToneThresholds",
+          "RepoFascinationGrounding",
+          "RoomToneThresholds",
+          "SOUL",
+          "SqliteFascinationStore",
+          "Stance",
+          "StoreFascinationReader",
+          "TasteAxis",
+          "TasteEngine",
+          "TextSignals"
+        ],
+        "omitted": 50
+      },
+      "source": "src/bob/personality/",
+      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/personality",
       "summary": "Personality module («who Bob is») — the full character vertical in one place: `ports.py` + pure domain (Mood five-axis affect, TasteEngine + evolution, disposition, fascination + phantoms, language/profanity, expression incl. verbosity/engagement vocabulary, voice, the reaction family, negotiation stance, reflection, absence), `usecases/` (update mood from text, apply/reappraise/parse reflection, evolve fascination/phantoms), and `adapters/` (Tier-0 reaction judge + SQLite/kv fascination & notable-reaction stores). Domain-first slice BOB-062.6a. (Being-received reaction perception is a cross-domain use-case over mood + relationship, so it lives in `application/usecases/perceive_reaction`, not here.)",
-      "symbols": 136,
-      "url": "/features/personality"
+      "symbols": 153,
+      "tags": [
+        "module-vertical"
+      ],
+      "tests": {
+        "count": 0,
+        "file_count": 0,
+        "files": [],
+        "placement": {}
+      },
+      "url": "/features/personality",
+      "used_by": [],
+      "uses": []
     },
     {
+      "activity": {
+        "commits_30d": 0,
+        "level": "quiet",
+        "lines_30d": 0
+      },
+      "debt": {
+        "reasons": [],
+        "score": 0.0
+      },
       "depended_on_by": [
         "runtime",
         "runtime-app",
@@ -762,25 +2248,97 @@
         "/docs/domains/presence/README.html"
       ],
       "doc_status": "fresh",
+      "docs": [
+        {
+          "path": "domains/presence/README.md",
+          "status": "ok"
+        }
+      ],
+      "findings": [],
       "group": "features",
       "id": "presence",
       "kind": "feature",
       "label": "presence",
       "layer": "",
-      "layer_rank": 2,
+      "layer_rank": null,
+      "layer_rule": "",
+      "layer_rule_rank": null,
+      "lifecycle": "active",
       "lint_clean": true,
       "parent": "bob-domain",
+      "public_symbols": {
+        "names": [
+          "ArrivedMessage",
+          "BacklogMessage",
+          "BacklogScorer",
+          "CatchUpPlan",
+          "EpisodicOutgoingActivityStore",
+          "LlmStalenessJudge",
+          "NaturalDelayPolicy",
+          "OutgoingActivity",
+          "OutgoingActivityStore",
+          "QueuedAmbient",
+          "ReactionBudget",
+          "RhythmConfig",
+          "SeriesAction",
+          "ShareOfVoicePolicy",
+          "StalenessContext",
+          "StalenessGate",
+          "StalenessJudge",
+          "StalenessOutcome",
+          "StalenessReading",
+          "build_staleness_user_prompt",
+          "clamp_unit",
+          "coalesce_stale",
+          "decide_staleness",
+          "delay_floor_seconds",
+          "fair_target_share",
+          "is_reentry",
+          "nothing_arrived",
+          "parse_staleness_reading",
+          "plan_series_actions",
+          "rank",
+          "reaction_allowed",
+          "score",
+          "select_catchup",
+          "share_damping"
+        ],
+        "omitted": 0
+      },
+      "source": "src/bob/presence/",
+      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/presence",
       "summary": "Presence module («Bob's living rhythm») — the ритм-слой of human group presence: `ports.py` + pure domain (OutgoingActivity rolling window, ShareOfVoicePolicy soft ambient ceiling with focus-bypass, NaturalDelayPolicy human reply floor, ReactionBudget gentle like budget, RhythmConfig tunables) + `adapters/` (episodic-log OutgoingActivityStore). Domain-first slice BOB-066.2.3; inert behind the `presence.rhythm` flag until the epic ships.",
       "symbols": 40,
-      "url": "/features/presence"
+      "tags": [
+        "module-vertical"
+      ],
+      "tests": {
+        "count": 0,
+        "file_count": 0,
+        "files": [],
+        "placement": {}
+      },
+      "url": "/features/presence",
+      "used_by": [],
+      "uses": []
     },
     {
+      "activity": {
+        "commits_30d": 2,
+        "level": "cool",
+        "lines_30d": 61
+      },
+      "debt": {
+        "reasons": [],
+        "score": 0.0
+      },
       "depended_on_by": [
         "runtime",
         "telegram",
         "usecases"
       ],
       "depends_on": [
+        "bob-domain",
         "conversation",
         "memory",
         "personality",
@@ -790,22 +2348,111 @@
         "/docs/domains/proactivity/README.html"
       ],
       "doc_status": "fresh",
+      "docs": [
+        {
+          "path": "domains/proactivity/README.md",
+          "status": "ok"
+        }
+      ],
+      "findings": [],
       "group": "features",
       "id": "proactivity",
       "kind": "feature",
       "label": "proactivity",
       "layer": "",
-      "layer_rank": 2,
+      "layer_rank": null,
+      "layer_rule": "",
+      "layer_rule_rank": null,
+      "lifecycle": "active",
       "lint_clean": true,
       "parent": "bob-domain",
-      "summary": "Proactivity module («Bob's background life») — the full vertical capability in one place: `ports.py` + pure domain (drive-model urge/governance/social-energy, goals graph, self-improvement rules), `usecases/` (engine/tick, plan/pursue goals, detect-patterns/announce-rules), and `adapters/` (proactivity/goal/self-improvement stores + live read-seams). Domain-first slice BOB-062.3.",
-      "symbols": 121,
-      "url": "/features/proactivity"
+      "public_symbols": {
+        "names": [
+          "ActiveRulesReader",
+          "AnnounceProposedRules",
+          "AnnounceRestart",
+          "AnnounceStatus",
+          "DetectPatterns",
+          "EpisodeWriter",
+          "Goal",
+          "GoalGraph",
+          "GoalOrigin",
+          "GoalState",
+          "GoalStore",
+          "GoalStoreLike",
+          "Governance",
+          "GovernanceConfig",
+          "HistorySource",
+          "ImprovementRule",
+          "ImprovementSignals",
+          "KvRestartMarkerStore",
+          "Lever",
+          "LlmPatternDetector",
+          "LlmPlanner",
+          "PatternDetector",
+          "PlanGoal",
+          "PlanResult",
+          "Planner",
+          "ProactiveDecider",
+          "ProactiveHistory",
+          "ProactiveRunner",
+          "ProactiveTick",
+          "ProactiveWindowCounter",
+          "ProactivityEngine",
+          "ProactivityState",
+          "ProactivityStore",
+          "ProactivityStoreLike",
+          "ProgressWindowCounter",
+          "ProposalDefect",
+          "PursueGoalsTick",
+          "PursuitStore",
+          "RecordOwnerActivity",
+          "ReflectionSalienceSource",
+          "RepoProactivitySources",
+          "RestartMarkerStore",
+          "RestartMoment",
+          "RestartNotifier",
+          "RuleAnnounceGateway",
+          "RuleAnnounceStore",
+          "RuleLoader",
+          "RuleOrigin",
+          "RuleState",
+          "SafeDispatcher"
+        ],
+        "omitted": 33
+      },
+      "source": "src/bob/proactivity/",
+      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/proactivity",
+      "summary": "Proactivity module («Bob's background life») — the full vertical capability in one place: `ports.py` + pure domain (drive-model urge/governance/social-energy, goals graph, self-improvement rules — the RuleModulators value they build lives in `kernel`, BOB-113), `usecases/` (engine/tick, plan/pursue goals, detect-patterns/announce-rules), and `adapters/` (proactivity/goal/self-improvement stores + live read-seams). Domain-first slice BOB-062.3.",
+      "symbols": 143,
+      "tags": [
+        "module-vertical"
+      ],
+      "tests": {
+        "count": 0,
+        "file_count": 0,
+        "files": [],
+        "placement": {}
+      },
+      "url": "/features/proactivity",
+      "used_by": [],
+      "uses": []
     },
     {
+      "activity": {
+        "commits_30d": 0,
+        "level": "quiet",
+        "lines_30d": 0
+      },
+      "debt": {
+        "reasons": [],
+        "score": 0.0
+      },
       "depended_on_by": [
+        "capabilities",
         "coding",
         "conversation",
+        "llm",
         "memory",
         "personality",
         "presence",
@@ -814,27 +2461,77 @@
         "social",
         "usecases"
       ],
-      "depends_on": [],
+      "depends_on": [
+        "bob-domain"
+      ],
       "doc_links": [
         "/docs/domains/application/features/router/SPEC.html"
       ],
       "doc_status": "fresh",
+      "docs": [
+        {
+          "path": "domains/application/features/router/SPEC.md",
+          "status": "ok"
+        }
+      ],
+      "findings": [],
       "group": "features",
       "id": "router",
       "kind": "feature",
       "label": "router",
       "layer": "application",
-      "layer_rank": 1,
+      "layer_rank": 2,
+      "layer_rule": "architecture-layers",
+      "layer_rule_rank": 2,
+      "lifecycle": "active",
       "lint_clean": true,
       "parent": "bob-application",
+      "public_symbols": {
+        "names": [
+          "GenerationDoor",
+          "LLMRequest",
+          "LLMRouter",
+          "OutageVoice",
+          "TaskType",
+          "VoiceCanon",
+          "door_for",
+          "fold_voice_canon",
+          "select_reply_tier",
+          "should_fall_back",
+          "who_may_answer_for_bob"
+        ],
+        "omitted": 0
+      },
+      "source": "src/bob/application/router/",
+      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/application/router",
       "summary": "LLMRouter — Tier 0/1 model routing with privacy redaction before any model call.",
-      "symbols": 6,
-      "url": "/features/router"
+      "symbols": 19,
+      "tags": [
+        "layer-application"
+      ],
+      "tests": {
+        "count": 0,
+        "file_count": 0,
+        "files": [],
+        "placement": {}
+      },
+      "url": "/features/router",
+      "used_by": [],
+      "uses": []
     },
     {
-      "depended_on_by": [
-        "bob"
-      ],
+      "activity": {
+        "commits_30d": 3,
+        "level": "cool",
+        "lines_30d": 100
+      },
+      "debt": {
+        "reasons": [
+          "high_fan_out"
+        ],
+        "score": 1.0
+      },
+      "depended_on_by": [],
       "depends_on": [
         "bob-application",
         "bob-domain",
@@ -843,6 +2540,8 @@
         "coding",
         "config",
         "conversation",
+        "identity",
+        "interactive",
         "llm",
         "memory",
         "persistence",
@@ -859,25 +2558,87 @@
         "/docs/services/runtime.html"
       ],
       "doc_status": "fresh",
+      "docs": [
+        {
+          "path": "services/runtime.md",
+          "status": "ok"
+        }
+      ],
+      "findings": [],
       "group": "services",
       "id": "runtime",
       "kind": "service",
       "label": "runtime",
-      "layer": "",
-      "layer_rank": null,
+      "layer": "runtime",
+      "layer_rank": 0,
+      "layer_rule": "architecture-layers",
+      "layer_rule_rank": 0,
+      "lifecycle": "active",
       "lint_clean": true,
       "parent": "bob",
+      "public_symbols": {
+        "names": [
+          "Application",
+          "RhythmWiring",
+          "RosterConfig",
+          "SystemClock",
+          "build_application",
+          "build_batch_room_reader",
+          "build_catch_up_reentry",
+          "build_disclosure_consent_gate",
+          "build_disclosure_guard",
+          "build_endorsement_seeder",
+          "build_register_resolver",
+          "build_rhythm_wiring",
+          "build_room_mood_modulator",
+          "build_roster_config",
+          "build_secondary_recall",
+          "build_self_action_recorder",
+          "build_send_to_chat",
+          "build_staleness_reassessor",
+          "build_work_journal_recorder",
+          "collect_requirements",
+          "known_destinations",
+          "main",
+          "report_tool_health",
+          "staleness_enabled"
+        ],
+        "omitted": 0
+      },
+      "source": "src/bob/runtime/",
+      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/runtime",
       "summary": "Composition root (`src/bob/runtime/` package + the thin `app.py` shim) — the only layer allowed to wire all layers + all vertical modules at once: `config.py` loads layered config (incl. `_REPO_ROOT`), `wiring/*` build infrastructure adapters + compose application policy/use-cases per bounded context, `composition.py` (`build_application` + `Application`) subscribes handlers to the EventBus and registers ticks + Telegram polling, `clock.py` provides `SystemClock`, and `main.py` runs Genesis once and starts the process.",
-      "symbols": 77,
-      "url": "/services/runtime"
+      "symbols": 105,
+      "tags": [
+        "layer-runtime"
+      ],
+      "tests": {
+        "count": 0,
+        "file_count": 0,
+        "files": [],
+        "placement": {}
+      },
+      "url": "/services/runtime",
+      "used_by": [],
+      "uses": []
     },
     {
+      "activity": {
+        "commits_30d": 2,
+        "level": "cool",
+        "lines_30d": 30
+      },
+      "debt": {
+        "reasons": [],
+        "score": 0.0
+      },
       "depended_on_by": [
         "memory",
         "runtime",
-        "telegram"
+        "usecases"
       ],
       "depends_on": [
+        "bob-domain",
         "conversation",
         "presence"
       ],
@@ -885,25 +2646,88 @@
         "/docs/domains/application/features/runtime-app/SPEC.html"
       ],
       "doc_status": "fresh",
+      "docs": [
+        {
+          "path": "domains/application/features/runtime-app/SPEC.md",
+          "status": "ok"
+        }
+      ],
+      "findings": [],
       "group": "features",
       "id": "runtime-app",
       "kind": "feature",
       "label": "runtime-app",
       "layer": "application",
-      "layer_rank": 1,
+      "layer_rank": 2,
+      "layer_rule": "architecture-layers",
+      "layer_rule_rank": 2,
+      "lifecycle": "active",
       "lint_clean": true,
       "parent": "bob-application",
-      "summary": "Application runtime — AgentRuntime, AsyncEventBus, events, and resilient heartbeat ticks (retry/backoff). Distinct from the `runtime` composition root.",
-      "symbols": 28,
-      "url": "/features/runtime-app"
+      "public_symbols": {
+        "names": [
+          "AgentRuntime",
+          "AmbientBatchReader",
+          "AsyncEventBus",
+          "CatchUpReentry",
+          "CatchUpSelection",
+          "ChatDispatcher",
+          "ChatInbox",
+          "DelayedTurn",
+          "RetryPolicy",
+          "RoomStreamReader",
+          "RuntimeState",
+          "ShareOfVoiceGate",
+          "StalenessReassessor",
+          "TurnScope",
+          "batch_grew",
+          "derive_turn_seed",
+          "is_transient",
+          "make_focus_predicate",
+          "message_is_focused",
+          "new_turn_scope",
+          "periodic",
+          "retry_with_backoff",
+          "should_debounce"
+        ],
+        "omitted": 0
+      },
+      "source": "src/bob/application/runtime/",
+      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/application/runtime",
+      "summary": "Application runtime — AgentRuntime, AsyncEventBus, and resilient heartbeat ticks (retry/backoff); the intake events it carries live in the shared kernel. Distinct from the `runtime` composition root.",
+      "symbols": 26,
+      "tags": [
+        "layer-application"
+      ],
+      "tests": {
+        "count": 0,
+        "file_count": 0,
+        "files": [],
+        "placement": {}
+      },
+      "url": "/features/runtime-app",
+      "used_by": [],
+      "uses": []
     },
     {
+      "activity": {
+        "commits_30d": 3,
+        "level": "hot",
+        "lines_30d": 428
+      },
+      "debt": {
+        "reasons": [],
+        "score": 0.0
+      },
       "depended_on_by": [
-        "bob",
+        "capabilities",
+        "coding",
         "runtime",
         "usecases"
       ],
       "depends_on": [
+        "bob-domain",
+        "conversation",
         "personality",
         "router",
         "telegram"
@@ -912,52 +2736,207 @@
         "/docs/domains/social/README.html"
       ],
       "doc_status": "fresh",
+      "docs": [
+        {
+          "path": "domains/social/README.md",
+          "status": "ok"
+        }
+      ],
+      "findings": [],
       "group": "features",
       "id": "social",
       "kind": "feature",
       "label": "social",
       "layer": "",
-      "layer_rank": 2,
+      "layer_rank": null,
+      "layer_rule": "",
+      "layer_rule_rank": null,
+      "lifecycle": "active",
       "lint_clean": true,
       "parent": "bob-domain",
-      "summary": "Social module («Bob distinguishes people») — the full vertical capability in one place: `ports.py` + pure domain (interlocutor identity, first-impression, relationship, sulk) + `permission/` value objects, `usecases/` (authorizer/sender+reactor perception, permission flow/execution, first-impression/relationship/sulk sources, run-genesis), and `adapters/` (first-impression/relationship/sulk/allowlist/permission-request/soul stores + privilege-judge). Domain-first slice BOB-062.5.",
-      "symbols": 112,
-      "url": "/features/social"
+      "public_symbols": {
+        "names": [
+          "AllowlistStore",
+          "Authorizer",
+          "DestinationKind",
+          "DestinationOutcome",
+          "DestinationVerdict",
+          "DisclosureConsentContext",
+          "DisclosureConsentJudge",
+          "DurableAuthorizer",
+          "FirstImpression",
+          "FirstImpressionReader",
+          "FirstImpressionStore",
+          "FirstImpressionTracker",
+          "GenderMemory",
+          "GenderRead",
+          "GenesisError",
+          "GenesisResult",
+          "GroupSilentAnnouncer",
+          "InterlocutorResolver",
+          "KnownDestination",
+          "KvAllowlistStore",
+          "LlmDisclosureConsentJudge",
+          "LlmPrivilegeJudge",
+          "PermissionDecision",
+          "PermissionExecutor",
+          "PermissionExecutorLike",
+          "PermissionFlow",
+          "PermissionNotifier",
+          "PermissionRequest",
+          "PermissionRequestStoreLike",
+          "PermissionState",
+          "PersonDirectoryLike",
+          "PersonHandle",
+          "PersonSulkStore",
+          "PrivilegeContext",
+          "PrivilegeJudge",
+          "PrivilegeJudgeParseError",
+          "PrivilegeNeed",
+          "PrivilegedFulfiller",
+          "ReactorPerception",
+          "RelationshipDeltas",
+          "RelationshipReader",
+          "RelationshipStore",
+          "RelationshipTracker",
+          "RequesterChannel",
+          "RosterRecall",
+          "RosterRecaller",
+          "RunGenesis",
+          "SenderPerception",
+          "SocialContext",
+          "SoulStore"
+        ],
+        "omitted": 45
+      },
+      "source": "src/bob/social/",
+      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/social",
+      "summary": "Social module («Bob distinguishes people») — the full vertical capability in one place: `ports.py` + pure domain behaviour over the shared-kernel social values (classify an interlocutor, self-gender inference, first-impression, relationship accrual, roster building, sulk dynamics — the values Interlocutor/Gender/Relationship/RosterMember/SulkState live in `kernel`, BOB-113) + `permission/` value objects, `usecases/` (authorizer/sender+reactor perception, permission flow/execution, first-impression/relationship/sulk sources, run-genesis), and `adapters/` (first-impression/relationship/sulk/allowlist/permission-request/soul stores + privilege-judge). Domain-first slice BOB-062.5.",
+      "symbols": 155,
+      "tags": [
+        "module-vertical"
+      ],
+      "tests": {
+        "count": 0,
+        "file_count": 0,
+        "files": [],
+        "placement": {}
+      },
+      "url": "/features/social",
+      "used_by": [],
+      "uses": []
     },
     {
+      "activity": {
+        "commits_30d": 2,
+        "level": "cool",
+        "lines_30d": 11
+      },
+      "debt": {
+        "reasons": [],
+        "score": 0.0
+      },
       "depended_on_by": [
-        "bob",
         "coding",
         "runtime",
         "social"
       ],
       "depends_on": [
         "bob-application",
-        "proactivity",
-        "runtime-app"
+        "bob-domain",
+        "memory",
+        "proactivity"
       ],
       "doc_links": [
         "/docs/domains/infrastructure/features/telegram/SPEC.html"
       ],
       "doc_status": "fresh",
+      "docs": [
+        {
+          "path": "domains/infrastructure/features/telegram/SPEC.md",
+          "status": "ok"
+        }
+      ],
+      "findings": [],
       "group": "other",
       "id": "telegram",
       "kind": "component",
       "label": "telegram",
       "layer": "infra",
-      "layer_rank": 3,
+      "layer_rank": 1,
+      "layer_rule": "architecture-layers",
+      "layer_rule_rank": 1,
+      "lifecycle": "active",
       "lint_clean": true,
       "parent": "bob-infrastructure",
+      "public_symbols": {
+        "names": [
+          "AuthorizerLike",
+          "BobMessageFilter",
+          "BotIdentity",
+          "BotIdentitySignals",
+          "BotLike",
+          "BotRegistration",
+          "BotRegistry",
+          "BotScope",
+          "BotUserLike",
+          "CodingAssistantLike",
+          "GoalStoreLike",
+          "GuppiHandler",
+          "MarkdownSendBot",
+          "MarkdownToRichMessage",
+          "MessageEntityLike",
+          "MessageLike",
+          "MessageReactionCountUpdatedLike",
+          "MessageReactionUpdatedLike",
+          "MultiBotGateway",
+          "ProactivityStoreLike",
+          "PursuitStoreLike",
+          "RichMarkdownSender",
+          "RichMessageSerializer",
+          "RuleStoreLike",
+          "TelegramGateway",
+          "TelegramOutboundMessenger",
+          "UpdateLike",
+          "is_reaction_update"
+        ],
+        "omitted": 0
+      },
+      "source": "src/bob/infrastructure/telegram/",
+      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/infrastructure/telegram",
       "summary": "Telegram adapter — aiogram gateway (long-polling, authz gate, native draft streaming, Rich Messages, topic-thread reply pinning), MultiBotGateway (BotRegistry + cross-bot dedup + identity/scope router) and the GuppiHandler gatekeeper.",
-      "symbols": 55,
-      "url": ""
+      "symbols": 63,
+      "tags": [
+        "layer-infra"
+      ],
+      "tests": {
+        "count": 0,
+        "file_count": 0,
+        "files": [],
+        "placement": {}
+      },
+      "url": "/other/telegram",
+      "used_by": [],
+      "uses": []
     },
     {
+      "activity": {
+        "commits_30d": 3,
+        "level": "hot",
+        "lines_30d": 329
+      },
+      "debt": {
+        "reasons": [
+          "high_fan_out"
+        ],
+        "score": 1.0
+      },
       "depended_on_by": [
         "runtime"
       ],
       "depends_on": [
         "bob-application",
+        "bob-domain",
         "capabilities",
         "conversation",
         "memory",
@@ -965,25 +2944,97 @@
         "presence",
         "proactivity",
         "router",
+        "runtime-app",
         "social"
       ],
       "doc_links": [
         "/docs/domains/application/features/usecases/SPEC.html"
       ],
       "doc_status": "fresh",
+      "docs": [
+        {
+          "path": "domains/application/features/usecases/SPEC.md",
+          "status": "ok"
+        }
+      ],
+      "findings": [],
       "group": "features",
       "id": "usecases",
       "kind": "feature",
       "label": "usecases",
       "layer": "application",
-      "layer_rank": 1,
+      "layer_rank": 2,
+      "layer_rule": "architecture-layers",
+      "layer_rule_rank": 2,
+      "lifecycle": "active",
       "lint_clean": true,
       "parent": "bob-application",
+      "public_symbols": {
+        "names": [
+          "BargeCeiling",
+          "BobMessageLookup",
+          "CatchUp",
+          "CatchUpOutcome",
+          "DisclosureConsentGate",
+          "DisclosureGuard",
+          "EndorsementSeeder",
+          "EpisodeWriter",
+          "EssentialRunner",
+          "FactDeduper",
+          "FascinationEvolver",
+          "HandleMessage",
+          "InnerMonologueTick",
+          "InteractiveRouterLike",
+          "MemoryConsolidator",
+          "MoodDriftTick",
+          "NaturalCodingRouter",
+          "OutageNotifier",
+          "OwnerActivityRecorder",
+          "PatternDetectorStep",
+          "PerceiveReaction",
+          "PermissionFlowLike",
+          "PhantomEvolver",
+          "PreComposeGate",
+          "PrivilegedRequestFulfiller",
+          "ReactionMemoryWriter",
+          "ReactorResolver",
+          "Reappraiser",
+          "ReflectTick",
+          "ReflectionContext",
+          "ReplyDelay",
+          "RoomMoodModulator",
+          "RuleAnnouncerStep",
+          "SelfImprovementReader",
+          "SulkRecoverer",
+          "TasteProfileWriter",
+          "reply_delay_inputs",
+          "to_backlog_message"
+        ],
+        "omitted": 0
+      },
+      "source": "src/bob/application/usecases/",
+      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/application/usecases",
       "summary": "Use-cases — HandleMessage, RunGenesis, UpdateMoodFromText, goal/memory/reflection flows orchestrating domain + ports.",
-      "symbols": 63,
-      "url": "/features/usecases"
+      "symbols": 55,
+      "tags": [
+        "layer-application"
+      ],
+      "tests": {
+        "count": 0,
+        "file_count": 0,
+        "files": [],
+        "placement": {}
+      },
+      "url": "/features/usecases",
+      "used_by": [],
+      "uses": []
     }
   ],
-  "schema_version": 1,
-  "scope": "architecture"
+  "schema_version": 2,
+  "scope": "architecture",
+  "source_ref": {
+    "commit": "29b589ffd6be7a24190106b3480d62aca4fb98a2",
+    "linked": "29b589ffd6be7a24190106b3480d62aca4fb98a2",
+    "pushed": true
+  }
 }

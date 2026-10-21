@@ -17,8 +17,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from bob.application.runtime.events import MessageReceived
 from bob.application.usecases.catch_up import CatchUp, CatchUpOutcome, to_backlog_message
+from bob.kernel.events import MessageReceived
 from bob.presence.catchup import BacklogMessage
 
 _NOW = datetime(2026, 7, 29, 12, 0, 0, tzinfo=UTC)

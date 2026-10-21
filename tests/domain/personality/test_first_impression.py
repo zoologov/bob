@@ -16,11 +16,11 @@ from datetime import UTC, datetime
 
 import pytest
 
+from bob.kernel.interlocutor import Interlocutor, InterlocutorKind, Trust
 from bob.social.first_impression import (
     FirstImpression,
     impression_note_for,
 )
-from bob.social.interlocutor import Interlocutor, InterlocutorKind, Trust
 
 _SEEN = datetime(2026, 6, 20, 10, 0, tzinfo=UTC)
 

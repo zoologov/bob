@@ -33,7 +33,8 @@ relationship,sulk}` + `application/authz/` + `application/usecases/{permission_*
    `InterlocutorKind` — `sulk_directive`/тон читают уже-вычисленное **значение** kind
    (`interlocutor.kind.value`, keyed по строковому лейблу), а классификацию делает
    вызывающий upstream. Итог: цикл `personality↔social` разорван, social владеет
-   identity целиком.
+   identity целиком. С BOB-113 само значение `Interlocutor` (и `InterlocutorKind`) лежит в
+   shared kernel, а `social` владеет классификацией (`classify`), см. решение 6.
 2. **`social → personality` однонаправленно (`relationship → negotiation.Stance`).**
    `apply_interaction` окрашивает отношение стилем торга (уступчивый CONCEDE/AGREE
    греет иначе, чем удержание позиции `PROPOSE_ALTERNATIVE`) и настроением `Mood`.
@@ -54,8 +55,18 @@ relationship,sulk}` + `application/authz/` + `application/usecases/{permission_*
    С расщеплением kernel'а в BOB-062.7b долг варианта C закрыт (connection-kernel ↔
    memory-репозиторий разведены; сторы читают чистый `.connection`-шов).
 5. **Порты живут в `social/ports.py`** (Allowlist / Soul / First / Relationship / Sulk /
-   PrivilegeJudge); канонический импорт — `from bob.social.ports import AllowlistStore`
+   PrivilegeJudge + читатели хода Interlocutor / FirstImpression / Relationship / Roster /
+   Sulk); канонический импорт — `from bob.social.ports import AllowlistStore`
    (транзитный ports-шим `bob.domain.ports` удалён, BOB-062.8).
+6. **Значения социального словаря — в shared kernel, поведение — здесь (BOB-113, RFC D).**
+   `Interlocutor` / `InterlocutorKind` / `Trust` / `Gender` (Enum) живут в
+   `bob.kernel.interlocutor`, `Relationship` — в `bob.kernel.relationship`, `RosterMember` —
+   в `bob.kernel.roster`, `SulkState` — в `bob.kernel.sulk`: их читают модули НИЖЕ `social`
+   по runtime-порядку (`conversation`, `personality`), и объявленные здесь значения
+   тянули их сигнатуры ребром вверх. `classify`, `detect_self_gender`/`GenderRead`,
+   `apply_interaction`/`compromise_bias`/`endorsed_seed`, `build_roster`/`is_newcomer`/
+   `member_name`, `SulkConfig`/`observe_relationship`/`recover` остаются в `social` и
+   импортируют значения из kernel. Ре-экспортов по старым путям нет — один дом у имени.
 
 ## 🔴 Мультиперсональность: cross-sender контекст здоров
 
@@ -74,14 +85,14 @@ read на каждого. При этом (аудит команды 2026-07-28)
 
 ```
 src/bob/social/
-  ports.py            # layer=domain          — social-порты (Allowlist/Soul/First/Relationship/Sulk/PrivilegeJudge)
+  ports.py            # layer=domain          — social-порты: сторы (Allowlist/Soul/FirstImpression/Relationship/Sulk/PersonSulk) + 5 читателей хода (InterlocutorResolver/FirstImpressionReader/RosterRecaller/RelationshipReader/SulkReader, BOB-113) + PrivilegeJudge (ре-экспорт из permission.privilege)
   __init__.py         # layer=domain          — фасад модуля
-  interlocutor.py     # layer=domain          — Interlocutor (+ gender) + classify (owner/known/guest/bot + trust), BOB-019/BOB-078 A
-  gender.py           # layer=domain          — Gender/GenderRead + detect_self_gender: грамматический род по САМО-презентации (не по имени), накопление ≥2 сигналов, BOB-078 A
+  interlocutor.py     # layer=domain          — classify (owner/known/guest/bot + trust) → kernel.interlocutor.Interlocutor (+ gender), BOB-019/BOB-078 A
+  gender.py           # layer=domain          — GenderRead + detect_self_gender (Enum Gender — kernel.interlocutor): грамматический род по САМО-презентации (не по имени), накопление ≥2 сигналов, BOB-078 A
   first_impression.py # layer=domain          — FirstImpression (+ display_name, + username) + impression_note_for (лёгкая заметка на нового), BOB-019/BOB-080/BOB-090.B3
-  roster.py           # layer=domain          — RosterMember/is_newcomer/build_roster: ростер комнаты, новизна по времени (припоминание состава), BOB-080
-  relationship.py     # layer=domain          — Relationship (4 оси) + apply_interaction (шаг за ход), BOB-014
-  sulk.py             # layer=domain          — SulkState + observe_relationship/recover (обида на person, person-agnostic, анти-Exodus), BOB-014.2b/BOB-066.2.5
+  roster.py           # layer=domain          — is_newcomer/build_roster/member_name (значение RosterMember — kernel.roster): ростер комнаты, новизна по времени (припоминание состава), BOB-080
+  relationship.py     # layer=domain          — apply_interaction (шаг за ход) / compromise_bias / endorsed_seed над kernel.relationship.Relationship (4 оси), BOB-014
+  sulk.py             # layer=domain          — SulkConfig + observe_relationship/recover над kernel.sulk.SulkState (обида на person, person-agnostic, анти-Exodus), BOB-014.2b/BOB-066.2.5
   disclosure.py       # layer=domain          — такт разглашения: may_surface/visibility_of/visibility_for_scope/filter_surfaceable (initiative-surfacing фильтр provenance) + carries_owner_private/transfer_needs_consent (перенос приватного в публичный чат — ПО МАТЕРИАЛУ; материал берётся из СЛЕДА хода capabilities.usecases.turn_material, а не из одной двери recall), BOB-066.2.6/BOB-090.B4/B-fix2
   destination.py      # layer=domain          — KnownDestination/resolve_destination: куда именно писать — точный адрес (чат+топик), «переспроси» при неоднозначности, отказ не-owner'у и на тот же чат, BOB-090.B2
   mention.py          # layer=domain          — PersonHandle/handles_from/mention_for/ground_mentions/demote_mentions: обращение по НАСТОЯЩЕМУ @нику или по имени; неподтверждённый тег теряет «собаку» (выдуманный хуже отсутствующего), спорное имя тега не получает вовсе, owner опознаётся по sender_id, а ЧУЖАЯ цитата только понижается, BOB-090.B3/B-fix2
@@ -140,9 +151,9 @@ guarded-ALTER'ом `SqliteConnection._migrate_first_impression_username` — и�
 
 ### Идентичность и восприятие (чистый домен)
 
-`Interlocutor` (`interlocutor.py`) — frozen value-object: id + display-name собеседника,
+`Interlocutor` (`bob.kernel.interlocutor`, BOB-113) — frozen value-object: id + display-name собеседника,
 `InterlocutorKind` (OWNER / KNOWN / GUEST / BOT), `Trust` (TRUSTED / GUEST) и `gender`
-(`Gender`, по умолчанию `UNKNOWN` — нейтрально, BOB-078 A). `classify` — чистая функция:
+(`Gender`, по умолчанию `UNKNOWN` — нейтрально, BOB-078 A). `classify` (`social/interlocutor.py`) — чистая функция:
 выводит идентичность из уже известных за ход authz-фактов (`is_owner` / `is_authorized`) и
 Telegram-флага `is_bot`, а `gender` пробрасывает как уже-вычисленное значение. Транспорта не
 касается, покрывает и людей, и ботов; сам по себе НЕ меняет доступ — это восприятие поверх
@@ -175,7 +186,7 @@ WHEN (`first_seen_at`), одна строка `note`. `impression_note_for` — 
 эвристика от воспринятого `Interlocutor` (kind + имя); ничего не выдумывает — это *vibe*,
 не досье. Минимальный фундамент под полный `RelationshipTracker`, не сам движок.
 
-`Relationship` (`relationship.py`) — качество отношения Боба с одним человеком на четырёх
+`Relationship` (значение — `bob.kernel.relationship`, поведение — `relationship.py`) — качество отношения Боба с одним человеком на четырёх
 осях в `[-1, 1]`, стартуя с `0` (нейтрально): **trust**, **respect**, **warmth** (сильнее
 всего красит тон), **compatibility**. `apply_interaction` — единственный детерминированный
 шаг обновления от сигналов ОДНОГО хода (`stance`, `Mood`, `sentiment`) малыми bounded-
@@ -188,7 +199,7 @@ WHEN (`first_seen_at`), одна строка `note`. `impression_note_for` — 
 никогда не переписывает накопленную историю, а обычный дрейф растворяет его, если
 поведение новичка не подтвердит — head-start, не постоянная инфляция.
 
-`SulkState` (`sulk.py`) — обида/охлаждение, дно оси вовлечённости. Вход требует ПОРОГА И
+`SulkState` (значение — `bob.kernel.sulk`, динамика — `sulk.py`) — обида/охлаждение, дно оси вовлечённости. Вход требует ПОРОГА И
 поддержания: одно плохое сообщение или бытовой мат не заводят обиду — только устойчиво
 критически низкое warmth **этого человека** ИЛИ устойчивая DIRECTED-враждебность за прогон
 `sustain_count` наблюдений (`observe_relationship`); здоровый ход между сбрасывает
@@ -208,7 +219,7 @@ owner'а, и любого гостя — обида ключуется по `(pe
 🔴 Корень: у Боба не было **ростера** — retrieval-пути «перечисли недавно встреченных» (все
 запросы к person-таблицам были точечные `WHERE sender_id=?`).
 
-`roster.py` (чистый домен, I/O-free) вводит `RosterMember` (`sender_id`, `name`,
+`roster.py` (чистый домен, I/O-free) строит `RosterMember` (значение в `bob.kernel.roster`; `sender_id`, `name`,
 `first_seen_at`, `is_newcomer`), `is_newcomer(first_seen, now, newcomer_days)` — новизна
 **строго по времени** (не по authz-kind/трасту/имени, INV-3) — и `build_roster(...)`
 (исключает владельца/самого Боба, сортирует по `first_seen_at` DESC, кап `limit`, отмечает
@@ -652,7 +663,9 @@ owner id), так что обиженный на середине owner пере
 - легализованы: `social → personality` (`relationship → negotiation.Stance`/`Mood` —
   публичная domain-поверхность), `social.usecases → router` (shared app), `ports`-шим.
 - 🔴 цикл `personality↔social` РАЗОРВАН (`no-dependency-cycles` зелёный): `voice.py`
-  больше не импортит `InterlocutorKind` в runtime.
+  больше не импортит `InterlocutorKind` в runtime. С BOB-113 `personality` не импортирует
+  `social` вовсе, в том числе под `TYPE_CHECKING`: социальные значения она читает из
+  `kernel`, а ребро `social → personality` идёт вниз по runtime-порядку вертикалей.
 
 Внутренний layer-guard модуля — `tests/social/test_layering.py`.
 
@@ -671,16 +684,22 @@ owner id), так что обиженный на середине owner пере
   обобщение `SulkStore` по `sender_id` (BOB-066.2.5). Реализация — `SqlitePersonSulkStore`.
 - `PrivilegeJudge` — семантический шов оценки привилегии (re-export из
   `permission/privilege.py`).
+- `InterlocutorResolver` / `FirstImpressionReader` / `RosterRecaller` / `RelationshipReader` /
+  `SulkReader` — социальные читатели хода (кто пишет, первое впечатление, ростер комнаты,
+  отношение, обида), которые потребляют `SocialContext` и `HandleMessage`. Переехали сюда из
+  `handle_message.py` (BOB-113) — рядом со сторами, которые их реализации читают.
 
 Фасад `src/bob/social/__init__.py` — вход в модуль. Канонический импорт портов —
 `from bob.social.ports import AllowlistStore` (транзитный ports-шим `bob.domain.ports`
 удалён, BOB-062.8).
 
 Ключевые точки входа:
-- Домен: `interlocutor.classify` (+ `Interlocutor.gender`),
-  `gender.detect_self_gender`/`GenderRead.observe`/`resolve` (+ `Gender`),
+- Домен: `interlocutor.classify` (+ `kernel.interlocutor.Interlocutor.gender`),
+  `gender.detect_self_gender`/`GenderRead.observe`/`resolve` (+ `kernel.interlocutor.Gender`),
   `first_impression.impression_note_for`,
-  `relationship.apply_interaction`/`endorsed_seed`, `sulk.observe_relationship`/`recover`,
+  `relationship.apply_interaction`/`compromise_bias`/`endorsed_seed` (+ `RelationshipDeltas`),
+  `roster.build_roster`/`is_newcomer`/`member_name`,
+  `sulk.observe_relationship`/`recover` (+ `SulkConfig`),
   `disclosure.may_surface`/`visibility_of`/`visibility_for_scope`/`filter_surfaceable`
   (+ `VISIBILITY_PUBLIC`/`VISIBILITY_OWNER_PRIVATE`) и
   `disclosure.carries_owner_private`/`transfer_needs_consent` (перенос приватного,

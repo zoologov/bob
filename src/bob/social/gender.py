@@ -15,11 +15,13 @@ presentation** — how a person grammatically marks themselves in their own word
 
 This is the pure, I/O-free core of that read:
 
-* :func:`detect_self_gender` — a single message → :class:`Gender` (FEM / MASC /
-  UNKNOWN). The ONLY signal is 1st-person self-presentation: a gendered past-tense
-  verb the speaker uses about themselves («пошла»/«сделал»), or an explicit «я сама»/
-  «я сам» marker. A gendered verb that belongs to a THIRD person («пошёл **он**») or a
-  contradictory pair in one message decides nothing (UNKNOWN).
+* :func:`detect_self_gender` — a single message →
+  :class:`~bob.kernel.interlocutor.Gender` (FEM / MASC / UNKNOWN; the Enum lives in
+  the shared kernel, BOB-113 — the inference stays here). The ONLY signal is
+  1st-person self-presentation: a gendered past-tense verb the speaker uses about
+  themselves («пошла»/«сделал»), or an explicit «я сама»/«я сам» marker. A gendered
+  verb that belongs to a THIRD person («пошёл **он**») or a contradictory pair in one
+  message decides nothing (UNKNOWN).
 * :class:`GenderRead` — a frozen confidence axis (a signed ``lean`` in ``[-1, 1]``,
   ``> 0`` feminine, ``< 0`` masculine) that ACCUMULATES over turns the way a
   relationship axis does: each observation nudges the lean, contradictory signals net
@@ -34,21 +36,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from enum import Enum
 
-__all__ = ["Gender", "GenderRead", "detect_self_gender"]
+from bob.kernel.interlocutor import Gender
 
-
-class Gender(Enum):
-    """The interlocutor's grammatical gender, as read from THEIR self-presentation.
-
-    FEM / MASC are committed reads; UNKNOWN is the safe default — Bob addresses an
-    UNKNOWN interlocutor neutrally, forcing no grammatical gender.
-    """
-
-    FEM = "fem"
-    MASC = "masc"
-    UNKNOWN = "unknown"
+__all__ = ["GenderRead", "detect_self_gender"]
 
 
 # Word tokens Bob reads from a message — Cyrillic (and Latin, harmlessly) runs only,

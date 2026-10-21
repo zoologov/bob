@@ -2,7 +2,7 @@
 
 > **When to invoke:** during parallel work with multiple agents (an epic with independent beads)
 > **Focus:** task distribution, synchronization, quality gating
-> **Backbone:** bead dependencies + `bd ready` (waves, always) · `bd merge-slot` (serialized merges) · `bd gate` (CI/external waits) · `bd swarm` (optional convenience for epic-type parents: validate/status)
+> **Backbone:** bead dependencies + `bd ready` (waves, always) · the merge slot, held `--holder <bead-id>` (serialized landings) · `bd gate` (CI/external waits) · `bd swarm` (optional convenience for epic-type parents: validate/status)
 > **The coordinator is the MAIN-LOOP process, not a subagent** — it spawns role subagents via the `Agent` tool, and a subagent cannot spawn subagents. That is why it lives in `.claude/commands/` (skill injected into the main loop), not `.claude/agents/`.
 
 ---
@@ -47,8 +47,10 @@ When the RFC needs technical context: delegate to an Explore sub-agent in the ba
 
 1. **One bead = one agent** at a time. Do NOT batch multiple beads into one agent (keeps contexts small, failures isolated).
 2. **Synchronization through files + beads**, not chat. CONTEXT.md is the source of truth.
-3. **Independent ready beads in the same wave MUST be launched concurrently** — one subagent each, all in the same batch (`run_in_background: true`), NOT one-at-a-time. Parallelism is mandatory, not optional: if `bd ready` lists N independent beads, spawn N subagents now. `bd ready` (universal) / `bd dep tree` is authoritative for what is launchable — NOT `bd close --suggest-next` (which can list still-blocked beads; see BDL-UX-Issues #97).
-4. **Serialize landings** with `bd merge-slot` so the parallel agents never race on commits/merges — they run concurrently but land one at a time.
+<!-- beadloom:duty=tracker-answers roles=dev,explore,review,tech-writer,test -->
+
+3. **Independent ready beads in the same wave MUST be launched concurrently** — one subagent each, all in the same batch (`run_in_background: true`), NOT one-at-a-time. Parallelism is mandatory, not optional: if `bd ready --limit 0` lists N independent beads, spawn N subagents now. `bd ready --limit 0` (universal) / `bd dep tree` is authoritative for what is launchable — NOT `bd close --suggest-next`, which named a still-blocked bead in sixteen of twenty-three dependency shapes measured on bd 1.0.4. `--limit 0` because the default caps at 100 and announces it on stderr only.
+4. **Serialize landings** with the merge slot, held `--holder <bead-id>`, so the parallel agents never race on commits/merges — they run concurrently but land one at a time. It orders the COMMITS; what keeps them out of one FILE is the disjoint scopes `beadloom waves` derived.
 
 ---
 
@@ -95,6 +97,10 @@ Roles are defined canonically in `.claude/agents/{dev,test,review,tech-writer}.m
 | Reviewer | `review` | Code review, quality (read-only) |
 | Tech Writer | `tech-writer` | Doc updates |
 
+**Cohesion is a duty of the roles, not of the launch prompt.** Every node carries one responsibility a phrase can name, and a size check (a `check` rule's `max_symbols`) is its signal, never its target. The explorer marks a node already past its signal, the developer splits by responsibility rather than by count, and the reviewer rejects a monster and a shatter alike. Each role's core states its part, so a launch prompt does not have to.
+
+<!-- beadloom:duty=cohesion roles=dev,explore,review -->
+
 ---
 
 ## Mandatory bead structure
@@ -108,6 +114,107 @@ Roles are defined canonically in `.claude/agents/{dev,test,review,tech-writer}.m
 ```
 
 Dependencies ARE the gates: a downstream bead never appears in `bd ready` until its blockers close. Dev beads created only after PLAN is Approved (task-init Step 3.6).
+
+---
+
+## The wave shape is decided, not guessed (`beadloom waves`)
+
+Before launching a wave, ask the graph which of the ready beads may run at the
+same time:
+
+```bash
+beadloom waves --parent <parent-id>         # every bead ready under the work item; no list to type
+beadloom waves <bead-id> <bead-id> ...      # exit 0 = clean, 1 = findings, 2 = undecidable
+beadloom waves <bead-id> ... --json         # the same facts, for a script
+```
+
+**A plan is compared against the beads already running under its work item, and
+you read that count separately.** The beads a plan decides over are ready ones,
+and a bead in progress is not ready. The first line therefore carries two counts
+— `0 serialisation(s), 1 against 1 running bead(s)` — and the second one is a
+bead the plan places in a wave that cannot start until a running bead lands.
+`0 serialisation(s)` alone is a claim about the plan's own pairs, never "nothing
+conflicts": before BDL-UX #283 it was printed while a bead of the same epic was
+running and conflicted with the one being launched. If the line reads
+`running work not compared`, or counts beads `not compared`, nothing checked the
+running work, and naming the running bead beside the new one
+(`beadloom waves <running-id> <new-id>`) is the comparison that remains.
+
+A tracker knows which beads block which; only the architecture graph knows which
+**code** they occupy, and that is what decides whether parallel agents pay off or
+rot. The command returns the wave shape, one named reason per serialised pair,
+and the media that wave shares no matter what shape was chosen. Every wave states
+them, whatever its width: a wave of one is one plan's width, not solitude, and
+roughly twenty single-bead waves across two epics carried the discipline by a
+launch prompt alone because the instrument said `not_applicable` there.
+
+**A bead declares its scope in the tracker**, in its own words, so that it can be
+placed at all. The declaration **opens a line** and its list runs to the end of
+that line, separated by commas or semicolons:
+
+```bash
+bd update <bead-id> --append-notes "refs: <ref-id>, <ref-id>"
+```
+
+A bead whose declaration cannot be read is serialised against every bead. That is
+not a penalty, it is the honest answer: an unknown scope is not an empty scope,
+and an empty one compares independent of everything. Four things count as
+unreadable, each printed with its own remedy — no declaration, a name the graph
+does not have, a `refs:` written inside a sentence, and a second ref written
+without a separator that the graph confirms is a node. The parser fails toward
+serialisation on purpose: a wave shape is acted on, so a parser whose errors
+widen a wave is worse than no parser.
+
+**A concurrent wave must have its media measured to read clean.** Each of the
+four is checked before the wave runs — no path differs from `HEAD` that no bead
+in the plan owns, the installed pre-commit hook judges the paths a commit stages,
+no doc pair is stale already, and no bead's title numbers it differently from the
+id the tracker allocated. A medium nobody could observe reads `unmeasured`, which
+is a finding and reaches exit 1, so a plan of concurrent beads that nobody
+measured is not a clean plan. Read the exit code, never the number of lines.
+
+What is checked is a **precondition, measured before the wave runs**. The wave's
+conduct afterwards is checked by nothing here and cannot be: no command holding a
+plan can know whether the gate owner ran the combined tree. That is why the two
+obligations below belong to a named bead.
+
+**Two obligations the shape hands to named beads rather than to habit:**
+
+<!-- beadloom:duty=clean-room roles=dev,explore,review,tech-writer,test -->
+
+- Each wave's `gate_owner` runs the combined-tree Gate once that wave has landed.
+  Every agent verifying in its own clean room is correct and blind by
+  construction to any interaction between beads — four agents once each reported
+  green on a tree that was red, and none of them was wrong.
+- An agent reports its result in the words that say which measurement it made:
+  "green in a clean room over N files" is a different claim from "green on the
+  tree". Reporting them with one word is what makes the discrepancy read as a
+  contradiction.
+
+The marker above **declares** the duty for the five roles that perform it, and
+each of their composed cores **carries** it. `beadloom config-check` checks the
+binding in both directions and blocks on a finding, so a role that stops being
+told this stops the check rather than stopping quietly. Declaring it here, in the
+command that plans the waves, keeps the rule in the artifact that owns it —
+without the declaration the duty would reach the performers only by your typing
+it into every launch prompt, which is the channel no file-based check can see.
+
+**If a human overrules the shape, it is recorded, not remembered** — in
+`.beadloom/flow.yml`, with a reason and an exit condition, exactly like every
+other stand-down:
+
+```yaml
+waves:
+  overrides:
+  - beads: [proj-1, proj-2]
+    decision: parallel
+    reason: "the two touch one vocabulary module and nothing else"
+    until: "2026-09-01"
+```
+
+An override that changes no decision is reported as inert, because an override
+nobody can see doing anything is how a rule gets switched off without anybody
+saying so.
 
 ---
 
@@ -146,9 +253,17 @@ explicit tool calls, branching on the Gate's exit code — not prose to remember
 ```
 
 The push step relies on the **pre-push Beadloom Gate hook** (`beadloom install-hooks`
-installs `pre-push`) as the authoritative blocking backstop: even if the loop above
-is skipped, a red Gate blocks the push. `git push --no-verify` is the documented,
-discouraged escape hatch.
+installs `pre-push`) as the authoritative blocking backstop **for what it runs**: even
+if the loop above is skipped, a red Gate blocks the push. `git push --no-verify` is the
+documented, discouraged escape hatch.
+
+**It does not run the test suite**, and a green Gate is not a green suite. The verdict
+names the verifications no step of it performed — on a Python project typically the
+suite, the style linter and the type checker — so read that block rather than the word
+*authoritative*. Two measurements: a document change reddened two tests under a Gate that
+returned rc 0, and a docs wave opened a pull request whose six test legs went red on one
+assertion that reproduces locally in 0.07 s, after `beadloom ci` had returned rc 0 over
+that tree twice. Running the suite stays the wave's job, at the gate owner.
 
 ### Drive deterministic steps through the process-tools
 
@@ -172,23 +287,44 @@ Agent(
 
 Monitor progress via `bd ready` / `bd dep tree <parent-id>` (always) or `bd swarm status <epic-id>` (epic parents) + `bd comments <id>` — not by reading agent output.
 
-### Subagent write-blocked fallback (observed BDL-036)
+### Subagent write-blocked fallback (observed in practice)
 
-A background subagent may report that file-writing tools (`Edit`/`Write`, and sometimes `grep`/`python3` piping) are denied in its environment, so it cannot do its work. (In BDL-036 the background `tech-writer` subagent hit this while parallel `dev` subagents in the same run wrote files fine — cause unconfirmed, likely transient/sandbox; treat it as possible, not guaranteed.)
+A background subagent may report that file-writing tools (`Edit`/`Write`, and sometimes `grep`/`python3` piping) are denied in its environment, so it cannot do its work. (Observed once: a background `tech-writer` subagent hit this while parallel `dev` subagents in the same run wrote files fine — cause unconfirmed, likely transient/sandbox; treat it as possible, not guaranteed.)
 
 **Fallback:** if a subagent returns "blocked — could not edit files", the coordinator (main loop) does NOT silently drop the bead. Either (a) re-launch the subagent, or (b) **complete the bead inline in the main loop** using the subagent's analysis (it should still return its findings), then checkpoint + close the bead normally. For write-heavy beads (docs/finalization), inline execution by the main loop is an acceptable first choice when a prior subagent was write-blocked. Record the fallback honestly in the bead comment.
 
-### Merge serialization (bd merge-slot)
+### Merge serialization (the landing lock)
 
-When parallel agents land changes, serialize merges so they don't cascade conflicts:
+<!-- beadloom:duty=landing-lock roles=dev,explore,review,tech-writer,test -->
+
+When parallel agents land changes, serialize the LANDINGS so they don't cascade conflicts. What
+keeps two agents out of one FILE is a different guarantee — the disjoint scopes `beadloom waves`
+derived — and the two are worth stating separately. Conflating them is not hypothetical: it was
+found twice, independently, nine days apart, after three sets of concurrent waves had run on a
+lock that granted neither.
 
 ```bash
-bd merge-slot create                 # once per repo
-# each agent (or coordinator on its behalf), before committing/merging:
-bd merge-slot acquire --wait         # blocks/queues until the slot is free
+bd merge-slot create                            # once per repo
+# each agent (or the coordinator on its behalf), before committing/merging:
+bd merge-slot acquire --holder <bead-id>        # exit 0 means you hold it; anything else means you do not
 # ... commit/merge ...
-bd merge-slot release
+bd merge-slot release --holder <bead-id>        # the only release form bd verifies
 ```
+
+**Pass `--holder`, and read the exit code.** Measured on bd 1.0.4: the slot refuses a held
+acquire with exit 1, and one of 32 simultaneous acquires won each round — the primitive is
+sound. Three things about the DEFAULT call form are not:
+
+- the default holder is the tracker actor (`$BEADS_ACTOR` → `git user.name` → `$USER`), which
+  is one identity for every role on one machine, so the slot cannot tell a neighbour's hold
+  from the caller's own;
+- a release that names no holder frees whoever holds the slot and reports success;
+- `--wait` appends the caller to a queue nothing drains and returns at once, so an agent told
+  in prose that it blocks never looks at the exit code. This repository's queue still holds
+  five waiters from sessions that ended in May.
+
+`beadloom waves` checks this on every plan as the `landing-order` medium: it reads the composed
+flow artifacts and reports any instruction whose call form grants less than it is relied on for.
 
 ---
 
@@ -204,11 +340,30 @@ bd merge-slot release
   ```
   (Gate types: `human`, `timer --timeout`, `gh:run`, `gh:pr`.) Use this to bridge to the STRATEGY-3 CI gate.
 
+### Launching a REVIEW subagent: paste nothing the author wrote
+
+A review that reads what the author said it did is not an independent check. Measured: in hidden-profile tasks a group that hears one member's conclusion first scores 17-36% where a single holder of all the facts scores ~100%. So the review prompt carries **the bead id and nothing else about the change** — no summary, no measurement table, no "the dev reports N tests added", however much time quoting it would save. The reviewer runs `beadloom review-brief <bead-id>` itself, which hands it the assignment, the specification and the change while withholding the author's comments and reporting how many it withheld.
+
+```
+Agent(
+  description="BEAD-XX review",
+  subagent_type="review",
+  run_in_background=True,
+  prompt="Review bead <bead-id>. Run `beadloom review-brief <bead-id>` for your input. "
+         "Epic context: CONTEXT.md + RFC.md at <docs path>. "
+         "Follow your role protocol. RETURN CONTRACT: the verdict line only.",
+)
+```
+
+This is the one launch prompt where being helpful is the defect. If a measurement genuinely must reach the reviewer before its verdict — because re-deriving it would cost more than the independence is worth — say in the prompt that you are doing it and why, so the reviewer can record that the withholding was defeated. An undeclared paste is invisible to everyone including the reviewer.
+
 ### Review feedback loop
 
 When the review subagent returns:
 - **OK** → coordinator proceeds to the docs wave.
-- **ISSUES** → coordinator: read findings (`bd comments <review-bead>`), create fix beads under the parent (`bd create --type task --parent <parent-id>`; `bd dep add <fix-bead> <review-bead>`), re-run dev→test→review until OK. Docs bead MUST NOT start until review is clean.
+- **ISSUES** → coordinator: read findings (`bd comments <review-bead>`), create fix beads under the parent (`bd create --type task --parent <parent-id> --json`, which answers with the id it allocated — never write that number into the bead's own title; then `bd dep add <fix-bead> <review-bead>` and read the titles it echoes), re-run dev→test→review until OK. Docs bead MUST NOT start until review is clean.
+
+A re-review after a fix cycle does NOT re-impose the withholding: the verdict already on the bead releases the author's account to `beadloom review-brief <bead-id> --release`. The independence that mattered was established on the first pass.
 
 ---
 
@@ -239,7 +394,8 @@ BEFORE WAVE COMMIT:
 □ uv run pytest — all pass
 □ beadloom reindex && sync-check && lint --strict && doctor — clean
 □ beadloom snapshot save <label>  (per-wave architecture record)
-□ Merges serialized via bd merge-slot (no concurrent landings)
+□ Landings serialized via the merge slot, acquired and released `--holder <bead-id>`
+□ `beadloom waves` reports `landing-order` as passed (no instruction that grants less than it claims)
 ```
 
 ---
@@ -314,8 +470,49 @@ Then notify the user (do not change the DAG silently):
 
 > **MANDATORY:** We use Beadloom (and bd) as our own tooling. Collect UX feedback to improve it.
 
-**File:** `.claude/development/BDL-UX-Issues.md`
+**File:** `.claude/development/UX-Issues.md`
 
 **Log when:** a command fails/confuses, friction points, missing features, surprising behavior, or **false signals** (e.g. #97). Beadloom issues = our backlog; `bd` (steveyegge/beads) issues = log as **External**.
 
-**Who:** Coordinator logs orchestration issues (prime/graph/lint/sync-check/swarm/gate); sub-agents report in bead comments → coordinator transfers to the UX file. Follow the template in `BDL-UX-Issues.md`.
+**Who:** Coordinator logs orchestration issues (prime/graph/lint/sync-check/swarm/gate); sub-agents report in bead comments → coordinator transfers to the UX file. Follow the template at the top of that file.
+
+---
+
+## Проектный слой Bob — что добавляет этот репозиторий к /coordinator
+
+- **Спека раньше волны (П.3).** Волна не запускается, пока у работы нет папки
+  `features/{ISSUE-KEY}/` с комплектом по типу (epic/feature — PRD/RFC/CONTEXT/PLAN/ACTIVE;
+  bug/task/chore — BRIEF/ACTIVE), все — по-русски. Описание беады спеку не заменяет.
+- **Гейты перепроверяешь САМ, на финальном дереве, релизной сборкой** (П.0.3 п.1, п.8; П.0.1):
+  ```bash
+  rm -f .beadloom/beadloom.db && uvx --from beadloom==9.0.0 beadloom ci
+  ```
+  плюс `lint --strict` / `sync-check` / `config-check` / `doctor` с числами — после **каждой**
+  волны, не только перед PR. Резюме субагента — добросовестное описание прогона до последних
+  правок, не доказательство. Локальный editable `beadloom` не считается.
+- **Без полумер (П.0.2) — твоя эскалация.** Если субагент предлагает `exempt`/`warn`/`until`
+  или «временно», это решение владельца, не субагента и не твоё: останови, сформулируй замер
+  (сдвиг вердикта vs дефект, числа), предложи структурный путь и спроси. Временная мера —
+  только со всеми четырьмя условиями, объявленная (в `rules.yml` с `reason`+`until` или в
+  `.beadloom/flow.yml` → `overlays.suppress`), с беадой на снятие.
+- **Параллельная волна — не делить файл между агентами** (п.9). Если неизбежно — только
+  точечные правки; восстановление файла целиком равно стиранию работы соседа.
+- **Саботаж-проверки координатора** снимаются обратной правкой, не `git checkout` (п.9) —
+  волна ещё не закоммичена.
+- **Текст через shell — только через файл** (п.11): `bd comments add <id> "$(cat f)"`,
+  `git commit -F f`; обратные кавычки в двойных кавычках исполняются.
+- **Git (П.6):** `main` не защищён правами (403 на этом плане) и CI по PR информативный —
+  мёрж после перепроверки гейтов на финальном дереве и обновлённых доков; pre-push хук
+  в основном репозитории работает, на ветке Боба-кодера — нет. Push с `--no-verify` —
+  только с записанной причиной в PR/беаде.
+- **Отчёты владельцу — по-русски, с числами** (собрано/пройдено, рёбра/пары/находки,
+  мутанты/выжившие), а не цветом.
+
+---
+
+## Project rule suppressions (declared in `.beadloom/flow.yml`)
+
+The core rules below are stood down **in this project only**. The core text above is unchanged — a suppression is a declaration, never a deletion — and each one names its reason and its exit condition.
+
+- Git — Trunk-based development: в CLAUDE.md §6 ядро утверждает «main is branch-protected», «beadloom ci is a REQUIRED status check» и что setup-branch-protection настраивает защиту — в этом репозитории всё три не действуют: репозиторий приватный на плане GitHub Free, API защиты ветки и rulesets отвечают «403 Upgrade to GitHub Pro or make this repository public»; main держится дисциплиной PR, перепроверкой гейтов координатором на финальном дереве и видимым (не required) CI по PR — раздел П.6 проектного слоя; беада на снятие — bob-933 (until репозиторий станет публичным или план — GitHub Pro: тогда выполняется beadloom setup-branch-protection и эта запись снимается)
+- Template rules: в /task-init ядро 9.0.0 пишет «ALL documents MUST be in English» и «(in English)» в чеклисте, хотя язык документов задан здесь как language: ru и auto-блок doc-language в CLAUDE.md уже печатает Russian — ядро task-init тег языка не читает, расхождение внутри самого beadloom (запись для лога BDL-UX подготовлена в features/BOB-112/BDL-UX-draft.md, номер появится при переносе); в этом проекте все документы по-русски, остальные пункты раздела (статусы, формат метаданных) действуют; беада на снятие — bob-yjv (until ядро /task-init в beadloom читает language из flow.yml и печатает тот же язык, что auto-блок doc-language)

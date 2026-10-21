@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING
 
 from bob.app import Application, build_application
 from bob.application.router.llm_router import LLMRequest, LLMRouter, TaskType
-from bob.application.runtime.events import MessageReceived
+from bob.kernel.events import MessageReceived
 from bob.memory.adapters import Fts5MemoryRecall
 from bob.memory.entities import SemanticFact
 from bob.social.adapters.soul_store import SoulStore

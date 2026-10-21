@@ -12,7 +12,7 @@
 ``work`` recollections, a dev turn surfaces them at full weight. But recall reaches Bob's
 reply through more doors than that one — the grounded-addon callback, the two memory tool
 capabilities (``recall_memory`` / ``search_memory``) and the proactive seed each hold their
-own :class:`~bob.memory.ports.MemoryRecall`. This decorator closes them, by construction:
+own :class:`~bob.kernel.ports.MemoryRecall`. This decorator closes them, by construction:
 
 * it OVER-FETCHES (:data:`SECONDARY_OVERFETCH_FACTOR` times the caller's ``k``) so the mute has
   something deeper to promote into the freed slots,
@@ -45,7 +45,8 @@ from bob.memory.register_pipeline import register_ranked
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bob.memory.ports import MemoryRecall, Recalled
+    from bob.kernel.episode_types import Recalled
+    from bob.kernel.ports import MemoryRecall
 
 __all__ = ["SECONDARY_OVERFETCH_FACTOR", "CasualFloorRecall"]
 
@@ -57,7 +58,7 @@ SECONDARY_OVERFETCH_FACTOR = 4
 
 
 class CasualFloorRecall:
-    """A :class:`~bob.memory.ports.MemoryRecall` that holds recall at the CASUAL floor."""
+    """A :class:`~bob.kernel.ports.MemoryRecall` that holds recall at the CASUAL floor."""
 
     def __init__(
         self,

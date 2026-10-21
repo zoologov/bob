@@ -31,7 +31,7 @@ if TYPE_CHECKING:
         ResponseChoice,
         ResponseJudge,
     )
-    from bob.social.interlocutor import Interlocutor
+    from bob.kernel.interlocutor import Interlocutor
 
 from bob.conversation.response_choice import ResponseContext
 

@@ -40,10 +40,14 @@ SSRF-щитом, локальный mermaid-рендерер, beadloom/bd/git-и
    `usecases/progress_announcer.py` вместе с политикой анонса. Помечен в коде
    (`# BOB-062.6 candidate`) как кандидат на переезд в conversation-срез — сейчас НЕ
    разделяем, чтобы не тащить лишний шов в этот переезд.
-3. **`capabilities → memory` через порт `MemoryRecall`.** Навыки `recall_memory` /
-   `search_memory` держат ТОЛЬКО инжектированный порт `MemoryRecall` (публичная
-   поверхность memory), без своего I/O. Ребро наружу, чисто, через фасад, циклов нет
-   — помечено в правилах границ как легализованное.
+3. **Память — через порт ядра `MemoryRecall`, автобиография — через `memory`.** Навыки
+   `recall_memory` / `search_memory` держат ТОЛЬКО инжектированный порт `MemoryRecall`,
+   без своего I/O. С BOB-113 порт живёт в shared kernel (`bob.kernel.ports`), поэтому
+   навыки памяти ребра в `memory` не дают. Ребро `capabilities → memory` остаётся у
+   `ToolLoop`: он записывает собственные действия Боба как `SelfAction` / `SelfActionKind`
+   (`memory.self_action`) через порт `SelfActionRecorder` (`memory.ports`, BOB-079). Ребро
+   направлено вниз по runtime-порядку вертикалей, циклов нет, в правилах границ оно
+   помечено как легализованное.
 4. **`web_search_qwen` вынесен из `llm`.** Транспорт `QwenWebSearchProvider` переехал
    из `infrastructure/llm/` в `capabilities/adapters/` (это web-навык шва, а не
    базовый LLM-провайдер). Ребро `llm.factory → capabilities.adapters` (RUNTIME
@@ -57,7 +61,7 @@ SSRF-щитом, локальный mermaid-рендерер, beadloom/bd/git-и
 
 ```
 src/bob/capabilities/
-  ports.py            # layer=domain          — 19 портов-протоколов + value-object'ы шва
+  ports.py            # layer=domain          — 17 портов-протоколов + value-object'ы шва
   __init__.py         # layer=domain          — фасад (re-export стабильных портов)
   tool_availability.py # layer=domain         — ToolRequirement/ToolVerdict/assess_tools/unavailable/describe_unavailable: какие способности НЕМЫ здесь, потому что их внешнего бинаря нет на хосте (BOB-111, Issues #62, mutation-ядро). Вердикт судит ДОСТИЖИМОСТЬ, а не форму строки: разрешение инжектится, поэтому путь с чужой машины (`/Users/…/mmdc`, синтаксически безупречный) распознаётся как недоступный. Пустой список требований НЕ читается как «всё доступно» — «не проверено» и «не сломано» остаются различимы
   diagrams/           # layer=domain            (чистый разбор inline-mermaid, BOB-037)
@@ -69,9 +73,9 @@ src/bob/capabilities/
     tracker_intent.py #                        — TrackerPlan/plan_tracker_query/find_bead_key: какой read по трекеру отвечает на вопрос (ready/list/show/search), BOB-090.A
     tracker_digest.py #                        — digest_search_results/MAX_DIGEST_ITEMS: длинная выдача bd search → сводка + важное + «Скрыто: N», BOB-090.A
     graph_form.py     #                        — GraphForm/plan_graph_form/validate_graph_ref/clamp_graph_depth/diagram_carries_nodes: какая из ТРЁХ разрешённых форм `beadloom graph` отвечает на просьбу нарисовать + валидация слотов argv (BOB-091.1, mutation-ядро)
-    impact_digest.py  #                        — digest_impact/MAX_IMPACT_ITEMS/MAX_SUBJECT_CHARS: `beadloom why` (197 строк Rich-рамок и ASCII-дерева) → узел + «Зависит от» + «Влияет на» + честный счёт транзитивных (BOB-091.1, mutation-ядро)
+    impact_digest.py  #                        — digest_impact/MAX_IMPACT_ITEMS/MAX_SUBJECT_CHARS: `beadloom why` (197 строк Rich-рамок и ASCII-дерева) → узел + «Зависит от» + «Влияет на» + честный счёт транзитивных (BOB-091.1, mutation-ядро); BOB-112: читает ОБЕ формы разделителя дерева — `----` (beadloom ≤ 8) и `--[depends_on]--` / `--[part_of]--` (9.0.0), иначе ядро молча деградировало в де-фрейм, поймано тестом на реальном бинаре
     health_form.py    #                        — HealthForm/plan_health_form/normalize_check/validate_git_ref: КАКОЙ из шести read-only отчётов beadloom (status/prime/doctor/sync-check/lint/diff) просят + его фиксированный argv; 🔴 `lint` планируется как `--no-reindex --strict` (плоский lint ПЕРЕиндексирует, то есть пишет) (BOB-091.2, mutation-ядро)
-    health_digest.py  #                        — digest_health/MAX_LISTED_ITEMS/MAX_REPORT_LINES/MAX_DOMAIN_CHARS: сжатие отчёта по его виду (585 строк пар → счёт + только stale; porcelain-кортежи lint → читаемые строки, включая ОБЕ реальные формы — с файлом и с ПУСТЫМИ файлом/строкой у правил про узел и ребро, BOB-091.4; 39 КБ prime → шапка + домены + счёт правил; diff хранит последнюю строку сводки) (BOB-091.2, mutation-ядро)
+    health_digest.py  #                        — digest_health/MAX_LISTED_ITEMS/MAX_REPORT_LINES/MAX_DOMAIN_CHARS: сжатие отчёта по его виду (585 строк пар → счёт + только stale; porcelain-кортежи lint → читаемые строки, включая ОБЕ реальные формы — с файлом и с ПУСТЫМИ файлом/строкой у правил про узел и ребро, BOB-091.4; 39 КБ prime → шапка + домены + счёт правил; diff хранит последнюю строку сводки; BOB-112: diff сверх бюджета сначала сводится к СКЕЛЕТУ — записи `+`/`-`/`~`, `tags:`, секции, строка счёта — а перепечатанные описания изменённых узлов сворачиваются в маркер «описание изменено (N строк скрыто)»: добавленный узел и есть изменение, а абзац описания — нет) (BOB-091.2, mutation-ядро)
   usecases/           # layer=application
     registry.py       #                        — CapabilityRegistry + SafeCapabilityDispatcher
     tool_loop.py      #                        — ToolLoop: model↔tools раунд-трип до финала
@@ -644,23 +648,23 @@ fnmatch по первому символу их физически не разл
 Намеренно разрешённые кросс-рёбра (все — на публичную поверхность):
 `llm.factory → capabilities.adapters` (`QwenWebSearchProvider`, RUNTIME cross-infra,
 legalized), `coding.usecases → capabilities` (`PrivacyGuard`, TC, перенос
-существующего ref), `capabilities → memory` (`MemoryRecall`),
+существующего ref), `capabilities → memory` (`SelfAction` / `SelfActionRecorder` в
+`ToolLoop`; `MemoryRecall` с BOB-113 — порт ядра),
 `handle_message` / `privileged_fulfiller → capabilities.usecases` (координация).
 
 ## API
 
 <!-- beadloom:track=src/bob/capabilities/ports.py -->
 
-Модуль `src/bob/capabilities/ports.py` (порты-протоколы + value-object'ы шва, 19
-публичных символов):
+Модуль `src/bob/capabilities/ports.py` (порты-протоколы + value-object'ы шва, 17
+публичных символов; словарь tool-calling'а — `ToolCallingProvider`, `ToolCall`,
+`ToolCallResult`, `ToolDefinition` — в `src/bob/kernel/ports.py`, BOB-113):
 - `Capability` (Protocol) — стабильный контракт навыка: `name`, `description`,
   `input_schema`, `permission`, `async execute(args)`.
-- `ToolCallingProvider` (Protocol) — `async complete_with_tools(messages, *, tools)`
-  → `ToolCallResult`; `messages` — `Sequence[ToolLoopMessage]` (BOB-069: реплика может нести
-  структурный `tool_calls`-массив ассистента, см. `kernel/ports.py`). Реализация — инфра
-  OpenAI-совместимый провайдер.
 - `WebSearchProvider` (Protocol) — `async search(query)` → `WebSearchResult` (raise
-  на сбое). Реализация — `QwenWebSearchProvider`.
+  на сбое). Реализация — `QwenWebSearchProvider`. Та же реализация структурно
+  удовлетворяет узкому порту `conversation.ports.VerifySearch` (BOB-113 E): предответная
+  проверка читает из результата только `answer` и `capabilities` не импортирует.
 - `UrlReader` (Protocol) — `async read(url)` → `WebPage` (raise/`SsrfBlockedError` на
   блоке). Реализация — `HttpUrlReader`.
 - `RepoIntrospector` (Protocol) — read-only самоинтроспекция и навигация:
@@ -677,10 +681,18 @@ legalized), `coding.usecases → capabilities` (`PrivacyGuard`, TC, перено
 - `OutboundMessenger` (Protocol, BOB-090.B1) — `async send(*, chat_id, topic_id, markdown)`:
   отправка по ЯВНОМУ адресу. Реализация —
   `infrastructure.telegram.outbound_messenger.TelegramOutboundMessenger`.
-- Value-object'ы: `ToolCall`, `ToolCallResult`, `WebSource`, `WebSearchResult`,
-  `WebPage`, `DiagramResult` (все frozen); исключения `UrlReadError`,
-  `SsrfBlockedError` (подтип), `DiagramRenderError`; type-алиасы `ToolDefinition`,
+- Value-object'ы: `WebSource`, `WebSearchResult`, `WebPage`, `DiagramResult`,
+  `ArchitectureDiagram`, `ProjectHealth` (все frozen; `ToolCall`/`ToolCallResult` — в
+  `kernel/ports.py`);
+  исключения `UrlReadError`, `SsrfBlockedError` (подтип), `DiagramRenderError`; type-алиас
   `Permission` (`Literal["safe", "confirm"]`).
+
+Порт ядра, на который опирается `ToolLoop` (`src/bob/kernel/ports.py`, переехал из этого
+модуля в BOB-113, сигнатура не менялась):
+- `ToolCallingProvider` (Protocol) — `async complete_with_tools(messages, *, tools)`
+  → `ToolCallResult`; `messages` — `Sequence[ToolLoopMessage]` (BOB-069: реплика может нести
+  структурный `tool_calls`-массив ассистента). Реализация — OpenAI-совместимый провайдер
+  `infrastructure.llm`.
 
 Фасад `src/bob/capabilities/__init__.py` re-export'ит стабильные порты + value-объекты.
 Канонический импорт портов — `from bob.capabilities.ports import Capability`; транзитный

@@ -44,10 +44,9 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from random import Random
 
-    from bob.application.usecases.handle_message import EpisodeReader
-    from bob.kernel.ports import Clock
+    from bob.kernel.interlocutor import Interlocutor
+    from bob.kernel.ports import Clock, EpisodeReader
     from bob.personality.ports import NotableReactionStore
-    from bob.social.interlocutor import Interlocutor
 
 
 class RecallAssembler:

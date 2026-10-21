@@ -18,7 +18,7 @@
   ``narrate``) и шлёт строку в DM-нотификатор — БЕЗ капа ``_MAX_NARRATION`` (в приватной
   личке флуд уместен: owner смотрит «терминал»);
 * прогрессивно катит одну editable «терминальную» панель (последние N строк) через
-  инъектированный :class:`~bob.coding.usecases.coding_assistant.StatusPanel` для живого
+  инъектированный :class:`~bob.coding.ports.StatusPanel` для живого
   ощущения потока — отдельные сообщения (нотификатор) + одна катящаяся панель.
 
 Групповой топик firehose НЕ получает (INV-5) — там только короткий указатель, который
@@ -39,7 +39,7 @@ from bob.coding.stream_render import chunk_for_telegram, render_stream_event
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping
 
-    from bob.coding.usecases.coding_assistant import OwnerNotifier, StatusPanel
+    from bob.coding.ports import OwnerNotifier, StatusPanel
 
 logger = logging.getLogger(__name__)
 

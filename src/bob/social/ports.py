@@ -26,18 +26,30 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from bob.social.permission.privilege import PrivilegeJudge
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
+    from bob.kernel.events import MessageReceived
+    from bob.kernel.interlocutor import Interlocutor
     from bob.kernel.ports import JsonValue
+    from bob.kernel.relationship import Relationship
+    from bob.kernel.roster import RosterMember
+    from bob.kernel.sulk import SulkState
+    from bob.personality.mood import Mood
+    from bob.personality.negotiation import Stance
     from bob.social.first_impression import FirstImpression
-    from bob.social.relationship import Relationship
-    from bob.social.sulk import SulkState
 
 __all__ = [
     "AllowlistStore",
+    "FirstImpressionReader",
     "FirstImpressionStore",
+    "InterlocutorResolver",
     "PersonSulkStore",
     "PrivilegeJudge",
+    "RelationshipReader",
     "RelationshipStore",
+    "RosterRecaller",
     "SoulStore",
+    "SulkReader",
     "SulkStore",
 ]
 
@@ -129,7 +141,7 @@ class FirstImpressionStore(Protocol):
 class RelationshipStore(Protocol):
     """Durable per-sender store for Bob's relationship quality (BOB-014).
 
-    Round-trips the :class:`bob.social.relationship.Relationship` Bob has
+    Round-trips the :class:`bob.kernel.relationship.Relationship` Bob has
     with each person — the four bounded axes (trust / respect / warmth /
     compatibility) — so a relationship accrued over many turns survives a restart and
     keeps shaping his tone + willingness to compromise. Keyed by ``sender_id`` it
@@ -154,7 +166,7 @@ class RelationshipStore(Protocol):
 class SulkStore(Protocol):
     """Durable per-persona store for Bob's обида state (BOB-014 .2b).
 
-    Round-trips the :class:`bob.social.sulk.SulkState` Bob carries — the
+    Round-trips the :class:`bob.kernel.sulk.SulkState` Bob carries — the
     active flag, the decaying intensity, the low/hostile streak, the entry stamp, and
     the one-shot ``announced`` flag — so an обида (and its recovery progress) survives
     a restart. State is per ``persona_id`` so Bobiverse replicas each keep their own.
@@ -179,7 +191,7 @@ class PersonSulkStore(Protocol):
 
     Generalises :class:`SulkStore` by ``sender_id`` so Bob can cool toward a single
     participant of a multi-party thread without touching his tone toward anyone else —
-    a per-``(persona_id, sender_id)`` :class:`~bob.social.sulk.SulkState` carrying the
+    a per-``(persona_id, sender_id)`` :class:`~bob.kernel.sulk.SulkState` carrying the
     same active flag / decaying intensity / low-hostile streak / entry stamp / one-shot
     ``announced`` flag. Keyed by ``sender_id`` it is participant-agnostic (ready for a
     future Bob-to-Bob thread). ``load`` returns the fresh, not-sulking default for an
@@ -201,3 +213,124 @@ class PersonSulkStore(Protocol):
     async def active_sulks(self, persona_id: str) -> list[int]:
         """Return the sender ids ``persona_id`` is CURRENTLY обижен at (active rows)."""
         ...
+
+
+class InterlocutorResolver(Protocol):
+    """Perception seam: WHO is writing this turn (BOB-019).
+
+    Resolves the inbound :class:`MessageReceived` into an
+    :class:`~bob.kernel.interlocutor.Interlocutor` — the sender's
+    social identity (owner / known / guest / bot + trust) — so the compose path can
+    fold WHO is on the other side into Bob's voice. The concrete adapter derives it
+    from the :class:`~bob.social.usecases.Authorizer` (``is_owner`` +
+    ``is_authorized``) already known for the turn. Optional and additive: unwired
+    (the default) the perception line is simply absent and the turn behaves exactly
+    as before — it never changes which pipeline runs (the guest-restricted path is
+    a later bead).
+    """
+
+    async def resolve(self, event: MessageReceived) -> Interlocutor: ...
+
+
+class FirstImpressionReader(Protocol):
+    """First-impression seam: recall + record Bob's LIGHT per-person read (BOB-019).
+
+    The compose path uses this to give Bob a light memory of WHO he has met before:
+    :meth:`prior_impression` returns the stored impression note for a returning
+    sender (a new one → ``None``), so the prompt can fold in "этого человека ты уже
+    видел; впечатление было такое-то"; :meth:`note_first_contact` records a fresh,
+    grounded note on FIRST contact (formed once — a known sender is left untouched).
+    The concrete adapter
+    (:class:`~bob.social.usecases.first_impression_sources.FirstImpressionTracker`)
+    keys on ``sender_id`` and stamps the clock. Optional and additive: unwired (the
+    default) Bob simply never recalls a first impression and the turn is unchanged.
+
+    Crucially this is per-PERSON data (about THEM), NOT owner-private memory, so it
+    is safe even on a guest turn — a guest's own first-impression is about the guest,
+    and surfacing it never leaks the owner's private world.
+    """
+
+    async def prior_impression(self, interlocutor: Interlocutor) -> str | None: ...
+
+    async def note_first_contact(self, interlocutor: Interlocutor) -> None: ...
+
+
+class RosterRecaller(Protocol):
+    """Roster seam: recall who lately turned up in the room (BOB-080).
+
+    The compose path uses this to let Bob NAME the room's recent joiners himself when
+    the talk turns to who is around: :meth:`recent_roster` reads the recency of the
+    accumulated first impressions and returns the roster of recent members — but ONLY
+    while a fresh newcomer is present (the ambient window, INV-4) and ONLY to an
+    OWNER / KNOWN ``viewer`` (privacy; a guest gets no rundown). The concrete adapter
+    (:class:`~bob.social.usecases.roster_recall.RosterRecall`) is best-effort — a flaky
+    read yields an empty roster and never breaks the turn. Optional and additive: unwired
+    (the default / the ``social.roster`` flag off) Bob simply recalls no roster and the
+    turn is byte-identical.
+    """
+
+    async def recent_roster(
+        self, now: datetime, *, viewer: Interlocutor | None
+    ) -> tuple[RosterMember, ...]: ...
+
+
+class RelationshipReader(Protocol):
+    """Relationship seam: load + evolve Bob's per-person relationship quality (BOB-014).
+
+    The compose path uses this to let Bob's accrued relationship with WHO is writing
+    shape THIS turn: :meth:`current` returns the stored
+    :class:`~bob.kernel.relationship.Relationship` (an unknown sender →
+    ``None``) so the prompt can warm/cool his tone (by ``warmth``) and the negotiation
+    can nudge his willingness to compromise (by ``warmth`` + ``compatibility``);
+    :meth:`record_interaction` updates + persists the relationship AFTER the turn from
+    the negotiation ``stance``, Bob's ``mood``, and a ``sentiment`` scalar (the pure
+    :func:`~bob.social.relationship.apply_interaction`). The concrete
+    adapter (:class:`~bob.social.usecases.relationship_sources.RelationshipTracker`)
+    keys on ``sender_id``. Optional and additive: unwired (the default) the tone/
+    willingness are unchanged and no relationship is recorded.
+
+    Crucially this is per-PERSON data (about THEM), NOT owner-private memory, so it is
+    safe even on a guest turn — a guest's own relationship is about the guest.
+    """
+
+    async def current(self, interlocutor: Interlocutor) -> Relationship | None: ...
+
+    async def record_interaction(
+        self,
+        interlocutor: Interlocutor,
+        *,
+        stance: Stance,
+        mood: Mood,
+        sentiment: float,
+    ) -> None: ...
+
+
+class SulkReader(Protocol):
+    """Sulk seam: load Bob's per-person обида + fold a turn into it (BOB-066 2.5).
+
+    The compose path uses this to go COLD while Bob is hurt at the CURRENT interlocutor
+    and to let обида take hold or warm up over the live message path: :meth:`current_for`
+    returns the persisted :class:`~bob.kernel.sulk.SulkState` for ONE ``sender_id`` so the
+    prompt appends the cold :func:`~bob.personality.voice.sulk_directive` while ``active``
+    — an обида toward another participant never chills THIS reply (addressed cooling);
+    :meth:`observe` folds ONE person's turn signals (their relationship ``person_warmth``,
+    a ``hostile`` directed-hostility flag, and a ``warmth_delta``) into their обида AFTER
+    the turn — a sustained critical warmth-drop OR sustained directed hostility enters
+    обида (announced once via GUPPI in an owner-DM, silent in a group), while a warm turn
+    accelerates recovery if already hurt. The concrete adapter
+    (:class:`~bob.social.usecases.sulk_sources.SulkTracker`) is per-``(persona, sender)``
+    and persists. Optional and additive: unwired (the default) Bob never sulks and the turn
+    behaves exactly as before. обида carries NO memory and NO soul (anti-Exodus).
+    """
+
+    async def current_for(self, sender_id: int) -> SulkState: ...
+
+    async def observe(
+        self,
+        *,
+        sender_id: int,
+        person_warmth: float,
+        hostile: bool,
+        warmth_delta: float,
+        now: datetime,
+    ) -> SulkState: ...

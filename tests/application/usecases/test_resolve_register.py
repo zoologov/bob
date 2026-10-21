@@ -14,7 +14,7 @@ the deterministic signal), and the register filter is a no-op.
 
 from __future__ import annotations
 
-from bob.application.runtime.events import MessageReceived
+from bob.kernel.events import MessageReceived
 from bob.memory.register import Register
 from bob.memory.usecases.resolve_register import RegisterResolver
 

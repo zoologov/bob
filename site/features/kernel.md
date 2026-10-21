@@ -7,16 +7,39 @@ kind: feature
 
 **Kind:** feature
 
-Shared kernel — the infra-neutral contracts every vertical module rests on: the runtime seams (Clock, EventBus, EventHandler, DomainEvent, LLMProvider) and the shared value objects (LLMMessage, JsonValue). Pure Protocol/type definitions; no I/O. Every module may import from here; the kernel imports from no module.
+Shared kernel — the infra-neutral contracts every vertical module rests on: the runtime seams (Clock, EventBus, EventHandler, DomainEvent, LLMProvider), the shared value objects (LLMMessage, JsonValue), the intake events (MessageReceived, BobMessageReaction), the memory/reply ports (EpisodeReader, MemoryRecall, Recalled, ReplyGateway, BobUserIdSource), the LLM tool-calling vocabulary (ToolDefinition, ToolCall, ToolCallResult, ToolCallingProvider, ToolLoopMessage), the self-improvement RuleModulators, and the social vocabulary — who talks to Bob and how he stands with them (Interlocutor, InterlocutorKind, Trust, Gender, Relationship, RosterMember, SulkState) — whose behaviour stays in `social` (BOB-113). Pure Protocol/type/value definitions; no I/O. Every module may import from here; the kernel imports from no module.
 
 **Source:** `src/bob/kernel/`
 
 ## Public symbols
 
+- `BobMessageReaction`
+- `BobUserIdSource`
 - `Clock`
 - `DomainEvent`
+- `EpisodeReader`
 - `EventBus`
+- `Gender`
+- `Interlocutor`
+- `InterlocutorKind`
 - `LLMProvider`
+- `MemoryRecall`
+- `MessageReceived`
+- `Relationship`
+- `ReplyGateway`
+- `RosterMember`
+- `RuleModulators`
+- `SulkState`
+- `ToolCall`
+- `ToolCallResult`
+- `ToolCallingProvider`
+- `Trust`
+- `UnderstudyBackedProvider`
+- `is_owner_private`
+- `next_backoff`
+- `outage_state`
+- `strictest_visibility`
+- `under_root`
 
 ## Relationships
 
@@ -26,21 +49,9 @@ Shared kernel — the infra-neutral contracts every vertical module rests on: th
 
 - [domains/domain/features/kernel/SPEC.md](/docs/domains/domain/features/kernel/SPEC.md)
 
-## Diagram
+## Graph
 
-```mermaid
-C4Container
-    System_Boundary(bob_boundary, "Bob") {
-        Container(bob_application, "Bob Application", "", "GUPPI orchestration: AgentRuntime + AsyncEventBus, LLMRouter (tier routing + privacy redaction), use-cases (HandleMessage, RunGenesis, UpdateMoodFromText), resilient heartbeat ticks (retry/backoff), the Authorizer access policy and the capability seam (CapabilityRegistry + ToolLoop + recall_memory). Depends on domain via ports; never imports infrastructure.")
-        Container(bob_domain, "Bob Domain", "", "Domain layer umbrella: the seven module-vertical bounded contexts (personality, conversation, memory, proactivity, coding, capabilities, social) plus the shared 'kernel' (infra-neutral cross-module contracts). Pure logic + Protocol definitions; no I/O, no LLM, no transport.")
-        Container(bob_infrastructure, "Bob Infrastructure", "", "Port adapters: aiogram Telegram gateway (long-polling + authz gate, native draft streaming, Rich Messages, markdown‹-›RichMessage, topic-thread reply pinning), MultiBotGateway (BotRegistry + cross-bot dedup + central identity/scope router) and the GuppiHandler gatekeeper (visible reject + owner commands), OpenAI-compatible LLM provider (Tier 0/1 + tool-calling), SQLite+FTS5 persistence, KvAllowlistStore and SoulStore, two-bot layered config loader.")
-        Container(runtime, "Runtime", "", "Composition root ('src/bob/runtime/' package + the thin 'app.py' shim) — the only layer allowed to wire all layers + all vertical modules at once: 'config.py' loads layered config (incl. '_REPO_ROOT'), 'wiring/*' build infrastructure adapters + compose application policy/use-cases per bounded context, 'composition.py' ('build_application' + 'Application') subscribes handlers to the EventBus and registers ticks + Telegram polling, 'clock.py' provides 'SystemClock', and 'main.py' runs Genesis once and starts the process.")
-    }
-    Rel(bob_application, bob_domain, "depends_on")
-    Rel(bob_infrastructure, bob_application, "depends_on")
-    Rel(bob_infrastructure, bob_domain, "depends_on")
-    Rel(runtime, bob_application, "depends_on")
-    Rel(runtime, bob_domain, "depends_on")
-    Rel(runtime, bob_infrastructure, "depends_on")
-```
+<ClientOnly>
+  <ArchitectureMap focus="kernel" :depth="1" height="60vh" />
+</ClientOnly>
 

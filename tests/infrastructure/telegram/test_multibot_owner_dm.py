@@ -32,13 +32,13 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.application.runtime.event_bus import AsyncEventBus
-from bob.application.runtime.events import MESSAGE_RECEIVED, MessageReceived
 from bob.infrastructure.telegram.multibot import (
     BotIdentity,
     BotRegistry,
     BotScope,
     MultiBotGateway,
 )
+from bob.kernel.events import MESSAGE_RECEIVED, MessageReceived
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

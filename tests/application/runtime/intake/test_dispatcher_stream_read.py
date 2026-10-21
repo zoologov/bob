@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.application.runtime.events import MessageReceived
 from bob.application.runtime.intake.dispatcher import ChatDispatcher
 from bob.application.runtime.intake.room_stream_reader import RoomStreamReader
 from bob.conversation.addressivity import ResponseOutcome
@@ -33,6 +32,7 @@ from bob.conversation.room_reading import (
     RoomMood,
     RoomReading,
 )
+from bob.kernel.events import MessageReceived
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

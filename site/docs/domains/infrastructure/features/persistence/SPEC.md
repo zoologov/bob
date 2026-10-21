@@ -1,10 +1,12 @@
-&lt;!-- beadloom:badge-start -->
-> 📘 **reference** — overview/guide, not tied to a code symbol
+<!-- beadloom:badge-start -->
+> ✅ **fresh**
+> 
+> last synced 2026-10-21T08:49:35.850635+00:00 · coverage 100% (`persistence`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-&lt;!-- beadloom:badge-end -->
+<!-- beadloom:badge-end -->
 
-&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # persistence — общее ядро SQLite-соединения
@@ -24,6 +26,16 @@ durable-стора по инъецированному сейму `connection`. 
   открытие БД с WAL-журналом и `foreign_keys`, загрузка расширения sqlite-vec, применение
   `schema.sql`, key-value-хранилище (`kv_set` / `kv_get`) и корректное закрытие. Методы:
   `db_path`, `initialize`, `close`, `journal_mode`, `kv_set`, `kv_get`, `connection`.
+  Здесь же живут guarded-ALTER миграции таблиц общих модулей: `CREATE TABLE IF NOT EXISTS`
+  не трогает уже существующую таблицу, поэтому недостающая колонка добавляется отдельным
+  `ALTER` — аддитивно, идемпотентно и без бэкфилла (`_migrate_person_relationship_gender`,
+  `_migrate_first_impression_display_name`, `_migrate_first_impression_username` —
+  Telegram-ник участника, BOB-090.B3; `_migrate_improvement_rule_announce` — колонки
+  доставки предложения `announced` / `announce_attempts`, BOB-096).
+  🔴 Отсутствие бэкфилла у последней — решение, а не упущение: дефолты читаются как «ещё
+  не проговорено», поэтому предложение, записанное до фикса, прозвучит владельцу ОДИН раз
+  и умолкнет навсегда. Пометить старое как уже сказанное значило бы заглушить то, чего
+  владелец никогда не слышал, — миграция не утверждает историю, которой не знает.
 - **__init__.py** — фасад пакета (разделяемое SQLite connection/schema-ядро).
 
 ## Инварианты
@@ -49,4 +61,4 @@ durable-стора по инъецированному сейму `connection`. 
 этот сейм, покрываются собственными тестами в `tests/infrastructure/persistence/`
 (например `test_goal_store.py`, `test_relationship_store.py`, `test_fascination_store.py`).
 
-&lt;!-- beadloom:track=src/bob/infrastructure/persistence/connection.py -->
+<!-- beadloom:track=src/bob/infrastructure/persistence/connection.py -->

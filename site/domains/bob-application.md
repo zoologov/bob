@@ -13,82 +13,7 @@ GUPPI orchestration: AgentRuntime + AsyncEventBus, LLMRouter (tier routing + pri
 
 ## Public symbols
 
-- `AgentRuntime`
-- `AmbientBatchReader`
-- `AsyncEventBus`
-- `BargeCeiling`
-- `BobMessageLookup`
-- `BobMessageReaction`
-- `BobUserIdSource`
-- `CatchUp`
-- `CatchUpOutcome`
-- `CatchUpReentry`
-- `CatchUpSelection`
-- `ChatDispatcher`
-- `ChatInbox`
-- `CurrentFascinationReader`
-- `DelayedTurn`
-- `DisclosureGuard`
-- `EndorsementSeeder`
-- `EngagementState`
-- `EpisodeReader`
-- `EpisodeWriter`
-- `EssentialRunner`
-- `FactDeduper`
-- `FascinationEvolver`
-- `FirstImpressionReader`
-- `HandleMessage`
-- `InnerMonologueTick`
-- `InterlocutorResolver`
-- `LLMRequest`
-- `LLMRouter`
-- `MemoryConsolidator`
-- `MessageReceived`
-- `MoodDriftTick`
-- `NaturalCodingRouter`
-- `OutageNotifier`
-- `OwnerActivityRecorder`
-- `PatternDetectorStep`
-- `PerceiveReaction`
-- `PermissionFlowLike`
-- `PersonalityState`
-- `PhantomEvolver`
-- `PreComposeGate`
-- `PrivilegedRequestFulfiller`
-- `ReactionMemoryWriter`
-- `ReactorResolver`
-- `Reappraiser`
-- `ReflectTick`
-- `ReflectionContext`
-- `RelationshipReader`
-- `ReplyDelay`
-- `ReplyGateway`
-- `RetryPolicy`
-- `RoomMoodModulator`
-- `RoomStreamReader`
-- `RuleAnnouncerStep`
-- `RuntimeState`
-- `SelfImprovementReader`
-- `ShareOfVoiceGate`
-- `StalenessReassessor`
-- `SulkReader`
-- `SulkRecoverer`
-- `TaskType`
-- `TasteProfileWriter`
-- `TurnScope`
-- `batch_grew`
 - `call_with_retry`
-- `derive_turn_seed`
-- `is_transient`
-- `make_focus_predicate`
-- `message_is_focused`
-- `new_turn_scope`
-- `periodic`
-- `reply_delay_inputs`
-- `retry_with_backoff`
-- `select_reply_tier`
-- `should_debounce`
-- `to_backlog_message`
 
 ## Relationships
 
@@ -101,15 +26,9 @@ GUPPI orchestration: AgentRuntime + AsyncEventBus, LLMRouter (tier routing + pri
 
 - [domains/application/README.md](/docs/domains/application/README.md)
 
-## Diagram
+## Graph
 
-```mermaid
-C4Container
-    System_Boundary(bob_application_boundary, "bob-application") {
-        Component(router, "Router", "", "LLMRouter — Tier 0/1 model routing with privacy redaction before any model call.")
-        Component(runtime_app, "Runtime App", "", "Application runtime — AgentRuntime, AsyncEventBus, events, and resilient heartbeat ticks (retry/backoff). Distinct from the 'runtime' composition root.")
-        Component(usecases, "Usecases", "", "Use-cases — HandleMessage, RunGenesis, UpdateMoodFromText, goal/memory/reflection flows orchestrating domain + ports.")
-    }
-    Rel(usecases, router, "depends_on")
-```
+<ClientOnly>
+  <ArchitectureMap focus="bob-application" :depth="1" height="60vh" />
+</ClientOnly>
 

@@ -1,10 +1,12 @@
-&lt;!-- beadloom:badge-start -->
-> 📘 **reference** — overview/guide, not tied to a code symbol
+<!-- beadloom:badge-start -->
+> ✅ **fresh**
+> 
+> last synced 2026-10-21T08:49:35.850635+00:00 · coverage 100% (`config`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-&lt;!-- beadloom:badge-end -->
+<!-- beadloom:badge-end -->
 
-&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # config — слоёная загрузка конфигурации
@@ -42,4 +44,4 @@ source `src/bob/infrastructure/config/`). Двухботовый layered-loader:
 покрываются `tests/test_*_config.py` (например `test_search_config.py`,
 `test_dialogue_config.py`, `test_floor_config.py`).
 
-&lt;!-- beadloom:track=src/bob/infrastructure/config/loader.py -->
+<!-- beadloom:track=src/bob/infrastructure/config/loader.py -->

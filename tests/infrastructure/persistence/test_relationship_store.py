@@ -18,10 +18,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from bob.kernel.interlocutor import Gender
+from bob.kernel.relationship import Relationship
 from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 from bob.social.adapters.relationship_store import SqliteRelationshipStore
-from bob.social.gender import Gender
-from bob.social.relationship import Relationship
 
 if TYPE_CHECKING:
     from pathlib import Path

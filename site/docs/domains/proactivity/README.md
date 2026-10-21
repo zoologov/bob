@@ -1,12 +1,12 @@
-&lt;!-- beadloom:badge-start -->
+<!-- beadloom:badge-start -->
 > ✅ **fresh**
 > 
-> last synced 2026-07-31T12:12:20.297951+00:00 · coverage 100% (`proactivity`)
+> last synced 2026-10-21T08:49:35.850635+00:00 · coverage 100% (`proactivity`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-&lt;!-- beadloom:badge-end -->
+<!-- beadloom:badge-end -->
 
-&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # Модуль proactivity — «фоновая жизнь Боба»
@@ -33,10 +33,12 @@
 
 1. **`self_improvement.py` забран в proactivity** из `domain/personality/`. Это
    метакогниция над собственным поведением (BOB-028), а не черта личности; модуль
-   не импортирует ничего из `bob.*`, поэтому цикла не возникает. Переезд потянул
+   импортирует из `bob.*` только значение `RuleModulators` из ядра
+   (`bob.kernel.modulators`, BOB-113), поэтому цикла не возникает. Переезд потянул
    смену тега `feature=personality → proactivity` и относящиеся тесты. Стык
    `application/usecases/handle_message → proactivity.self_improvement`
-   (read-модуляторы `RuleModulators` / `build_modulators`) — намеренно разрешённое
+   (сборка модуляторов `build_modulators`; само значение `RuleModulators` с BOB-113 в
+   ядре) — намеренно разрешённое
    ребро: `self_improvement.py` это публичная доменная поверхность proactivity.
 2. **`run_genesis.py` остаётся вне proactivity** (не перенесён). По зависимостям
    это first-boot генезис SOUL (тянет `SoulStore` / social + router), а не
@@ -76,7 +78,10 @@ src/bob/proactivity/
   social_energy.py    # layer=domain          — SocialEnergy: [0,1]-резервуар тяги
   decision.py         # layer=domain          — ProactiveDecider: urge → p → seeded-семпл → вето
   state.py            # layer=domain          — ProactivityState (персист-снимок между тиками)
-  self_improvement.py # layer=domain          — 🔴 из personality: модель правил + модуляторы
+  self_improvement.py # layer=domain          — 🔴 из personality: модель правил + build_modulators (значение RuleModulators — kernel.modulators, BOB-113)
+  rule_announcement.py # layer=domain         — стоит ли говорить: вердикт + кап попыток
+  rule_voice.py       # layer=domain          — голос Боба на предложении поправить себя
+  restart_voice.py    # layer=domain          — голос Боба на рестарте: «ухожу обновиться» / «вернулся»
   goals/              # layer=domain            (когезивная подобласть Goal Engine)
     entities.py       #                        — Goal, Task, GoalOrigin (immutable value-objects)
     state.py          #                        — GoalState / TaskState + предикаты переходов
@@ -89,11 +94,13 @@ src/bob/proactivity/
     pursue_goals.py   #                        — PursueGoalsTick (Боб сам продвигает свои цели)
     detect_patterns.py       — LlmPatternDetector + DetectPatterns (метакогнитивный детектор)
     announce_rules.py #                        — AnnounceProposedRules (Боб проговаривает правило)
+    announce_restart.py #                      — AnnounceRestart (уход на обновление / возвращение, с таймаутом)
     self_improvement_sources.py — ActiveRulesReader (read-сейм APPROVED-правил для применения)
   adapters/           # layer=infrastructure
     proactivity_store.py     — SqliteProactivityStore (per-persona proactivity_state)
     goal_store.py            — SqliteGoalStore (per-persona goal/task граф)
     self_improvement_store.py — SqliteSelfImprovementStore (per-persona improvement_rule)
+    restart_marker_store.py  — KvRestartMarkerStore (маркер апдейт-остановки + epoch в kv)
     proactivity_sources.py   — RepoProactivitySources (live read-сеймы salience/window-count)
 ```
 
@@ -177,7 +184,149 @@ authz, гость-инварианта, ядра SOUL или safety-инвари
 правило НЕ способно их представить *по конструкции*. `active_rules` берёт лишь
 `APPROVED` (`RuleState`), так что неодобренное правило не влияет на поведение;
 `build_modulators` сводит активные правила в нейтральный по умолчанию
-`RuleModulators`, который применяет `handle_message`.
+`RuleModulators` (значение живёт в `src/bob/kernel/modulators.py`, BOB-113). `HandleMessage`
+собирает его на ход и раздаёт коллабораторам, которые его применяют: `TurnGate` и
+`AntiRepeatGuard` (`conversation`) и `VoiceComposer` (`personality`). Оба модуля стоят ниже
+`proactivity` по runtime-порядку вертикалей, поэтому значение и переехало в ядро.
+
+`proposal_defect(rule, *, max_magnitude)` → `ProposalDefect | None` (BOB-096) — чистая
+ПРИЧИНА, по которой предложение нельзя вынести владельцу, и единственный источник истины
+о пригодности: `is_actionable_proposal` — ровно «изъяна нет», поэтому вердикт и его
+объяснение не могут разойтись. Два изъяна, и они РАЗНЫЕ:
+
+- `NOTHING_TO_APPROVE` — пустое `observation`, пустая `adjustment` или неположительный
+  наклон: мусорный вывод модели, который не спасёт никакая настройка. Живой повод —
+  правило с наблюдением-тавтологией, ПУСТОЙ поправкой и величиной `0.0`, доехавшее до
+  владельца вопросом «включить?», на который нельзя ответить осмысленно;
+- `ABOVE_CEILING` — одобрять ЕСТЬ ЧТО, но запрошенная величина выше конфигурного потолка
+  (`self_improvement.max_magnitude`, граница включительна): применение урезало бы её
+  (`clamp_magnitude`), то есть owner одобрял бы не то число, которое видит.
+
+🔴 Пустота сильнее потолка (пустое предложение сверх потолка называется пустым: поднятие
+потолка его не спасёт). Различать обязательно: в живой базе владельца из четырёх
+отклонённых предложений мусор — ОДНО, у трёх остальных поправка осмысленная (47–74
+символа). Одна метка на оба случая назвала бы содержательное предложение мусором и отняла
+бы у владельца настоящее решение — поднять потолок или отклонить осознанно.
+
+### Доставка предложения (чистый домен, `rule_announcement.py`)
+
+Отдельная от `RuleState` ось (BOB-096 срез 1): «про это правило ещё говорить — и
+услышал ли его owner?». Правило остаётся `PROPOSED`, пока owner не ответил, вне
+зависимости от того, дошла ли реплика, поэтому доставка живёт в двух полях
+`ImprovementRule` (`announced` / `announce_attempts`) и в вердиктах над ними —
+`AnnounceStatus` (`PENDING` / `DELIVERED` / `UNDELIVERED` / `NOT_ACTIONABLE`),
+`announce_status`, `next_to_announce` (какое ОДНО правило проговаривается сейчас: самое
+старое `PROPOSED` в статусе `PENDING`, тай-брейк по `id`), `is_undelivered_proposal` (метка
+«не доставлено») и `unactionable_reason` — ПОЧЕМУ Боб молчит о живом предложении
+(`ProposalDefect | None`, `/rules` разводит это на две разные метки, см. ниже).
+
+Кап — `MAX_ANNOUNCE_ATTEMPTS = 3`: reflect-тик идёт раз в 5 минут, значит это первая
+попытка плюс два повтора в пределах примерно четверти часа. Моргнувшая сеть в это окно
+укладывается, оглохший транспорт — нет, и Боб замолкает вместо бесконечного повтора.
+🔴 **Кап — КОНСТАНТА модуля, а не ключ конфигурации.** Ключа
+`self_improvement.max_announce_attempts` не существует, а параметр `max_attempts` у
+доменных функций и у `AnnounceProposedRules` — тестовый шов (проверить границу, не
+переписывая константу), не ручка владельца. Сказано прямо, потому что ключ, который
+выглядит настройкой, а кодом не читается вовсе, — ровно тот дефект, что чинился рядом в
+этом же эпике (`detector_tier`). Попытка засчитывается ДО отправки, поэтому кап
+держится даже если процесс умрёт посреди отправки. Обратная сторона названа как
+ограничение, а не как дефект: смерть процесса МЕЖДУ успешной отправкой и пометкой даёт
+владельцу повтор — осознанный at-least-once в пределах тех же трёх попыток.
+
+🔴 **Вердикт «есть что одобрять» спрашивается и на ВЫХОДЕ, а не только при рождении
+правила** (BOB-096, фикс ревью). Поэтому у `announce_status` / `next_to_announce` /
+`is_undelivered_proposal` `max_magnitude` — ОБЯЗАТЕЛЬНЫЙ параметр без дефолта: потолок
+приезжает из конфига одним чтением (`_self_improvement_max_magnitude`) и раздаётся всем,
+кто судит о правиле, — детектору, `DetectPatterns`, `AnnounceProposedRules` и списку
+`/rules` у GUPPI. Порядок вердиктов: сперва содержание (`NOT_ACTIONABLE` сильнее любой
+бухгалтерии отправки), потом доставка. Отклонённое правило не удаляется и НЕ помечается
+проговорённым: оно остаётся `PROPOSED`, попытки на него не тратятся, и владелец видит его
+в `/rules` названным честно — решает он.
+
+🔴 **Названным ИМЕННО ТАК, как есть.** `/rules` показывает три разные пометки, потому что
+это три разные новости: `· не доставлено` (пробовали, не дошло), `· нечего одобрять`
+(мусор) и `· просит 0.7 при потолке 0.3` (содержание есть, не хватает разрешения на
+величину). Числа в последней — не украшение: ровно из них владелец принимает решение
+(поднять потолок или отклонить осознанно), и без них метка была бы приговором вместо
+информации. Слова принадлежат GUPPI, причина — домену (`unactionable_reason`).
+
+🔴 **Что этим исправлено (наблюдалось вживую шесть дней, 6–12 августа 2026).** Пометка
+«проговорено» была `set` в памяти процесса и ставилась ПОСЛЕ успешной отправки, а сбой
+уходил в `return` до неё. При битой сети предложение уходило owner'у на КАЖДОМ
+reflect-тике, а каждый перезапуск проговаривал заново ВСЕ `PROPOSED`-правила. Теперь
+пометка живёт в строке правила (миграция — guarded ALTER, идемпотентна, без бэкфилла:
+правило, записанное до фикса, проговаривается ОДИН раз и умолкает).
+
+🔴 **И что чуть не осталось незамеченным.** Отбраковка вырожденных предложений (срез 2)
+стояла только на РОЖДЕНИИ правила, а в базе владельца лежат пять `PROPOSED`-правил,
+родившихся раньше неё; годно по вердикту — одно. Первым уезжала как раз пустая поправка,
+и новый живой голос озвучивал её как нормальное предложение («Хочу чуть поправить тон.
+Попробуем?»): форму починили, пустоту спрятали — это ХУЖЕ исходного дефекта, потому что
+брак перестал быть виден. Отсюда вердикт на доставке: отбраковка на рождении лечит только
+будущее, а владелец живёт с наследством.
+
+### Голос предложения (чистый домен, `rule_voice.py`)
+
+Как это ЗВУЧИТ, когда Боб предлагает поправить самого себя (BOB-096 срез 5). Жалоба
+owner'а была про конструкцию, а не про формулировку: реплика собиралась шаблоном с тремя
+слотами, куда ДОСЛОВНО подставлялся вывод детектора, — «Заметил за собой: Боб замечает,
+что его поведение часто повторяется**..** Предлагаю: **.** Включить? (/rule approve
+rule-…)». Отсюда все швы разом: третье лицо о себе (так его назвала модель), двойная
+точка от пустого слота, идентификатор внутри фразы.
+
+Лечение — то же разделение ролей, что в `social/permission/request_voice.py`: вердикт
+детектора остаётся ВНУТРИ и лишь ВЫБИРАЕТ готовые слова Боба. `proposal_speech(lever,
+magnitude)` — что Боб говорит (наблюдение от первого лица + намерение + вопрос):
+`Lever` выбирает формулировку, `magnitude` — полосу величины («чуть» < 0.15 ≤ «заметно»
+< 0.5 ≤ «сильно»). Сырой текст детектора (`observation` / `adjustment` / `evidence`)
+билдер НЕ ПРИНИМАЕТ, поэтому попасть в реплику не может; пустых слотов и двойной
+пунктуации нет по конструкции — фраза склеена из непустых констант.
+`proposal_message(…, rule_id)` добавляет служебную сноску отдельной строкой.
+
+🔴 **Что эта конструкция НЕ даёт.** Пустой слот и третье лицо о себе она исключает по
+построению, но не гарантирует, что озвученное совпадёт с тем, что заметил детектор:
+слова выбирает РЫЧАГ — грубая ось из пяти значений, — а не само наблюдение. Правило с
+рычагом «адресность» и наблюдением «Отсутствие адаптации ответов под конкретного
+собеседника» прозвучит как «пропускаю мимо ушей разговоры, в которых мне есть что
+сказать», и это другое утверждение о себе. Точный текст наблюдения владелец видит в
+`/rules`, поправку — пока нет. Полосы величины (0.15 и 0.5) — тоже константы модуля, с
+конфигурным потолком они не связаны: опустив `max_magnitude` до 0.1, владелец получит
+«чуть» на всём диапазоне, и слова разойдутся с числом молча.
+
+🔴 **Граница канона внутри одного сообщения** (BOB-090.D, `coding/speaker.py`).
+Предложение изменить себя — голос Боба; команда `/rule approve <id>` — механика, и она
+уже принадлежит GUPPI (`/rule` и `/rules` обрабатывает `GuppiHandler` своим ботом).
+Разводить одно предложение на двух ботов владельцу хуже (два сообщения пришлось бы
+сопоставлять глазами) и потребовало бы второго канала в доставке, поэтому сообщение
+ОДНО, боту Боба, но идентификатор не произносится: он вынесен голой командой отдельной
+строкой. Пустой идентификатор сноской не становится вовсе.
+
+### Голос рестарта (чистый домен, `restart_voice.py`)
+
+Как это ЗВУЧИТ, когда Боба перезапускают по деплою (BOB-094 срез 1). Канон BOB-090.D:
+рестарт — это ГОЛОС Боба (его бот по-человечески предупреждает, что обновляется, и
+говорит, что вернулся), а НЕ строка деплой-скрипта и не системный нотис GUPPI. По образцу
+`rule_voice`: не шаблон со слотами, а веер готовых человеческих реплик от первого лица, из
+которого выбор лишь ВЫБИРАЕТ. `restart_voice(moment, marker)` — `RestartMoment.LEAVING`
+(«ухожу обновиться, скоро вернусь») / `RestartMoment.RETURNED` («вернулся, обновился»);
+`marker` детерминированно выбирает одну реплику из веера по устойчивому хешу SHA-256
+(`random`/время в этом окружении запрещены и всё равно сделали бы реплику
+невоспроизводимой). Тотально: любой маркер, включая пустой, даёт валидную непустую
+реплику.
+
+**Оркестрация** — `usecases/announce_restart.py::AnnounceRestart` (application): решает
+КОГДА и КУДА говорить, но не подбирает слова. `announce_leaving()` зовётся в
+graceful-shutdown ДО закрытия транспорта — предупреждает owner'а И группу (решение
+owner'а) и кладёт маркер апдейт-остановки в `kv`. 🔴 Отправка ограничена ТАЙМАУТОМ
+(`asyncio.wait_for`): сеть легла → реплика молча не уходит, но завершение НЕ блокируется
+(`systemctl restart` шлёт SIGTERM, окно короткое). Маркер ставится ДАЖЕ при неудачной
+отправке. `announce_returned()` зовётся на старте: говорит «вернулся» ТОЛЬКО когда маркер
+есть, и КОНСУМИТ его (одно возвращение на один апдейт); упал сам (маркера нет) → молчит,
+притворяться апдейтом нельзя. Порты `RestartNotifier` (owner-DM + группа) и
+`RestartMarkerStore` (маркер + растущий epoch) — за инфраструктурой:
+`infrastructure/telegram/restart_notifier.py` (бот Боба) и `adapters/restart_marker_store.py`
+(kv). За флагом `runtime.restart_notice` (default OFF → хуки не собираются → lifecycle
+байт-в-байт).
 
 ### Use-case'ы (application)
 
@@ -223,13 +372,41 @@ APPROVED-цель на атомарные `Task` (строгий JSON, усто�
 `PatternDetector`) просит LLM по срезу `ImprovementSignals` сформулировать
 правила-кандидаты; КАЖДЫЙ жёстко нормализуется доменом (`state` → `PROPOSED`,
 `origin` → `BOB_PROPOSED`, `lever` только из allowlist, `magnitude` клампится).
-`DetectPatterns` дедуплицирует кандидатов против существующих правил и сохраняет
-новых в `PROPOSED` — только предлагает, никогда не применяет.
+`DetectPatterns` отбраковывает вырожденных кандидатов (`is_actionable_proposal` с
+конфигурным потолком), дедуплицирует остальных против существующих правил, режет по
+`max_active_rules` и сохраняет новых в `PROPOSED` — только предлагает, никогда не
+применяет. Отбраковка стоит ПЕРЕД дедупом и лимитом: мусорный кандидат не должен ни
+блокировать содержательный по рычагу, ни съедать бюджет живых правил.
+
+🔴 Два ключа конфига, которые здесь перестали быть обещаниями (BOB-096 срез 2):
+`self_improvement.detector_tier` теперь ЧИТАЕТСЯ и определяет тир, на котором детектор
+рассуждает (до этого ключ лежал в `config/bob.yaml` без единого читателя, а детектор
+строился без тира вовсе — §0.3 п.10), а `self_improvement.max_magnitude` уезжает В
+СИСТЕМНЫЙ ПРОМПТ модели (`_system_prompt(cap)`). Второе обязательно: не назвав модели
+диапазон, отбраковка «сверх потолка» стала бы тихим выключателем самоулучшения — при
+потолке `0.3` модель просила бы привычные `0.5`, и все её предложения гибли бы молча.
+
+🔴 Отдельно от тира — КТО вправе думать за этой дверью. `DETECT_PATTERNS` размечена как
+«голос, который остаётся» (BOB-096.4), поэтому аварийный локальный дублёр к ней не
+допускается: при отвале облака предложение не рождается ВООБЩЕ, вместо того чтобы
+родиться чужим голосом. Именно так и появилось живое правило-пустышка в ночь 6 августа
+2026 — тир детектора был штатным, но Tier-1 отвалился, и правило сочинил дублёр.
+Ограничение этого решения названо прямо: в живой конфигурации оба облачных тира стоят
+на одном хосте, поэтому его падение оставляет самоулучшение молчащим до восстановления
+связи. Разметка двери и вердикт живут в `application/router` (см. SPEC роутера).
 
 `AnnounceProposedRules` (`usecases/announce_rules.py`) — Боб тактично проговаривает
-owner'у ОДНО свежее `PROPOSED`-правило за раз («Заметил за собой… Предлагаю…
-Включить?»), помечает его announced (in-memory, на процесс) и не повторяет.
-Best-effort: сбой гейтвея не валит тик; unwired — no-op.
+owner'у ОДНО свежее `PROPOSED`-правило за раз СВОИМИ словами (текст целиком принадлежит
+доменному `rule_voice`, см. ниже), выбирая кандидата доменным `next_to_announce` и
+помечая его в ХРАНИЛИЩЕ
+(`record_announce_attempt` до отправки, `mark_announced` после успеха), поэтому
+проговорённое не повторяется ни на следующем тике, ни после перезапуска процесса.
+Кандидат обязан пройти вердикт «есть что одобрять» — потолок величины приезжает в
+use-case из конфига (обязательный `max_magnitude`), поэтому вырожденное правило,
+лежащее в базе с прошлых версий, владельцу не проговаривается вовсе.
+Best-effort: сбой гейтвея не валит тик и НЕ превращается в вечный повтор — попытки
+капятся, после исчерпания правило видно владельцу в `/rules` как недоставленное;
+unwired — no-op.
 
 `ActiveRulesReader` (`usecases/self_improvement_sources.py`) — application-адаптер
 чтения (реализует `SelfImprovementReader`, read-сейм `HandleMessage`): грузит
@@ -293,16 +470,19 @@ count** (сколько проактивных эпизодов в анти-сп
 - модуль не импортит композиционный корень (`app.py`).
 
 Намеренно разрешённые кросс-рёбра (все — на публичную доменную поверхность):
-- `handle_message → proactivity.self_improvement` (read-модуляторы);
+- `handle_message → proactivity.self_improvement` (`build_modulators`);
 - `guppi → proactivity.goals.state` / `.self_improvement` / `.state` (UI-рендер
   `/quiet` / `/wake` над доменным состоянием);
 - `guppi` и `multibot → proactivity.usecases.plan_goal.PlanGoal` (тип);
 - `proactivity → memory.entities` (движок читает `episodic_log`);
+- `proactivity.usecases → personality.state` / `personality.ports` (типы `PersonalityState` и
+  `CurrentFascinationReader` для движка и `PursueGoals`; до BOB-113 тянулись вверх из
+  `application/usecases/handle_message`);
 - kernel → proactivity ребра НЕТ (проверено).
 
 ## API
 
-&lt;!-- beadloom:track=src/bob/proactivity/ports.py -->
+<!-- beadloom:track=src/bob/proactivity/ports.py -->
 
 Модуль `src/bob/proactivity/ports.py` (порты-протоколы, только интерфейсы):
 - `Planner` — `decompose(goal)` → `Sequence[Task]`: разбить APPROVED-цель на
@@ -330,15 +510,23 @@ count** (сколько проактивных эпизодов в анти-сп
   (`GoalState`, `TaskState`, `can_transition`), `goals.graph`
   (`GoalGraph`, `ready_tasks`, `next_safe_task`, `blocked_reason`).
 - Самоулучшение: `self_improvement` (`ImprovementRule`, `Lever`, `RuleState`,
-  `active_rules`, `build_modulators`, `RuleModulators`).
+  `active_rules`, `build_modulators` (→ `kernel.modulators.RuleModulators`), `is_actionable_proposal`,
+  `proposal_defect`, `ProposalDefect`, `MAGNITUDE_RANGE_TOP`).
+- Доставка предложения: `rule_announcement` (`AnnounceStatus`, `announce_status`,
+  `next_to_announce`, `is_undelivered_proposal`, `unactionable_reason`,
+  `MAX_ANNOUNCE_ATTEMPTS`).
+- Голос предложения: `rule_voice` (`proposal_speech`, `proposal_message`).
+- Голос рестарта: `restart_voice` (`restart_voice`, `RestartMoment`).
 - Use-case'ы: `usecases.engine.ProactivityEngine`, `usecases.tick.ProactiveTick`,
   `usecases.record_owner_activity.RecordOwnerActivity`, `usecases.plan_goal`
   (`LlmPlanner`, `PlanGoal`), `usecases.pursue_goals.PursueGoalsTick`,
   `usecases.detect_patterns` (`LlmPatternDetector`, `DetectPatterns`),
   `usecases.announce_rules.AnnounceProposedRules`,
+  `usecases.announce_restart.AnnounceRestart` (порты `RestartNotifier`,
+  `RestartMarkerStore`),
   `usecases.self_improvement_sources.ActiveRulesReader`.
 - Адаптеры: `SqliteProactivityStore`, `SqliteGoalStore`,
-  `SqliteSelfImprovementStore`, `RepoProactivitySources`.
+  `SqliteSelfImprovementStore`, `KvRestartMarkerStore`, `RepoProactivitySources`.
 
 Композиция (сборка движка, планировщика, детектора и навешивание тиков на
 heartbeat) — в композиционном корне `app.py`. Долговечная запись в SQLite идёт
@@ -356,6 +544,25 @@ heartbeat) — в композиционном корне `app.py`. Долгов
 - Самоулучшение: `tests/domain/personality/test_self_improvement.py`,
   `test_self_improvement_modulators.py` (переехали вместе с модулем; смена тега
   `feature=personality → proactivity`); `tests/test_self_improvement_config.py`.
+- Доставка предложения: `tests/domain/proactivity/test_rule_announcement.py` (четыре
+  статуса, граница капа, граница потолка, выбор кандидата, причина молчания) и
+  `tests/infrastructure/persistence/test_announce_rules_durability.py` — те же две
+  проверки на НАСТОЯЩЕМ SQLite («перезапуск» = закрыть и открыть базу), потому что тест
+  на фейке доказывает контракт фейка. Потолок из конфига до обоих владельческих концов
+  (реплика Боба и список `/rules`) —
+  `tests/runtime/wiring/test_self_improvement_ceiling.py`, тир и потолок до детектора —
+  `tests/runtime/wiring/test_self_improvement_detector.py`.
+- Живая документация поведения (BDD): `tests/acceptance/features/rule_proposal.feature`
+  — двадцать один сценарий на настоящей сборке, настоящей SQLite и настоящей команде
+  `/rules` (в том числе «наследство»: отклонённое правило из базы владельцу не
+  проговаривается, но видно ему с НАЗВАННОЙ причиной — мусор отдельно, превышение
+  потолка отдельно и с числами). Отвал облака у этой двери —
+  `tests/acceptance/features/voice_that_stays.feature` (предложение не рождается вовсе)
+  и `tests/test_the_understudy_never_speaks_for_bob.py`, где ночь 6 августа
+  воспроизведена на настоящей проводке с живым локальным дублёром.
+- Голос предложения: `tests/domain/proactivity/test_rule_voice.py` (первое лицо, свои
+  слова на каждый рычаг, полосы величины, невозможность пустого слота, сноска отдельно
+  от речи).
 - Use-case'ы: `tests/application/proactivity/` (`test_engine.py`, `test_tick.py`,
   `test_record_owner_activity.py`) и `tests/application/usecases/`
   (`test_plan_goal.py`, `test_pursue_goals.py`, `test_detect_patterns.py`,

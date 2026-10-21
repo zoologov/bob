@@ -41,8 +41,8 @@ from bob.runtime.wiring.telegram import _build_multibot
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
 
-    from bob.application.usecases.handle_message import ReplyGateway
     from bob.infrastructure.telegram.gateway import BotLike
+    from bob.kernel.ports import ReplyGateway
     from bob.proactivity.adapters import SqliteSelfImprovementStore
     from bob.proactivity.adapters.proactivity_store import SqliteProactivityStore
     from bob.social.usecases import Authorizer

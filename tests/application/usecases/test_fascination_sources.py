@@ -15,10 +15,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from bob.application.usecases.handle_message import PersonalityState
 from bob.personality.fascination import Fascination
 from bob.personality.mood import Mood
 from bob.personality.soul import SOUL
+from bob.personality.state import PersonalityState
 from bob.personality.taste import TasteAxis, TasteEngine
 from bob.personality.usecases.fascination_sources import (
     RepoFascinationGrounding,

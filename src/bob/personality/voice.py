@@ -38,9 +38,9 @@ from bob.personality.expression import EngagementLevel, Verbosity
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from bob.kernel.interlocutor import Interlocutor
+    from bob.kernel.roster import RosterMember
     from bob.personality.mood import Mood
-    from bob.social.interlocutor import Interlocutor
-    from bob.social.roster import RosterMember
 
 # Written as Bob's voice, not a checklist: how he lands a message. The few-shot
 # lines (in « ») end on substance — no trailing question, no ☕ — because the
@@ -321,10 +321,11 @@ _OFFDAY_TONE = (
 # WHICH pipeline runs (the guest-restricted path is a later bead).
 # Cyrillic look-alikes are intentional in these Russian literals.
 # Keyed by the ALREADY-COMPUTED interlocutor-kind value (the ``InterlocutorKind``
-# enum's ``.value`` string), NOT the enum member itself: voice belongs to
-# personality and must not import the social ``InterlocutorKind`` at runtime, so the
-# social→personality edge stays one-directional (BOB-062.5). Behaviour is unchanged —
-# the caller classified the interlocutor upstream; here we only read its kind value.
+# enum's ``.value`` string), NOT the enum member itself. The enum lived in ``social``
+# when this table was written (BOB-062.5: no runtime social→personality back-edge);
+# since BOB-113 it is ``bob.kernel.interlocutor`` and importing it would be legal, but
+# the table stays string-keyed on purpose — the caller classified the interlocutor
+# upstream; here we only read its kind value. Behaviour is unchanged.
 _KIND_LABEL: dict[str, str] = {
     "owner": "твой владелец",
     "known": "твой знакомый",
@@ -335,9 +336,9 @@ _KIND_LABEL: dict[str, str] = {
 # Grammatical-gender clause (BOB-078 A): when the interlocutor's gender is read from
 # THEIR own self-presentation (never their name), Bob addresses them in that gender;
 # an UNKNOWN read forces nothing (neutral). Keyed by the ALREADY-COMPUTED gender value
-# (the social ``Gender`` enum's ``.value`` string), NOT the enum member — voice belongs
-# to personality and must not import the social ``Gender`` at runtime, keeping the
-# social→personality edge one-directional (mirrors ``_KIND_LABEL``, BOB-062.5).
+# (the ``Gender`` enum's ``.value`` string — the enum is ``bob.kernel.interlocutor``
+# since BOB-113, formerly social), NOT the enum member: string-keyed on purpose, the
+# read happened upstream (mirrors ``_KIND_LABEL``, BOB-062.5).
 # Cyrillic look-alikes are intentional in these Russian literals.
 _GENDER_CLAUSE: dict[str, str] = {
     "fem": " Обращайся к собеседнику в женском роде.",
@@ -946,7 +947,7 @@ def sulk_directive(*, intensity: float) -> str:
     personality reset (он всё ещё он, anti-Exodus) and NEVER gratuitously rude. The
     application appends it on TOP of the mood/relationship tone only while обида is
     active. Pure and argument-shaped (the intensity is the live signal the caller
-    passes from :class:`~bob.social.sulk.SulkState`); the prose pins the
+    passes from :class:`~bob.kernel.sulk.SulkState`); the prose pins the
     cold, reserved, not-rude, not-a-reset character, not exact wording.
     """
     _ = intensity  # the live signal that gates this line; the cold tone is uniform.

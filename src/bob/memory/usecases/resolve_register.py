@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Protocol
 from bob.memory.register import Register
 
 if TYPE_CHECKING:
-    from bob.application.runtime.events import MessageReceived
+    from bob.kernel.events import MessageReceived
 
 __all__ = ["RegisterResolver", "WorkTalkClassifier"]
 

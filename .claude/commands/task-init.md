@@ -5,7 +5,37 @@
 
 ---
 
+## Step 0: Create docs folder (ALL types)
+
+**This step is MANDATORY for every type. No exceptions.**
+
+```bash
+mkdir -p .claude/development/docs/features/{ISSUE-KEY}
+```
+
+---
+
+## Step 0.5: Explore — derive the axes (ALL types)
+
+**This step is MANDATORY for every type, and it runs BEFORE the type is chosen. No exceptions.**
+
+Launch the Explore role as a subagent — `Agent(subagent_type="explore")` — with the target the request is about (a path or a symbol). It returns one artifact and nothing else: the `## Axes` section `beadloom impact <target> --section` renders, with every site as a path and a line and the `In scope` column left undecided.
+
+```bash
+beadloom impact <path|symbol> --section     # what the role runs; do not hand-write the table
+```
+
+Then decide the scope with the user: rule each row `yes` or `no` with a reason in the `Why` cell. That decision is the person's half of the section and the role does not take it.
+
+**Rule each row by the node's role in the change — the axis a node surfaced under is not its role.** An axis is the node's relation to the seed: a `callers` row says the node calls into the target, and says nothing about whether the fix has to reach that node. The same node can own what the change must edit — the templates it renders, the configuration it ships — so a `callers` row can be a work site. Before ruling a row `no` as blast radius, ask what the node owns that the change could reach. The `Owns unread` cell names the files the node owns that the derivation could not read, because `beadloom impact` reads Python and a template is not; a count there is a question to answer before the `no`, not a detail. Measured on one epic: three nodes ruled out because they surfaced as callers were all sites the fix had to reach, and one of them was reachable only through templates no row could show.
+
+**Why before the type.** The axis count is what says whether a work item is a bug. The one time this project chose the type first, the item was routed `bug` and became 28 beads — and re-deriving the axes afterwards showed the change ranging over four graph nodes. `beadloom docs quality` reports a simplified-flow work item that carries no `## Axes` section, and one whose kept axes name more nodes than the route it took can hold, so this step is checked rather than trusted.
+
+---
+
 ## Type detection
+
+**The route is decided from the axes derived in Step 0.5, not from how the request was phrased.**
 
 | Type | Flow | Docs created |
 |------|------|-------------|
@@ -15,15 +45,13 @@
 | `task` | Simplified: BRIEF → ACTIVE | BRIEF, ACTIVE |
 | `chore` | Simplified: BRIEF → ACTIVE | BRIEF, ACTIVE |
 
----
+The simplified flow writes one BRIEF and passes no approval gate, so it is the route with nothing in it that records a crossing:
 
-## Step 0: Create docs folder (ALL types)
+- Kept axes naming **one** node — the simplified flow carries the change.
+- Kept axes naming **more than one** node — take the full flow, or narrow the work item's scope until the axes name one. The count is a fact about the change and not a preference, so a route taken against it is reported.
+- **No axes at all** — the type has not been decided from anything. Go back to Step 0.5.
 
-**This step is MANDATORY for every type. No exceptions.**
-
-```bash
-mkdir -p .claude/development/docs/features/{ISSUE-KEY}
-```
+Paste the section into the work item's BRIEF (simplified) or RFC (full). Both templates carry the `## Axes` heading, so a missing section is a `doc-quality` finding rather than an omission somebody has to notice.
 
 ---
 
@@ -98,10 +126,40 @@ Draft  →  Approved  →  Done
 5. Update both to `Status: Approved`
 6. **Create beads in tracker** (ONLY after PLAN is Approved):
    - One-time per clone: ensure `git config beads.role maintainer` is set (see CLAUDE.md §0 Setup).
-   - Create parent bead: `bd create --type feature --title "[ISSUE-KEY] Name"` (use `--type epic` if you want `bd swarm` orchestration — swarm requires an epic-type parent; feature parents still work via bead dependencies)
-   - Create sub-beads with mandatory structure (see below): `bd create --type task --parent <parent-id>`
-   - Set up dependencies: `bd dep add <blocked> <blocker>`
-   - **Faster alternative (1.0.4):** create the whole bead DAG in one shot from a JSON plan — `bd create --graph <plan.json>` (define nodes + dependencies in the file).
+   - Create the parent bead and take its id from bd's answer, never from a number you
+     wrote first: `bd create --type feature --title "[ISSUE-KEY] Name" --json` (use
+     `--type epic` if you want `bd swarm` orchestration — swarm requires an epic-type
+     parent; feature parents still work via bead dependencies)
+   - **Create the sub-beads as ONE plan, not one bead per process**, and wire every edge
+     by plan-local KEY:
+
+     ```bash
+     bd create --graph plan.json --json    # -> {"ids": {"dev": "proj-fac", ...}}
+     ```
+
+     where `plan.json` is `{"nodes": [{"key": "dev", "title": "...", "type": "task",
+     "parent_id": "<parent-id>"}], "edges": [{"from_key": "test", "to_key": "dev",
+     "type": "blocks"}]}`. Measured on bd 1.0.4: a 60-bead DAG with 59 edges cost 69.45 s
+     over 119 processes created one at a time, against 1.15 s over one process from a
+     plan. A node key spelled `parent` instead of `parent_id` is silently ignored — exit
+     0, no parent set.
+   - **Never write a bead's number into its own title.** The number is ALLOCATED at
+     creation and a title written before it is a second copy that can disagree: four
+     `--parent` creates launched simultaneously took `.1` through `.4` out of launch
+     order.
+     The plan form removes the question — its edges name keys and it allocates a flat id
+     that takes no number from that sequence — and `--json` answers it for a single
+     create.
+   - Wiring an edge afterwards, when the DAG changes: `bd dep add <blocked> <blocker>`,
+     and **READ THE ECHO**. bd names both beads' FULL TITLES — `✓ Added dependency:
+     proj-027 (bead 59) depends on proj-9to (bead 60)` — and reading that echo is the
+     only reason a mis-wired edge was ever caught in seconds rather than surviving the
+     wave. Confirm the result with `bd dep tree <parent-id>`. The bulk `--file` form of
+     the same command prints `✓ Added 2 dependencies` and no titles at all, so it buys
+     speed by discarding the check; wire by key inside the plan instead.
+   - Fill each bead's `Tracker` cell in PLAN.md with the id the tracker answered. The PLAN
+     table carries no status: the bead's state lives in ACTIVE.md, which the pre-commit
+     active-sync reconciles from the tracker.
 7. **Immediately proceed to Step 4** (no additional approval needed)
 
 **Process gate:** Do NOT create beads before PLAN is Approved. If PLAN is rejected or modified, no stale beads to clean up.
@@ -154,16 +212,26 @@ graph LR
 ### Step 1: BRIEF
 
 1. Create `BRIEF.md` from template (see `/templates`) with `Status: Draft`
-2. Fill in: Problem, Solution, Beads, Acceptance Criteria
-3. Create beads in tracker:
+2. Paste the `## Axes` section from Step 0.5, with every row ruled `yes` or `no` and a reason —
+   ruled by the node's role in the change, not by the axis it surfaced under (Step 0.5)
+3. Fill in: Problem, Solution, Beads, Acceptance Criteria
+4. Create beads in tracker, with each bead's `refs:` generated from the section
+   rather than typed — `beadloom axes .claude/development/docs/features/{ISSUE-KEY}/BRIEF.md --refs`:
    ```bash
-   bd create --type {type} --title "{ISSUE-KEY}: [Name]" --description "..."
-   # If multiple subtasks:
-   bd create --type task --title "BEAD-01: [Name]" --parent <parent-id>
+   bd create --type {type} --title "{ISSUE-KEY}: [Name]" --description "..." --json
+   # If multiple subtasks: one plan, one process, every edge named by key
+   bd create --graph plan.json --json
    ```
-4. Show to user
-5. **WAIT for explicit approval**
-6. Update `Status: Approved`
+
+   The title carries the work-item key and never a bead number — the number is
+   allocated at creation, so a title written before it is a second copy of one fact.
+
+   Fill each bead's `Tracker` cell in BRIEF.md with the id the tracker answered. The BRIEF
+   table carries no status: the bead's state lives in ACTIVE.md, which the pre-commit
+   active-sync reconciles from the tracker.
+5. Show to user
+6. **WAIT for explicit approval**
+7. Update `Status: Approved`
 
 ### Step 2: ACTIVE
 
@@ -189,6 +257,9 @@ All documents MUST use templates from `/templates`. No improvisation.
 
 ### Full flow (epic | feature)
 - [ ] Created folder `.claude/development/docs/features/{ISSUE-KEY}/`
+- [ ] Explore run (Step 0.5) and its `## Axes` section produced
+- [ ] Every axis row ruled in or out of scope by the node's role in the change, with a reason
+- [ ] Route checked against the axes: more than one node kept -> full flow
 - [ ] PRD.md created with `Status: Draft` (in English)
 - [ ] PRD.md → **user approved** → `Status: Approved`
 - [ ] RFC.md created with `Status: Draft` (in English)
@@ -196,19 +267,58 @@ All documents MUST use templates from `/templates`. No improvisation.
 - [ ] CONTEXT.md created with `Status: Draft`
 - [ ] PLAN.md created with `Status: Draft` (beads described, NOT created yet)
 - [ ] CONTEXT.md + PLAN.md → **user approved** → `Status: Approved`
-- [ ] Parent bead created: `bd create --type feature`
-- [ ] Dev sub-beads created: `bd create --type task --parent <parent-id>`
-- [ ] Test sub-bead created (depends on all dev beads)
-- [ ] Review sub-bead created (depends on test bead)
-- [ ] Tech-writer sub-bead created (depends on review bead)
-- [ ] Dependencies set: `bd dep add`
+- [ ] Parent bead created, its id read from bd's answer: `bd create --type feature --json`
+- [ ] Sub-bead DAG created as ONE plan, edges named by key: `bd create --graph plan.json --json`
+- [ ] Dev sub-beads in the plan (one per BEAD)
+- [ ] Test sub-bead in the plan (depends on all dev beads)
+- [ ] Review sub-bead in the plan (depends on the test bead)
+- [ ] Tech-writer sub-bead in the plan (depends on the review bead)
+- [ ] No bead title carries a bead number
+- [ ] DAG confirmed against the titles the tracker echoes: `bd dep tree <parent-id>`
 - [ ] ACTIVE.md created
 - [ ] User confirmed start of development
 
 ### Simplified flow (bug | task | chore)
 - [ ] Created folder `.claude/development/docs/features/{ISSUE-KEY}/`
-- [ ] BRIEF.md created with `Status: Draft`
-- [ ] Beads created in tracker
+- [ ] Explore run (Step 0.5) and its `## Axes` section produced
+- [ ] Every axis row ruled in or out of scope by the node's role in the change, with a reason
+- [ ] Kept axes name ONE node — otherwise this is not a simplified-flow item
+- [ ] BRIEF.md created with `Status: Draft`, carrying the `## Axes` section
+- [ ] Beads created in tracker, `refs:` generated by `beadloom axes <BRIEF> --refs`
 - [ ] BRIEF.md → **user approved** → `Status: Approved`
 - [ ] ACTIVE.md created
 - [ ] Work started
+
+---
+
+## Проектный слой Bob — что добавляет этот репозиторий к /task-init
+
+- **Язык документов — русский**, без исключений: `language: ru` в `.beadloom/flow.yml`
+  (решение проекта 2026-06-18). Строки ядра выше «MUST be in English» / «(in English)» здесь не
+  действуют — расхождение объявлено в `overlays.suppress` (уведомление в конце файла; беада на
+  снятие `bob-yjv`), запись для апстрима подготовлена в `features/BOB-112/BDL-UX-draft.md`;
+  статусы остаются `Draft` / `Approved` / `Done` как в ядре.
+- **Шаблоны `/templates` — generic.** Подставляй факты Bob (`CLAUDE.md` П.0.1): Python 3.12+ (не
+  «3.10+»), слоение DDD-вертикали + shared kernel (не «CLI → Core → Storage»), стек Telegram/
+  aiogram · Qwen/Ollama · SQLite+FTS5; плейсхолдеры шаблона дословно не копировать.
+- **Спека пишется при взятии в работу** (П.3): не заранее на весь бэклог и не задним числом.
+  Реконструкция отгруженного — `Status: Reconstructed`, дата, источники, честное «не
+  зафиксировано».
+- **Комплект по типу — до первой волны.** epic/feature: PRD → RFC → CONTEXT+PLAN → ACTIVE, каждый
+  шаг с явным «утверждаю» владельца; bug/task/chore: BRIEF → ACTIVE. Беады — только после
+  утверждения PLAN/BRIEF; процессный гейт `tests/test_process_drift_gate.py` проверяет, что у
+  беады в работе папка и комплект есть.
+- **PRD для работы с поведением** несёт каталог сценариев и инварианты — из них роль test
+  выводит `.feature` (П.0.2); для chores без поведения BDD можно честно пропустить, сказав это
+  в BRIEF.
+- В PLAN у каждой dev-беады — mutation-цель (модуль чистого ядра в `[tool.mutmut].source_paths`)
+  или явное «mutation не применима: адаптер/LLM/async».
+
+---
+
+## Project rule suppressions (declared in `.beadloom/flow.yml`)
+
+The core rules below are stood down **in this project only**. The core text above is unchanged — a suppression is a declaration, never a deletion — and each one names its reason and its exit condition.
+
+- Git — Trunk-based development: в CLAUDE.md §6 ядро утверждает «main is branch-protected», «beadloom ci is a REQUIRED status check» и что setup-branch-protection настраивает защиту — в этом репозитории всё три не действуют: репозиторий приватный на плане GitHub Free, API защиты ветки и rulesets отвечают «403 Upgrade to GitHub Pro or make this repository public»; main держится дисциплиной PR, перепроверкой гейтов координатором на финальном дереве и видимым (не required) CI по PR — раздел П.6 проектного слоя; беада на снятие — bob-933 (until репозиторий станет публичным или план — GitHub Pro: тогда выполняется beadloom setup-branch-protection и эта запись снимается)
+- Template rules: в /task-init ядро 9.0.0 пишет «ALL documents MUST be in English» и «(in English)» в чеклисте, хотя язык документов задан здесь как language: ru и auto-блок doc-language в CLAUDE.md уже печатает Russian — ядро task-init тег языка не читает, расхождение внутри самого beadloom (запись для лога BDL-UX подготовлена в features/BOB-112/BDL-UX-draft.md, номер появится при переносе); в этом проекте все документы по-русски, остальные пункты раздела (статусы, формат метаданных) действуют; беада на снятие — bob-yjv (until ядро /task-init в beadloom читает language из flow.yml и печатает тот же язык, что auto-блок doc-language)

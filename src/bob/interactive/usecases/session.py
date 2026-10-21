@@ -94,8 +94,14 @@ from typing import TYPE_CHECKING
 from bob.coding.entities import CodingOutcome, CodingSession
 from bob.coding.naming import workspace_branch, worktree_branch
 from bob.coding.state import CodingSessionState
-from bob.interactive import denial_voice, voice
 from bob.interactive.argv_policy import extract_session_id
+from bob.interactive.denial_voice import (
+    permission_declined,
+    permission_lifted,
+    permission_question,
+    permission_stuck,
+    permission_unreachable,
+)
 from bob.interactive.entities import LiveSession
 from bob.interactive.permission_denial import DenialWatch
 from bob.interactive.permission_negotiation import (
@@ -106,6 +112,23 @@ from bob.interactive.pipeline_prompt import permission_retry_frame, pipeline_fir
 from bob.interactive.resume_negotiation import ResumeConfirmed, ResumeNegotiation
 from bob.interactive.resume_policy import select_resumable
 from bob.interactive.usecases.teardown import SessionTeardown
+from bob.interactive.voice import (
+    interactive_busy,
+    interactive_ended,
+    interactive_ended_persistent,
+    interactive_failed,
+    interactive_opened,
+    interactive_setup_failed,
+    no_session,
+    resume_cancelled,
+    resume_confirm,
+    resume_failed,
+    resume_nothing,
+    resumed,
+    stopped,
+    stopped_persistent,
+    workspace_opened,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping
@@ -224,7 +247,7 @@ class InteractiveSessionManager:
             return _refused()
         if self._live is not None:
             return CodingOutcome(
-                ok=False, message=voice.interactive_busy(), session=self._live.session
+                ok=False, message=interactive_busy(), session=self._live.session
             )
         now = self._clock.now()
         branch = worktree_branch(task)
@@ -233,7 +256,7 @@ class InteractiveSessionManager:
         except Exception:  # 🔴 git/worktree fault BEFORE the spawn: answer, never go mute
             logger.exception("coding: interactive worktree create failed for task")
             return CodingOutcome(
-                ok=False, message=voice.interactive_setup_failed(), session=None
+                ok=False, message=interactive_setup_failed(), session=None
             )
         try:
             runner = await self._spawn(path, task)
@@ -244,7 +267,7 @@ class InteractiveSessionManager:
             logger.exception("coding: interactive open failed for task")
             await self._teardown.cleanup(path)
             return CodingOutcome(
-                ok=False, message=voice.interactive_failed(), session=None
+                ok=False, message=interactive_failed(), session=None
             )
         session = CodingSession(
             id=self._id_factory(),
@@ -257,10 +280,10 @@ class InteractiveSessionManager:
         )
         if not await self._go_live(session, runner, persistent=False, owner=sender):
             return CodingOutcome(
-                ok=False, message=voice.interactive_failed(), session=None
+                ok=False, message=interactive_failed(), session=None
             )
         return CodingOutcome(
-            ok=True, message=voice.interactive_opened(), session=session
+            ok=True, message=interactive_opened(), session=session
         )
 
     async def feed(self, text: str) -> None:
@@ -304,7 +327,7 @@ class InteractiveSessionManager:
         except Exception:  # 🔴 workspace/spawn fault: answer honestly, never go mute
             logger.exception("coding: opening the persistent workspace failed")
             return CodingOutcome(
-                ok=False, message=voice.resume_failed(), session=None
+                ok=False, message=resume_failed(), session=None
             )
         session = CodingSession(
             id=self._id_factory(),
@@ -317,10 +340,10 @@ class InteractiveSessionManager:
         )
         if not await self._go_live(session, runner, persistent=True, owner=sender):
             return CodingOutcome(
-                ok=False, message=voice.resume_failed(), session=None
+                ok=False, message=resume_failed(), session=None
             )
         return CodingOutcome(
-            ok=True, message=voice.workspace_opened(name), session=session
+            ok=True, message=workspace_opened(name), session=session
         )
 
     async def propose_resume(self, name: str, sender: int | None) -> CodingOutcome:
@@ -345,7 +368,7 @@ class InteractiveSessionManager:
         self._negotiation.ask(name=name, sender=sender)
         return CodingOutcome(
             ok=True,
-            message=voice.resume_confirm(
+            message=resume_confirm(
                 workspace=name, when=candidate.updated_at.strftime(_WHEN_FORMAT).strip()
             ),
             session=candidate,
@@ -373,7 +396,7 @@ class InteractiveSessionManager:
             return None
         if isinstance(answer, ResumeConfirmed):
             return await self.resume(answer.workspace, sender)
-        return CodingOutcome(ok=True, message=voice.resume_cancelled(), session=None)
+        return CodingOutcome(ok=True, message=resume_cancelled(), session=None)
 
     async def resolve_pending_permission(
         self, text: str, sender: int | None
@@ -402,7 +425,7 @@ class InteractiveSessionManager:
         if isinstance(answer, PermissionGranted):
             return await self._return_with_permission(answer)
         return CodingOutcome(
-            ok=True, message=denial_voice.permission_declined(), session=None
+            ok=True, message=permission_declined(), session=None
         )
 
     async def _return_with_permission(
@@ -461,7 +484,7 @@ class InteractiveSessionManager:
             )
         except Exception:  # спавн сорвался: дерево цело, отвечаем честно
             logger.exception("coding: re-entering with the granted permission failed")
-            return CodingOutcome(ok=False, message=voice.resume_failed(), session=None)
+            return CodingOutcome(ok=False, message=resume_failed(), session=None)
         session = CodingSession(
             id=self._id_factory(),
             task=ended.task,
@@ -475,9 +498,9 @@ class InteractiveSessionManager:
         if not await self._go_live(
             session, runner, persistent=live.persistent, owner=live.owner
         ):
-            return CodingOutcome(ok=False, message=voice.resume_failed(), session=None)
+            return CodingOutcome(ok=False, message=resume_failed(), session=None)
         return CodingOutcome(
-            ok=True, message=denial_voice.permission_lifted(command), session=session
+            ok=True, message=permission_lifted(command), session=session
         )
 
     async def resume(self, name: str, sender: int | None) -> CodingOutcome:
@@ -509,7 +532,7 @@ class InteractiveSessionManager:
         candidate = found
         if candidate.claude_session_id is None:
             return CodingOutcome(
-                ok=False, message=voice.resume_nothing(name), session=None
+                ok=False, message=resume_nothing(name), session=None
             )
         now = self._clock.now()
         try:
@@ -520,7 +543,7 @@ class InteractiveSessionManager:
         except Exception:  # workspace/spawn fault: 🔴 the workspace itself is left intact
             logger.exception("coding: interactive resume failed for workspace")
             return CodingOutcome(
-                ok=False, message=voice.resume_failed(), session=None
+                ok=False, message=resume_failed(), session=None
             )
         session = CodingSession(
             id=self._id_factory(),
@@ -534,9 +557,9 @@ class InteractiveSessionManager:
         )
         if not await self._go_live(session, runner, persistent=True, owner=sender):
             return CodingOutcome(
-                ok=False, message=voice.resume_failed(), session=None
+                ok=False, message=resume_failed(), session=None
             )
-        return CodingOutcome(ok=True, message=voice.resumed(name), session=session)
+        return CodingOutcome(ok=True, message=resumed(name), session=session)
 
     async def stop(self, sender: int | None) -> CodingOutcome:
         """Owner-only 🔴 ПРЯМОЙ kill: закрыть раннер, убрать worktree, ``→ CANCELLED``.
@@ -558,7 +581,7 @@ class InteractiveSessionManager:
         # pump cannot then end the same session behind our back — and signal the pump.
         live = self._claim()
         if live is None:
-            return CodingOutcome(ok=False, message=voice.no_session(), session=None)
+            return CodingOutcome(ok=False, message=no_session(), session=None)
         self._cancelled.add(live.session.id)
         # 🔴 direct terminate of the process
         await self._teardown.close_runner(live.runner)
@@ -566,7 +589,7 @@ class InteractiveSessionManager:
         session = await self._teardown.finalize(live)
         # 🔴 Голос идёт ЗА судьбой дерева (BOB-087.D4b): у персистентного workspace работа
         # осталась, и реплика не смеет докладывать про уборку.
-        farewell = voice.stopped_persistent() if live.persistent else voice.stopped()
+        farewell = stopped_persistent() if live.persistent else stopped()
         self._cancelled.discard(session.id)
         self._task = None
         return CodingOutcome(ok=True, message=farewell, session=session)
@@ -748,9 +771,9 @@ class InteractiveSessionManager:
         self._cancelled.discard(session.id)
         # 🔴 Реплика идёт ЗА судьбой дерева и НЕ выдаёт смерть процесса за owner-«стоп».
         await self._say(
-            voice.interactive_ended_persistent()
+            interactive_ended_persistent()
             if live.persistent
-            else voice.interactive_ended()
+            else interactive_ended()
         )
 
     async def _say(self, text: str) -> None:
@@ -781,7 +804,7 @@ class InteractiveSessionManager:
         if self._live is not None:
             return CodingOutcome(
                 ok=False,
-                message=voice.interactive_busy(),
+                message=interactive_busy(),
                 session=self._live.session,
             )
         return None
@@ -802,12 +825,12 @@ class InteractiveSessionManager:
         except Exception:
             logger.exception("coding: the resumable-session lookup failed")
             return CodingOutcome(
-                ok=False, message=voice.resume_failed(), session=None
+                ok=False, message=resume_failed(), session=None
             )
         candidate = select_resumable(rows, branch=branch)
         if candidate is None:
             return CodingOutcome(
-                ok=False, message=voice.resume_nothing(name), session=None
+                ok=False, message=resume_nothing(name), session=None
             )
         return candidate
 
@@ -908,14 +931,14 @@ class InteractiveSessionManager:
         if live is None or live.session.id != session_id:
             return  # сеанс уже сменился — вопрос был бы не про эту работу
         if not denial.command:
-            await self._say(denial_voice.permission_stuck(denial))
+            await self._say(permission_stuck(denial))
             return
         if self._permission.is_pending():
             return
         self._permission.ask(
             command=denial.command, sender=live.owner, session_id=session_id
         )
-        await self._say(denial_voice.permission_question(denial))
+        await self._say(permission_question(denial))
 
     async def _persist_claude_id(self, session_id: str, claude_session_id: str) -> None:
         """Записать id claude-сессии в живую строку (best-effort — поток не рушим)."""
@@ -953,5 +976,5 @@ def _refused() -> CodingOutcome:
 def _unreachable() -> CodingOutcome:
     """«Да» пришло, а возвращаться уже некуда — честная реплика вместо тишины."""
     return CodingOutcome(
-        ok=False, message=denial_voice.permission_unreachable(), session=None
+        ok=False, message=permission_unreachable(), session=None
     )

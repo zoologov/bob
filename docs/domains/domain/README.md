@@ -34,6 +34,40 @@
 - `Clock` — `now()` → `datetime` (инъекция времени; запрет `datetime.now()` в домене).
 - `EventBus` — `publish(event)`, `subscribe(event_name, handler)`; `EventHandler`.
 - `DomainEvent` — маркер с `name` для маршрутизации на шине.
+- Порты, которые читают модули НИЖЕ их прежнего владельца (переехали в BOB-113, сигнатуры
+  не менялись): `EpisodeReader` и `MemoryRecall` (чтение памяти), `ReplyGateway`
+  (исходящий канал), `BobUserIdSource` (собственный id Боба) и словарь tool-calling'а
+  `ToolDefinition` / `ToolCall` / `ToolCallResult` / `ToolCallingProvider` (рядом с
+  `ToolLoopMessage`).
+
+#### События интейка — `events.py`
+
+`MessageReceived` и `BobMessageReaction` (+ константы имён) — события, которые гейтвей
+публикует на шину. Переехали из `application/runtime/` (BOB-113): их читают
+`conversation` и `personality`, стоящие ниже рантайма.
+
+#### Модуляторы самоулучшения — `modulators.py`
+
+`RuleModulators` — замороженный набор мягких наклонов из одобренных правил BOB-028.
+Собирает `proactivity` (`build_modulators`), применяют `conversation` и `personality`
+(ниже `proactivity`) → значение в ядре (BOB-113). Предикат `has_any()` — «есть ли что
+применять» — делегирует функции модульного уровня `_has_any_lever`: метод `@dataclass`
+mutmut не мутирует, а так предикат под мутационным гейтом (bob-etb.8).
+
+#### Социальный словарь — `interlocutor.py`, `relationship.py`, `roster.py`, `sulk.py`
+
+Значения «кто говорит с Бобом и как он к нему относится» (BOB-113, RFC D):
+`Interlocutor` + `InterlocutorKind` + `Trust` + `Gender` (Enum) — в `interlocutor.py`,
+`Relationship` (4 оси, `MIN_AXIS`/`MAX_AXIS`) — в `relationship.py`, `RosterMember` — в
+`roster.py`, `SulkState` (`MIN_INTENSITY`/`MAX_INTENSITY`) — в `sulk.py`. Их читают
+`conversation` и `personality` — ниже `social`, поэтому значения в ядре; поведение
+(`classify`, `detect_self_gender`, `apply_interaction`, `build_roster`,
+`observe_relationship`/`recover`) осталось в `social`. Инвариант значения `Relationship`
+(каждая ось в `[MIN_AXIS, MAX_AXIS]`, границы включительно) проверяют функции модульного
+уровня (`_require_axes_within_bounds` → `_require_within_bounds` по одной на ось), которые
+зовёт `__post_init__` — по той же причине, что и у модуляторов. Границы `MIN_AXIS`/`MAX_AXIS`
+— единственный источник: `personality.reaction_effect` клампит теплоту ими же, своей копии
+нет (bob-etb.8).
 
 #### Общий словарь — `episode_types.py`
 
@@ -45,6 +79,8 @@
   `personality` озвучивает её провенанс. Слово общее → живёт в ядре;
   `bob.memory.work_journal` ре-экспортирует его ради совместимости импортов.
   Значения ПЕРСИСТЯТСЯ в эпизодическом логе — менять их значит переписывать историю.
+- `Recalled` (`Mapping[str, object]`) — один recalled-элемент памяти; читают `conversation`
+  и `personality`, поэтому тип в ядре (BOB-113, был в `memory/ports.py`).
 
 #### Ось приватности — `visibility.py`
 
@@ -118,8 +154,12 @@
 отдельной работой. Ядро сознательно не притворяется алертом.
 
 kernel — чистый inward-safe leaf: только stdlib/typing, любой модуль может его
-импортить, kernel не импортит модули (правила `kernel-no-*` в
-`.beadloom/_graph/rules.yml`).
+импортить, kernel не импортит модули. Это держат правила `kernel-no-*` в
+`.beadloom/_graph/rules.yml`, тест изоляции `tests/domain/kernel/test_kernel_isolation.py`
+и гард `tests/test_no_runtime_import_cycles.py`. Правило `no-dependency-cycles` рёбер ИЗ
+ядра не видит: узлы `kernel` и `bob-domain` делят один `source` (наблюдение O1 ревью
+BOB-113). Кто из модулей читает каждое семейство контрактов и почему оно не у владельца —
+таблица «Кто читает ядро снизу» в [`features/kernel/SPEC.md`](features/kernel/SPEC.md).
 
 ### Domain-слои вертикальных модулей
 
@@ -129,11 +169,11 @@ kernel — чистый inward-safe leaf: только stdlib/typing, любой
 | Модуль | Чистое ядро (примеры) | SPEC |
 |---|---|---|
 | **personality** | `Mood`, `MoodDelta`, `TasteEngine`/`Verdict`, `Negotiation`/`Stance`, `SOUL`, `voice`, семейство `reaction` | [`../personality/README.md`](../personality/README.md) |
-| **memory** | `EpisodicEvent`, `SemanticFact`; порты `MemoryRepo`/`MemoryRecall`/`Embedder`/`Reranker` | [`../memory/README.md`](../memory/README.md) |
+| **memory** | `EpisodicEvent`, `SemanticFact`; порты `MemoryRepo`/`Embedder`/`Reranker` (`MemoryRecall` — в kernel, BOB-113) | [`../memory/README.md`](../memory/README.md) |
 | **conversation** | адресность, conversational floor, brevity, engagement, судьи отклика; порты `ConversationFloorStore`/`CloserLog`/`ZoneClassifier` | [`../conversation/README.md`](../conversation/README.md) |
-| **social** | идентичность собеседника, первое впечатление, отношения, permission; порты `AllowlistStore`/`SoulStore`/… | [`../social/README.md`](../social/README.md) |
+| **social** | поведение над социальным словарём ядра (`classify`, род по само-презентации, накопление отношений, ростер, обида), первое впечатление, permission; порты `AllowlistStore`/`SoulStore`/… | [`../social/README.md`](../social/README.md) |
 | **proactivity** | `UrgeModel`, `SocialEnergy`, `Governance`, `ProactiveDecider`, `ProactivityState` | [`../proactivity/README.md`](../proactivity/README.md) |
-| **capabilities** | `Capability`-контракт + value-объекты вызова инструментов (`ToolCall`/`ToolCallResult`/`ToolDefinition`), чистые diagrams/introspection | [`../capabilities/README.md`](../capabilities/README.md) |
+| **capabilities** | `Capability`-контракт (словарь вызова инструментов `ToolCall`/`ToolCallResult`/`ToolDefinition` — в kernel, BOB-113), чистые diagrams/introspection | [`../capabilities/README.md`](../capabilities/README.md) |
 | **coding** | доменное состояние сессии кодинга, переходы, narrate; порты `ClaudeCodeRunner`/`Worktree`/… | [`../coding/README.md`](../coding/README.md) |
 
 ## Инварианты (общие для domain-слоя)

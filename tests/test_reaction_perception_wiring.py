@@ -28,7 +28,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 from bob.app import Application, build_application
-from bob.application.runtime.events import BobMessageReaction
+from bob.kernel.events import BobMessageReaction
 from bob.personality.adapters.notable_reaction_store import KvNotableReactionStore
 
 if TYPE_CHECKING:

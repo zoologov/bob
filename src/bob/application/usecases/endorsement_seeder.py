@@ -28,14 +28,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from bob.conversation.thread import _user_turns
+from bob.kernel.interlocutor import Trust
 from bob.social.endorsement import endorsement_seed
-from bob.social.interlocutor import Trust
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bob.social.interlocutor import Interlocutor
-    from bob.social.relationship import Relationship
+    from bob.kernel.interlocutor import Interlocutor
+    from bob.kernel.relationship import Relationship
 
 
 class EndorsementSeeder:

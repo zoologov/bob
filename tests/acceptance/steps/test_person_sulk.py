@@ -23,8 +23,9 @@ from datetime import UTC, datetime
 import pytest
 from pytest_bdd import given, scenarios, then, when
 
+from bob.kernel.sulk import SulkState
 from bob.personality.profanity import is_directed_hostility
-from bob.social.sulk import SulkConfig, SulkState
+from bob.social.sulk import SulkConfig
 from bob.social.usecases.sulk_sources import SulkTracker
 
 scenarios("../features/person_sulk.feature")

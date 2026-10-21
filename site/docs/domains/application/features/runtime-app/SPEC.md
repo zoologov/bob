@@ -1,18 +1,20 @@
-&lt;!-- beadloom:badge-start -->
+<!-- beadloom:badge-start -->
 > ✅ **fresh**
 > 
-> last synced 2026-07-31T12:12:20.297951+00:00 · coverage 100% (`runtime-app`)
+> last synced 2026-10-21T08:49:35.850635+00:00 · coverage 100% (`runtime-app`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-&lt;!-- beadloom:badge-end -->
+<!-- beadloom:badge-end -->
 
-&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # runtime-app — рантайм приложения (asyncio-примитивы)
 
 Асинхронные примитивы рантайма GUPPI: жизненный цикл процесса, in-process шина
-событий, события приложения и устойчивые heartbeat-тики (retry/backoff). Узел
+событий и устойчивые heartbeat-тики (retry/backoff). Сами события интейка
+(`MessageReceived`, `BobMessageReaction`) живут в shared kernel — `src/bob/kernel/events.py`
+(BOB-113). Узел
 `runtime-app` (`part_of` слоя `bob-application`, source `src/bob/application/runtime/`).
 
 🔴 Отличать от `runtime` (composition root в `src/bob/runtime/` — проводка всех слоёв):
@@ -28,10 +30,6 @@ async-примитивы приложения, а не корень сборки
   `state` / `is_running`; `RuntimeState` — перечисление состояний жизненного цикла.
 - **event_bus.py** — `AsyncEventBus`, asyncio fan-out: доставить каждое событие всем
   обработчикам его имени (`subscribe` / `publish`) с изоляцией ошибок обработчиков.
-- **events.py** — события уровня приложения на шине: `MessageReceived` (сообщение
-  пользователя из Telegram, нормализованное для приложения) и `BobMessageReaction`
-  (реакция, добавленная/снятая на одно из собственных сообщений Боба, BOB-050); у обоих
-  стабильное свойство `name` для маршрутизации.
 - **heartbeat.py** — `periodic(...)`, обёртка тик-корутины в супервизируемый
   повторяющийся фоновый цикл (sleep инъецируется для детерминизма); `RetryPolicy` —
   политика ограниченного backoff для ретрая транзиентных сбоев тика.
@@ -57,7 +55,9 @@ async-примитивы приложения, а не корень сборки
   - `scope.py` — `TurnScope`, изолированный per-turn контекст (координаты хода + собственный
     seeded rng, INV-4); `new_turn_scope`.
   - `room_stream_reader.py` — `RoomStreamReader` + `AmbientBatchReader`: осевший ambient-burst
-    → одно per-message-чтение (BOB-072).
+    → одно per-message-чтение (BOB-072). Опциональный шов `perceive_kind` (BOB-078 B) размечает
+    каждое сообщение соц-`InterlocutorKind` автора, чтобы read взвесил тёплый ответ гостя/новичка
+    как салиентный; без шва `kind=None` (baseline байт-идентичен).
 
 ## Инварианты
 
@@ -86,12 +86,11 @@ async-примитивы приложения, а не корень сборки
 `test_bob_message_reaction_event.py`, и `tests/application/runtime/intake/` (dispatcher,
 inbox, focus, scope, room_stream_reader).
 
-&lt;!-- beadloom:track=src/bob/application/runtime/agent.py -->
-&lt;!-- beadloom:track=src/bob/application/runtime/event_bus.py -->
-&lt;!-- beadloom:track=src/bob/application/runtime/events.py -->
-&lt;!-- beadloom:track=src/bob/application/runtime/heartbeat.py -->
-&lt;!-- beadloom:track=src/bob/application/runtime/retry.py -->
-&lt;!-- beadloom:track=src/bob/application/runtime/delayed_turn.py -->
-&lt;!-- beadloom:track=src/bob/application/runtime/share_of_voice_gate.py -->
-&lt;!-- beadloom:track=src/bob/application/runtime/catch_up_reentry.py -->
-&lt;!-- beadloom:track=src/bob/application/runtime/staleness_reassessor.py -->
+<!-- beadloom:track=src/bob/application/runtime/agent.py -->
+<!-- beadloom:track=src/bob/application/runtime/event_bus.py -->
+<!-- beadloom:track=src/bob/application/runtime/heartbeat.py -->
+<!-- beadloom:track=src/bob/application/runtime/retry.py -->
+<!-- beadloom:track=src/bob/application/runtime/delayed_turn.py -->
+<!-- beadloom:track=src/bob/application/runtime/share_of_voice_gate.py -->
+<!-- beadloom:track=src/bob/application/runtime/catch_up_reentry.py -->
+<!-- beadloom:track=src/bob/application/runtime/staleness_reassessor.py -->

@@ -18,8 +18,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from bob.kernel.interlocutor import Interlocutor, InterlocutorKind, Trust
 from bob.social.first_impression import FirstImpression
-from bob.social.interlocutor import Interlocutor, InterlocutorKind, Trust
 from bob.social.usecases.roster_recall import RosterRecall
 
 _NOW = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)

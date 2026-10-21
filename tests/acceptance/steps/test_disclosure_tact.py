@@ -17,9 +17,12 @@ the conservative, dissolvable warm start.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 from pytest_bdd import given, scenarios, then, when
 
+from bob.kernel.interlocutor import Trust
 from bob.personality.mood import Mood
 from bob.personality.negotiation import Stance
 from bob.personality.voice import stranger_directive, tactful_withhold_directive
@@ -29,8 +32,10 @@ from bob.social.disclosure import (
     filter_surfaceable,
 )
 from bob.social.endorsement import owner_endorsed_sender
-from bob.social.interlocutor import Trust
-from bob.social.relationship import Relationship, apply_interaction, endorsed_seed
+from bob.social.relationship import apply_interaction, endorsed_seed
+
+if TYPE_CHECKING:
+    from bob.kernel.relationship import Relationship
 
 scenarios("../features/disclosure_tact.feature")
 

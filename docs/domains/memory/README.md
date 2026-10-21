@@ -434,13 +434,18 @@ OpenAI-совместимой `/v1/chat/completions`, сортирует по у
 - `MemoryRepo` — долговечный стор эпизодов/фактов (`save_episode`, `save_fact`,
   `load_episodes`, `recent_episodes`). Реализация —
   `memory.adapters.SqliteMemoryRepo` над connection-kernel'ом.
-- `MemoryRecall` — relevance-retrieval (`recall(query, *, k, surface_old=False)`
-  → `Sequence[Recalled]`); P0 — FTS5, шов для векторов.
+- `MemoryRecall` и `Recalled` живут в shared kernel (`src/bob/kernel/ports.py`,
+  `src/bob/kernel/episode_types.py`, BOB-113): их читают модули ниже `memory` по
+  runtime-порядку (`Recalled` — `conversation` и `personality`, `MemoryRecall` —
+  `personality`). Реализации порта (`Fts5MemoryRecall`, `HybridMemoryRecall`,
+  `CasualFloorRecall`) остаются в `memory/adapters/`. `MemoryRecall` —
+  relevance-retrieval (`recall(query, *, k, surface_old=False)` → `Sequence[Recalled]`);
+  P0 — FTS5, шов для векторов. `memory/ports.py` импортирует `Recalled` из ядра только
+  для аннотаций и не ре-экспортирует его.
 - `Embedder` — `embed(texts)` → `list[list[float]]` (по одному dense-вектору на
   текст, порядок сохраняется; локальный, приватный).
 - `Reranker` — `rerank(query, candidates)` → `list[Recalled]` (пере-упорядочивание
   по релевантности, опциональный trim до top-`N`; аддитивно, деградирует мягко).
-- `Recalled` = `Mapping[str, object]` — один recalled-элемент (контент + score).
 - `SelfActionRecorder` (BOB-079) — узкий порт записи самодействия (`record(action,
   *, sender_id, visibility)`); НЕ расширяет `MemoryRepo` (умышленно узкий).
   Реализации — `memory.adapters.self_action_recorder` (memory-backed → пишет

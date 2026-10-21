@@ -23,7 +23,7 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from bob.application.runtime.events import MessageReceived
+from bob.kernel.events import MessageReceived
 from tests.acceptance.live_app_harness import (
     BOB_TOPIC_ID,
     GROUP_CHAT_ID,
