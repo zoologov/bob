@@ -21,19 +21,31 @@ The contract:
 
 * ``@pytest.mark.real_beadloom`` on a test says "this test drives the real beadloom binary
   and has nothing else it may legitimately skip on in an environment that requires it".
-  A test that ALSO needs a tool CI does not install (``mmdc``, ``bd``, full git history)
-  does not carry the marker — the marker means the run is mandatory, whatever the reason
-  for the skip.
+  A test that ALSO needs a tool CI does not install (``mmdc``, ``bd``) does not carry the
+  marker — the marker means the run is mandatory, whatever the reason for the skip. Full git
+  history is NOT such a tool: ``ci.yml`` checks out with ``fetch-depth: 0`` (BOB-112.12), so
+  the ``diff --since <old commit>`` test IS marked — on the runner a missing commit is a
+  broken checkout, not a legitimate skip.
 * ``BOB_REQUIRE_REAL_BEADLOOM=1`` (set in ``.github/workflows/ci.yml`` on the Pytest step)
   turns ANY skip of a marked test — ``pytest.skip`` inside it, a ``skipif`` marker, a fixture
-  that skips — into a FAILED report that keeps the original skip reason. Unset (or ``0``),
-  nothing changes: locally a missing binary is the developer's business and the test SKIPs
-  with its reason. Any other value is a usage error: a typo such as ``true`` must not
-  quietly switch the requirement off.
+  that skips — into a red report that keeps the original skip reason: FAILED for a skip raised
+  in the call phase, ERROR for one raised in setup (``skipif``, a skipping fixture) — pytest
+  reports a setup-phase refusal as ERROR, and red is red. Unset (or ``0``), nothing changes:
+  locally a missing binary is the developer's business and the test SKIPs with its reason.
+  Any other value is a usage error: a typo such as ``true`` must not quietly switch the
+  requirement off.
 * ``xfail`` is not a skip and is left alone.
 
-What it does NOT hold: a NEW test that drives the real binary but does not carry the marker
-skips on the runner as silently as before. The marker is the declaration; nothing infers it.
+What it does NOT hold (measured in BOB-112.13):
+
+* a NEW test that drives the real binary but does not carry the marker skips on the runner
+  as silently as before — the marker is the declaration; nothing infers it (bead ``bob-xwf``
+  is the net: run with a real and with a failing beadloom, require the marker on the
+  difference);
+* a module-level ``pytest.skip(..., allow_module_level=True)`` in a marked module: the skip
+  happens at collection, before ``pytest_runtest_makereport``, and reads «1 skipped», rc 0
+  (none of the marked modules does this today — checked by grep, not by a gate);
+* a test that returns early instead of skipping passes green, as any vacuous test does.
 """
 
 from __future__ import annotations

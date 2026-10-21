@@ -810,8 +810,11 @@ def _pr_title(session: CodingSession) -> str:
 
 def _pr_body(session: CodingSession) -> str:
     """The PR body — the task plus the approved plan (transparency for the owner)."""
-    plan = session.plan or ""
-    return f"Задача: {session.task}\n\nПлан:\n{plan}".strip()
+    # ``plan_text``, not ``plan``: the bare name ``plan`` is the imported voice function
+    # (BOB-112.10 rewrote ``from bob.coding import session_voice`` into direct names), and a
+    # local that shadows it is a trap for the next edit (review .13 nit).
+    plan_text = session.plan or ""
+    return f"Задача: {session.task}\n\nПлан:\n{plan_text}".strip()
 
 
 def _with_preamble(preamble: str, prompt: str) -> str:

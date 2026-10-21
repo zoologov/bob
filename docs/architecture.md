@@ -214,9 +214,10 @@ usecases → capabilities → social → telegram → proactivity → memory →
     `TYPE_CHECKING`-импорт не направлен вверх, а любое ребро ИЗ `kernel` считается
     направленным вверх.
 
-  Охват гарда направления — только девять узлов `_VERTICAL_ORDER` и `kernel`. Узлы вне
-  порядка (`coding`, `interactive`, `identity`, `presence`, `llm`, `persistence`, `config`,
-  `telegram`-инфраструктура) гардом направления не судятся: их границы держат
+  Охват гарда направления — только девять узлов `_VERTICAL_ORDER` (в их числе
+  `infrastructure.telegram`) и `kernel`. Узлы вне порядка (`coding`, `interactive`, `identity`,
+  `presence`, `router`, `runtime`/`wiring`, `llm`, `persistence`, `config`) гардом направления
+  не судятся: их границы держат
   `forbid_import`-правила из `rules.yml` (и только те строки индекса, которые beadloom видит —
   см. паритетный тест ниже) и правило `architecture-layers`, которое судит 15 из 81 ребра
   `depends_on` (остальные 66 — рёбра вертикалей, вне слоёв по замыслу BOB-062.6a).

@@ -102,8 +102,10 @@ jobs:
         # ревью его обмануло: 9.0.0 на PATH за обёрткой, у которой `why` выходит с rc 1, —
         # гард зелёный, тест `why` ушёл в SKIP. ИСХОД держит BOB_REQUIRE_REAL_BEADLOOM=1:
         # SKIP любого теста с маркером real_beadloom здесь становится FAILED с исходной
-        # причиной (tests/support/real_beadloom_requirement.py). Тесты, которым кроме beadloom
-        # нужен mmdc, bd или старый коммит (checkout мелкий), маркера не несут.
+        # причиной (tests/support/real_beadloom_requirement.py). Маркера не несут только
+        # тесты, которым кроме beadloom нужен инструмент, которого на раннере нет (mmdc, bd).
+        # Тест `diff --since 66aa620~1` маркер НЕСЁТ: полная история обеспечена checkout'ом
+        # с fetch-depth: 0 выше, и его SKIP здесь — сломанный checkout, а не законный пропуск.
         # -p no:randomly: детерминированный порядок (воспроизводимость CI).
         env:
           BOB_REQUIRE_REAL_BEADLOOM: "1"

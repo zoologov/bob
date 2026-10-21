@@ -20,8 +20,10 @@ present and initialised, so the tests actually run and must PASS.
 ``@pytest.mark.real_beadloom``. CI installs the pinned beadloom and sets
 ``BOB_REQUIRE_REAL_BEADLOOM=1``, so there their skip is a FAILURE with the original reason
 (``tests/support/real_beadloom_requirement.py``) — a ``why``/``diff`` that changed on a
-version bump can no longer pass as a quiet skip. Not marked, on purpose: the ``bd`` tests
-(CI has no tracker) and the ``diff`` test that needs an old commit (CI checks out one).
+version bump can no longer pass as a quiet skip. Not marked, on purpose: only the ``bd``
+tests (CI has no tracker). The ``diff`` test that needs an old commit IS marked since
+BOB-112.12 — CI checks out the full history (``fetch-depth: 0``), so on the runner a missing
+commit is a broken checkout, not a legitimate skip.
 """
 
 from __future__ import annotations
