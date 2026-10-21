@@ -887,7 +887,7 @@ failure»**. Для voice-doors Tier-0 (REFLECT, digest, FASCINATION_PICK) эс�
 (2) громкий сигнал владельцу при N подряд отказов любого класса (у heartbeat сейчас нет счётчика —
 `periodic` в `application/runtime/heartbeat.py:60-87`); (3) `qwen3:8b` и `tier0_fallback` — часть
 выкатки, не ручной настройки VPS.
-**Status:** ✅ закрыт работой **BOB-116** (PR BOB-116, ветка `features/BOB-116`, 2026-10-21).
+**Status:** ✅ закрыт работой **BOB-116** (PR #147, ветка `features/BOB-116`, 2026-10-21).
 **Что отгружено:**
 - 401/403 — класс `auth`, недоступность для маршрутизации: служебный ход уходит на дублёра,
   отказ Tier-1 — на Tier-0 (`fallback_policy.classify_failure`; сценарии S25/S26
