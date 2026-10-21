@@ -1,9 +1,14 @@
+<!-- beadloom:composed — this file is CORE + the architecture/stack overlays your
+`.beadloom/flow.yml` selects. Put YOUR project's rules in `.beadloom/flow/claude/CLAUDE.md`:
+the project layer composes AFTER the core, survives every upgrade, and does not trip
+`beadloom config-check`. Editing this body directly is reported and never rewritten. -->
+
 # CLAUDE.md — Multi-Agent Development Core
 
 > **Version:** 3.1 (agents/ + commands/ split)
 > **Integration:** steveyegge/beads CLI (1.0.4, embedded Dolt)
 > **Process skills (`.claude/commands/`, slash, run in main loop):** `/task-init`, `/coordinator`, `/checkpoint`, `/templates`
-> **Role subagents (`.claude/agents/`, launched via the `Agent` tool):** `dev`, `test`, `review`, `tech-writer`
+> **Role subagents (`.claude/agents/`, launched via the `Agent` tool):** `explore`, `dev`, `test`, `review`, `tech-writer`
 > **See §0.0 Process Architecture for how these fit together.**
 
 ---
@@ -17,21 +22,21 @@ CLAUDE.md  ← entry point: critical rules, setup, bd/beadloom essentials, this 
 │
 ├─ .claude/commands/  — SLASH SKILLS, injected into the MAIN-LOOP session (you, now)
 │    /task-init    scaffold any work item (PRD/RFC/CONTEXT/PLAN/ACTIVE or BRIEF) + create beads
-│    /coordinator  orchestrate multi-agent work (waves, gates, merge-slot) — MAIN-LOOP only
+│    /coordinator  orchestrate multi-agent work (waves, gates, landing lock) — MAIN-LOOP only
 │    /checkpoint   bd-comment + ACTIVE.md progress saves
 │    /templates    document templates used by /task-init
 │
 └─ .claude/agents/    — ROLE SUBAGENTS, launched via the `Agent` tool (isolated context)
-     dev · test · review · tech-writer   (canonical role definitions; scoped tools; model: opus)
+     explore · dev · test · review · tech-writer   (canonical role definitions; scoped tools; model: opus)
 ```
 
 **Why coordinator is a command, not an agent:** the coordinator IS the main-loop process that *spawns* subagents via the `Agent` tool. A subagent cannot spawn subagents, so orchestration must live in the main loop. `/coordinator` is a skill injected into that loop.
 
 **Two ways a role runs:**
-- **Multi-agent (default for epics/features):** `/coordinator` launches roles as subagents — `Agent(subagent_type="dev"|"test"|"review"|"tech-writer", run_in_background=True)`. The role's full protocol lives in `.claude/agents/<role>.md` (single source of truth) and is NOT re-injected by the coordinator.
-- **Single-agent (one small bead, no orchestration):** the main loop adopts the role inline by reading and following `.claude/agents/<role>.md` directly. (There are no `/dev` `/test` `/review` `/tech-writer` slash commands — roles are subagents, not skills.)
+- **Multi-agent (default for epics/features):** `/coordinator` launches roles as subagents — `Agent(subagent_type="explore"|"dev"|"test"|"review"|"tech-writer", run_in_background=True)`. The role's full protocol lives in `.claude/agents/<role>.md` (single source of truth) and is NOT re-injected by the coordinator.
+- **Single-agent (one small bead, no orchestration):** the main loop adopts the role inline by reading and following `.claude/agents/<role>.md` directly. (There are no `/explore` `/dev` `/test` `/review` `/tech-writer` slash commands — roles are subagents, not skills.)
 
-**Flow:** `/task-init` (docs + beads) → `/coordinator` (waves: dev → test → review → tech-writer, gated by bead dependencies) → commit per wave. Durable state lives in files (`CONTEXT.md`/`ACTIVE.md`) + bead comments, never chat.
+**Flow:** `/task-init` (Explore derives the axes at step 0.5, then docs + beads) → `/coordinator` (waves: dev → test → review → tech-writer, gated by bead dependencies) → commit per wave. Durable state lives in files (`CONTEXT.md`/`ACTIVE.md`) + bead comments, never chat.
 
 ---
 
@@ -44,7 +49,8 @@ CLAUDE.md  ← entry point: critical rules, setup, bd/beadloom essentials, this 
 ```bash
 git config beads.role maintainer   # or "contributor" — required by bd 1.0.4 (silences GH#2950 warning)
 beadloom install-hooks             # pre-commit (lint + sync-check + ACTIVE/tracker coherence) +
-                                   # pre-push Beadloom Gate (full `beadloom ci`; blocks on red, --no-verify to skip)
+                                   # pre-push Beadloom Gate (`beadloom ci`; blocks on red, --no-verify to skip).
+                                   # It does not run the test suite, and names that under its verdict.
 ```
 
 ### BEFORE any work
@@ -82,12 +88,9 @@ bd comments add <bead-id> "CHECKPOINT: [what was done]"
 ### WHEN COMPLETING bead
 
 ```bash
-# 1. Tests pass
-uv run pytest
-
-# 2. Code quality (same checks as CI)
-uv run ruff check src/ tests/
-uv run mypy src/
+# 1. Tests pass, 2. lint + type-check clean
+#    -> the concrete commands come from the STACK section below, not from here:
+#       the core is stack-neutral and `uv run pytest` is not every project's suite.
 
 # 3. Beadloom validation
 beadloom reindex
@@ -115,70 +118,397 @@ bd close <bead-id> --suggest-next
 - **Current version:** 1.0.0
 <!-- beadloom:auto-end -->
 
-> **Authoritative project facts** (the auto-region above is beadloom-generated and coarse — since
-> BOB-112 it carries Bob's own version; the `Stack:` line it writes is truncated, a beadloom
-> formatter bug reported to BDL-UX):
-> **Bob v1.0.0** (2026-08-18 — первый мажорный релиз: живой компаньон на VPS, память+EQ+самомодель,
-> групповое присутствие, dev-конвейер из Telegram, CD по тегу) · Python 3.12+ (asyncio) · Telegram —
-> `aiogram` 3.x (Bot API 10.1: rich/stream) · Tier-1 Qwen (облако),
-> аварийный дублёр — локальный Ollama `qwen3:8b` (2026-08-12: выбран замером через шов Боба;
-> `qwen2.5:7b` отвергнут — выплёвывал синтаксис вызова инструмента ТЕКСТОМ в реплику, `0.5b`
-> галлюцинировал), эмбеддер `bge-m3`
-> · SQLite + FTS5 (no RAG/embeddings in P0) · pytest · ruff · mypy --strict.
-> Full stack & product direction: **`.claude/dev-docs/VISION.md`** + `ROADMAP.md`.
+---
+
+## 1. Skills — Dynamic Loading
+
+**Slash skills (main loop):**
+
+| Situation | Command | Description |
+|-----------|---------|-------------|
+| New work item | `/task-init` | Setup any type: epic, feature, bug, task, chore |
+| Parallel work | `/coordinator` | Orchestrate multi-agent waves (spawns role subagents) |
+| Need templates | `/templates` | PRD, RFC, CONTEXT, PLAN, ACTIVE, BRIEF |
+| Create checkpoint | `/checkpoint` | Format, rules |
+
+**Role subagents (via the `Agent` tool — see §0.0):** `explore` (the axes, before a work item has a type), `dev` (TDD implementation), `test` (tests, coverage), `review` (quality, read-only), `tech-writer` (doc refresh). Defined in `.claude/agents/<role>.md`. For a single small bead without orchestration, the main loop adopts a role inline by following its `.claude/agents/<role>.md`.
+
+**Rule:** Invoke a slash skill when you need detailed instructions; launch a role subagent (or follow its agent file inline) to do role work.
 
 ---
 
-## 0.2 Engineering Paradigms (standing methodology)
+## 2. Beads CLI — Essentials
 
-> **Applies to ALL work, not one epic.** Path values (owner): maximum quality, honesty, control,
-> style, maintainability, extensibility, stability. These paradigms are peers — none optional.
+```bash
+# Available tasks (no blockers)
+bd ready
+bd ready --claim                  # atomically claim the next ready bead (1.0.4)
 
-**Quality pyramid (outside-in acceptance over inside-out units):**
+# All tasks — `--all` because bd otherwise omits every closed bead, silently,
+# and caps the rest at 50 with a notice only on stderr (bd 1.0.4)
+bd list --all
+
+# Details + history
+bd show <id>
+bd comments <id>
+
+# Claim task
+bd update <id> --status in_progress --claim
+
+# Add checkpoint (does NOT overwrite description)
+bd comments add <id> "checkpoint text"
+
+# Close task (--suggest-next shows newly unblocked beads; 1.0.4)
+bd close <id> --suggest-next
+
+# Dependency graph
+bd graph --all
+
+# Add dependency, then READ THE ECHO — bd names both beads' full titles, and that
+# echo is the only check on an edge built from an id you wrote down yourself
+bd dep add <id> <depends-on-id>
+bd dep tree <id>                  # confirm the edge against the titles, not the ids
+```
+
+**Multi-agent coordination (new in 1.0.4) — used by `/coordinator`:**
+- `bd swarm` — epic → DAG → waves (`create` / `validate` / `status`)
+- `bd gate` — async wait conditions (review→tech-writer; CI via `gh:run` / `gh:pr`)
+- the merge slot — serialize parallel LANDINGS: `bd merge-slot acquire --holder <bead-id>`,
+  where exit 0 means you hold it, and `release --holder <bead-id>`, the only release form bd
+  verifies. It orders the commits and nothing else; keeping two agents out of one FILE is what
+  `beadloom waves` derives
+
+**IMPORTANT:**
+- `bd comments add` — for checkpoints (preserves history)
+- `bd update --append-notes` — for notes
+- NEVER work on a task without `--claim`
+- ALWAYS close via `bd close`; `--suggest-next` lists *candidate* unblocked beads — **confirm with `bd ready --limit 0`** (it named a still-blocked bead in sixteen of twenty-three dependency shapes measured on bd 1.0.4; `--limit 0` because the default caps at 100)
+- `--session "$CLAUDE_SESSION_ID"` on close is optional (audit trail; only if the env var is set)
+
+---
+
+## 2.1 Beadloom CLI — Essentials
+
+```bash
+# Agent context (start of session)
+beadloom prime                   # compact context for AI agent injection (<2K tokens)
+
+# Project structure (use instead of hardcoded paths)
+beadloom status                  # overview: nodes, edges, docs, coverage, trends
+beadloom graph                   # Mermaid architecture diagram
+beadloom ctx <ref-id>            # full context: code, docs, constraints
+beadloom ctx <ref-id> --json     # structured JSON for parsing
+beadloom search "<query>"        # FTS5 search across nodes and docs
+beadloom why <ref-id>            # impact analysis: upstream deps + downstream dependents
+
+# Validation (run before committing)
+beadloom reindex                 # rebuild index after code/graph changes
+beadloom sync-check              # check doc-code freshness (exit 2 = stale)
+beadloom lint --strict           # architecture boundary check (exit 1 = violation)
+beadloom doctor                  # graph integrity validation
+
+# Change tracking & visualization
+beadloom diff --since <git-ref>  # graph changes vs a git ref (exit 1 = changes) — use in the review role
+beadloom snapshot save           # snapshot architecture state; `snapshot compare <a> <b>` to diff
+beadloom link <ref-id> <url>     # link a graph node to an external tracker issue (GitHub/Jira)
+
+# Cross-repo federation (hub + satellites)
+beadloom export [--out FILE]     # deterministic federation artifact (schema v1: graph + lifecycle + AMQP contract meta)
+beadloom federate <exports...>   # hub: aggregate >=2 satellite exports -> federated graph (drift verdicts + staleness)
+
+# Documentation
+beadloom docs generate           # generate doc skeletons from graph
+beadloom docs polish             # structured data for AI doc enrichment
+
+# Setup (one-time)
+beadloom init                    # initialize beadloom in a project
+beadloom setup-rules             # create IDE rules files referencing AGENTS.md
+beadloom setup-mcp               # configure MCP server for IDE
+beadloom setup-agentic-flow      # compose+write role adapters from .beadloom/flow.yml (ddd|fsd × stack, claude/cursor)
+beadloom install-hooks           # pre-commit (lint + sync-check + coherence) + pre-push Beadloom Gate (`beadloom ci`;
+                                 # graph and documents, not the suite — the verdict names what it did not run)
+
+# After changing code
+# 1. beadloom reindex            — re-index changed files
+# 2. beadloom sync-check         — check if docs went stale
+# 3. If stale: update the doc, then beadloom reindex again
+# 4. beadloom lint --strict      — verify architecture boundaries
+```
+
+**IMPORTANT:**
+- NEVER hardcode file paths — use `beadloom ctx`/`graph`/`search` to discover structure
+- ALWAYS start sessions with `beadloom prime` for project context
+- ALWAYS run `beadloom sync-check` before committing
+- If sync-check reports stale docs, update them before proceeding
+
+---
+
+## 3. File Memory (protection against auto-compaction)
+
+<!-- beadloom:auto-start doc-language -->
+**Document language:** ALL documents (PRD, RFC, CONTEXT, PLAN, ACTIVE, BRIEF) MUST be written in Russian — set by `language: ru` in `.beadloom/flow.yml`.
+<!-- beadloom:auto-end -->
 
 ```
-BDD acceptance (pytest-bdd + Gherkin .feature) — observable behavior as executable,
-                                                 human-readable contracts (living documentation)
-Mutation gate  (mutmut, targeted)             — measures TEST STRENGTH on pure domain cores
-TDD unit                                      — pure cores, deterministic (test-first)
-DDD boundaries + Cohesion                     — structure: bounded contexts, one nameable responsibility
+.claude/development/docs/features/{ISSUE-KEY}/
+├── PRD.md       <- REQUIREMENTS: business goals (epic/feature only)
+├── RFC.md       <- ARCHITECTURE: technical solution (epic/feature only)
+├── CONTEXT.md   <- CORE: state, decisions, standards (epic/feature only)
+├── PLAN.md      <- DAG: beads and dependencies (epic/feature only)
+├── BRIEF.md     <- COMBINED: problem + solution + plan (bug/task/chore only)
+└── ACTIVE.md    <- FOCUS: current work, progress (ALL types)
 ```
 
-**Enforced by the role subagents** (`.claude/agents/`):
-- **dev** — TDD (test-first) · DDD placement · Cohesion (name the one responsibility) · writes code that survives mutation + makes behavior expressible as `.feature`.
-- **test** — TDD unit · **BDD** `.feature` for behavior-bearing work · **mutation** gate on the touched domain core.
-- **review** — DDD boundaries · Cohesion (both directions) · BDD-coverage of new behavior · mutation-score.
-- **tech-writer** — `.feature` scenarios are living behavior docs (referenced from domain docs).
+| Priority | File | When to read |
+|----------|------|--------------|
+| **P0** | CONTEXT.md | Always at the start |
+| **P0** | ACTIVE.md | Always at the start |
+| **P1** | beads comments | When resuming work |
 
-**🔴 Honest scoping (sustainable — not a rule we silently break):**
-- **BDD `.feature`** — for behavior-bearing work (features/epics/bugfixes with observable behavior);
-  pure mechanical chores may skip. Scenarios derive from the PRD scenario catalog + invariants;
-  assert observable behavior through the boundary (fake gateway/CLI), never private state.
-  Live in `tests/acceptance/{features,steps}/`.
-- **Mutation** — ONLY pure **domain cores** (deterministic verdicts/policies/thresholds); NOT
-  adapters/LLM/async/gateway (slow, non-deterministic, uninformative). Deliberate **per-slice** run,
-  **NOT** in pre-commit (cost). Score **≥85%** + explicit equivalent-mutant triage (never pad).
-- Harness is repo-wide once bootstrapped (established in BOB-066 Срез 0: `pytest-bdd` + `mutmut`).
+**Rule:** NEVER rely on "memory" from chat. Read the files!
+
+---
+
+## 4. Agent Roles
+
+| Role | How it runs | When to use |
+|------|-------------|-------------|
+| **Explorer** | `agents/explore.md` (`subagent_type: explore`) | Deriving how far a change ranges, before its type is chosen (`/task-init` step 0.5) |
+| **Developer** | `agents/dev.md` (`subagent_type: dev`) | Implementing beads (TDD) |
+| **Reviewer** | `agents/review.md` (`subagent_type: review`) | Quality verification (read-only) |
+| **Tester** | `agents/test.md` (`subagent_type: test`) | Writing tests |
+| **Tech Writer** | `agents/tech-writer.md` (`subagent_type: tech-writer`) | Documentation updates |
+| **Coordinator** | `/coordinator` skill (main loop) | Multi-agent orchestration |
+
+### Single agent (one small bead, no orchestration)
+The main loop adopts the role inline by following `.claude/agents/<role>.md` directly; use `/checkpoint` for saving progress.
+
+### Multi-agent mode (default for epics/features)
+Coordinator MUST be activated before multi-bead work:
+1. Invoke `/coordinator` skill (main-loop only — see §0.0).
+2. Complete `/task-init` flow BEFORE creating any beads or writing code.
+3. Coordinator gets technical context through filtered sources (strategy specs, sub-agent summaries), NEVER reads raw source code directly.
+4. Coordinator launches roles as first-class subagents via the `Agent` tool (`subagent_type: explore|dev|test|review|tech-writer`), tracked through `bd swarm` / `gate` / the landing lock.
+
+Roles are defined canonically in `.claude/agents/{explore,dev,test,review,tech-writer}.md` (single source of truth; no slash-command wrappers).
+
+---
+
+## 5. DAG and Priorities
+
+| Priority | Description | Rule |
+|----------|-------------|------|
+| **P0** | Critical, blocks others | Execute first |
+| **P1** | High, important | After P0 |
+| **P2** | Medium, improvements | When there is time |
+| **P3** | Low, nice-to-have | Last priority |
+
+**Rules:**
+- Only take from `bd ready`
+- Do NOT take a bead with unresolved dependencies
+- Do NOT take P2/P3 while P0/P1 exist
+
+---
+
+## 6. Git — Trunk-based development
+
+`main` is **branch-protected** (no direct push). All work integrates via a PR.
+
+```
+Trunk-based flow:
+1. Branch off main:   git switch -c features/{ISSUE-KEY}
+2. Commit per wave    onto features/{ISSUE-KEY} (dev → test → review → tech-writer)
+3. ONE PR to main     per epic/feature (or shippable slice) — not one PR per commit
+4. The PR triggers     the AI tech-writer (commits its doc refresh INTO the PR branch)
+                       + CI (`beadloom ci` is a REQUIRED status check)
+5. Merge when green    human merges once CI is green + the doc refresh has landed
+                       (no auto-merge; no direct push to main → main stays always-green)
+```
+
+```
+Commit format:
+[{ISSUE-KEY}] <type>: <description>
+
+Types: feat, fix, refactor, docs, test, chore
+
+Example:
+[MCP-001] feat: add health endpoint
+```
+
+One-time per repo: `beadloom setup-branch-protection` configures `main` protection
+(PR required, `beadloom ci` a required check, `enforce_admins: true` — strict
+trunk-based, even the owner integrates via a PR — and 0 required reviews → the
+owner still self-merges).
+
+> **Idempotent is not harmless.** The command applies whatever
+> `DEFAULT_STATUS_CHECK_CONTEXTS` currently says, not whatever is already live, so
+> re-running it after an upgrade can require checks your workflow does not yet
+> produce — and a required check that never reports makes `main` unmergeable.
+> Before re-running, confirm every context it will require exists as a job and is
+> green. `gh api repos/:owner/:repo/branches/main/protection` shows what is live now.
+
+---
+
+## 7. Anti-patterns (NEVER)
+
+### Planning
+- Starting without an agreed plan
+- Taking a bead with unresolved dependencies
+- Changing DAG without notifying the user
+- Creating beads before PLAN is approved (beads are created in Step 3 of /task-init)
+- Coordinator reading raw source code (use strategy specs + sub-agent summaries instead)
+
+### Work
+- Starting without reading CONTEXT.md
+- Relying on chat memory
+- Working on multiple beads simultaneously
+- Ignoring checkpoints
+
+### Completion
+- Completing a bead without `bd comments add`
+- Completing without `bd close`
+- Committing with failing tests
+
+### Beadloom
+- Committing without `beadloom sync-check`
+- Hardcoding file paths instead of using `beadloom ctx`/`graph`
+- Skipping `beadloom reindex` after graph YAML changes
+- Ignoring `beadloom lint` violations
+
+> Language- and shell-specific anti-patterns live in the STACK section, composed
+> from `.beadloom/flow.yml` — they are not universal and the core does not claim
+> they are.
+
+---
+
+> **Need detailed instructions?** Slash skills: `/task-init` | `/coordinator` | `/templates` | `/checkpoint`.
+> Role subagents (`Agent` tool / follow the agent file inline): `explore` | `dev` | `test` | `review` | `tech-writer` — see §0.0.
+
+---
+
+## STACK (Python) — composed from `.beadloom/flow.yml`
+
+The core above is stack-neutral. These are this project's concrete commands and
+the anti-patterns that only mean something in Python.
+
+### Commands the completion checklist refers to
+
+```bash
+uv run pytest                      # 1. tests pass
+uv run ruff check src/ tests/      # 2. lint (same check as CI)
+uv run mypy src/                   # 2. types (strict)
+beadloom ci                        # the full pre-push Gate (rc 0 required)
+```
+
+### Anti-patterns (Python)
+
+- Using `Any` / `# type: ignore` without a stated reason
+- Leaving `print()` / `breakpoint()` — use logging
+- Bare `except:` without naming the exception type
+- `import *`
+- Mutable default arguments (`def f(x=[]):`)
+- `os.path` instead of `pathlib`; f-strings in SQL instead of `?` parameters;
+  `yaml.load` instead of `yaml.safe_load`
+
+### Anti-patterns (shell)
+
+- Using `cp`, `mv`, `rm` without `-f` (may hang on an interactive prompt)
+<!-- Проектный слой Bob для CLAUDE.md. beadloom композирует этот файл ПОСЛЕ своего ядра и
+     overlay'ев (`.beadloom/flow/claude/CLAUDE.md`), он переживает апгрейды и не считается
+     дрейфом в config-check. Правило слоя: он ДОПОЛНЯЕТ ядро и не может удалить из него ни
+     строки; там, где факт репозитория противоречит ядру, противоречие объявлено в
+     `.beadloom/flow.yml` → overlays.suppress (с причиной и условием снятия) и печатается
+     уведомлением в конце файла. Источник: BOB-112 срез .3 (2026-10-21). -->
+
+---
+
+# Проектный слой Bob — стоячие решения владельца и факты репозитория
+
+> Ядро выше — стек-нейтральная методология beadloom. Всё ниже — то, чего в ядре нет: факты
+> этого проекта, инженерные парадигмы, правила верификации, выстраданные на этом репозитории,
+> и как здесь на самом деле устроен git. Нумерация «П.N» намеренно повторяет разделы ядра, к
+> которым относится дополнение. Применяется ВСЕМИ ролями (`explore` / `dev` / `test` / `review`
+> / `tech-writer` / координатор) — субагент получает этот файл так же, как главный цикл.
+
+## П.0.1 Проект: авторитетные факты
+
+Auto-блок `project-info` выше — beadloom-генерируемый и грубый (строка `Stack:` обрезается
+форматтером, баг заведён в BDL-UX). Авторитетно:
+
+**Bob v1.0.0** (2026-08-18 — первый мажорный релиз: живой компаньон на VPS, память+EQ+самомодель,
+групповое присутствие, dev-конвейер из Telegram, CD по тегу) · Python 3.12+ (asyncio) · Telegram —
+`aiogram` 3.x (Bot API 10.1: rich/stream) · Tier-1 Qwen (облако), аварийный дублёр — локальный
+Ollama `qwen3:8b` (2026-08-12: выбран замером через шов Боба; `qwen2.5:7b` отвергнут — выплёвывал
+синтаксис вызова инструмента ТЕКСТОМ в реплику, `0.5b` галлюцинировал), эмбеддер `bge-m3` ·
+SQLite + FTS5 (no RAG/embeddings in P0) · pytest · ruff · mypy --strict.
+Архитектура: DDD-вертикали + shared kernel (`src/bob/kernel`), порядок вертикалей и правило
+размещения контрактов — `docs/architecture.md` (BOB-113). Полный стек и продуктовое направление:
+**`.claude/dev-docs/VISION.md`** + `ROADMAP.md`.
+
+**Инструменты как в CI.** `ci.yml` и `deploy-bob.yml` пинят **`beadloom==9.0.0`**; все артефакты
+beadloom в репозитории (роли, манифест, auto-блоки, сайт) пишутся **той же сборкой**:
+`uvx --from beadloom==9.0.0 beadloom …`. Editable-установка из `~/beadloom` — для разработки
+beadloom, не для артефактов Боба; «у меня зелено» локальной сборкой про CI ничего не доказывает.
+Бамп версии — осознанный коммит с замером на чистом индексе (BOB-112 BRIEF). Кросс-репо
+федерация (`beadloom export/federate` в списке команд ядра) здесь намеренно не используется —
+Bob один монолит, не федерация микросервисов.
+
+## П.0.2 Инженерные парадигмы (стоячая методология)
+
+> **Применяется ко ВСЕЙ работе, не к одному эпику.** Ценности владельца: максимальное качество,
+> честность, контроль, стиль, сопровождаемость, расширяемость, стабильность. Парадигмы —
+> равноправные, ни одна не опциональна.
+
+**Пирамида качества (приёмка снаружи-внутрь важнее юнитов изнутри-наружу):**
+
+```
+BDD acceptance (pytest-bdd + Gherkin .feature) — наблюдаемое поведение как исполняемый,
+                                                 человекочитаемый контракт (живая документация)
+Mutation gate  (mutmut, прицельно)             — измеряет СИЛУ ТЕСТОВ на чистых доменных ядрах
+TDD unit                                       — чистые ядра, детерминизм (test-first)
+DDD boundaries + Cohesion                      — структура: bounded contexts, одна именуемая ответственность
+```
+
+**Кто что держит** (роли `.claude/agents/`):
+- **dev** — TDD (test-first) · DDD-размещение · Cohesion (назови одну ответственность) · пишет
+  код, который переживает mutation и выражается как `.feature`.
+- **test** — TDD unit · **BDD** `.feature` для работы с поведением · **mutation**-гейт на
+  тронутом доменном ядре.
+- **review** — границы DDD · Cohesion (в обе стороны) · BDD-покрытие нового поведения ·
+  mutation-score.
+- **tech-writer** — сценарии `.feature` как живая документация поведения (ссылки из доменных доков).
+
+**🔴 Честный scoping (устойчивый — не правило, которое молча нарушают):**
+- **BDD `.feature`** — для работы с наблюдаемым поведением (фичи/эпики/багфиксы); чисто
+  механические chores могут пропустить. Сценарии выводятся из каталога сценариев PRD +
+  инвариантов; ассертят наблюдаемое поведение через границу (фейковый gateway/CLI), никогда —
+  приватное состояние. Живут в `tests/acceptance/{features,steps}/`.
+- **Mutation** — ТОЛЬКО чистые **доменные ядра** (детерминированные вердикты/политики/пороги);
+  НЕ адаптеры/LLM/async/gateway (медленно, недетерминированно, неинформативно). Прогон
+  **по срезу**, осознанно, **НЕ** в pre-commit (цена). Score **≥85 %** + явный триаж
+  эквивалентных мутантов (никогда не «паддить»). Слепые зоны mutmut (в т.ч. методы классов
+  с декоратором `@dataclass` — не мутируются вовсе) — `.claude/dev-docs/MUTATION.md`.
+- Харнесс репо-wide с BOB-066 Срез 0 (`pytest-bdd` + `mutmut`, `scripts/mutation.sh`).
 
 **🔴 Без полумер (решение владельца, 2026-10-21, BOB-112 → BOB-113):**
 - Красное от гейта чинится **структурно**, а не ярлыком: `exempt`, `severity: warn`, `skip`,
   «временно, until…» — это не фикс, а отложенный долг, и по умолчанию он **не выбирается**,
   даже если структурный фикс кратно дороже (50 импорт-сайтов — исходник для плана, а не
   аргумент против). Прецедент: 15 «циклов» 9.0.0 из type-only импортов под `TYPE_CHECKING` —
-  связь по контракту есть связь; контракты переезжают в `kernel`/`ports.py`, а не помечаются.
+  связь по контракту есть связь; контракты переехали в `kernel`/`ports.py` (BOB-113), а не
+  помечены.
 - Временная мера допустима только при **всех четырёх**: явное решение владельца · `until`
   с названным событием · беада на снятие · видимость (аннотация/warn, не тишина). Без любого
-  из них — не делать.
+  из них — не делать. Объявленные `overlays.suppress` в `.beadloom/flow.yml` — ровно эта форма:
+  причина, условие снятия, печать в каждом композированном файле.
 - Сначала ЗАМЕР: разделить «сдвиг вердикта инструмента» и «настоящий дефект» (чистый индекс,
   две версии инструмента на одном дереве, точные числа), потом чинить дефект — не вердикт.
 - Скрупулёзность — норма для всех ролей: кусачесть каждого нового теста доказана саботажем
   с именами покрасневших; у mutation — число мутантов и поимённый триаж выживших; гейты
-  перепроверяются на финальном дереве **релизной** сборкой инструмента (той же, что в CI).
-  Живёт в проектном слое `.beadloom/flow/claude/CLAUDE.md` — переживает апгрейды beadloom.
+  перепроверяются на финальном дереве **релизной** сборкой инструмента (той же, что в CI);
+  отчёт субагента — не доказательство, координатор перепроверяет сам.
 
----
-
-## 0.3 Правила верификации — 🔴 гейт умеет показывать зелёное, ничего не проверив
+## П.0.3 Правила верификации — 🔴 гейт умеет показывать зелёное, ничего не проверив
 
 > **Стоячее правило, не одного эпика.** За два дня работы гейты трижды отрапортовали
 > «чисто» о проверке, которой не было. Каждый пункт ниже — не теория, а случай из этого
@@ -189,7 +519,7 @@ DDD boundaries + Cohesion                     — structure: bounded contexts, o
 индексе врёт. Так цикл `memory ↔ conversation` прошёл сквозь всю верификацию, включая
 независимую перепроверку координатора, и был найден случайно через сутки. Гоняй так:
 ```bash
-rm -f .beadloom/beadloom.db && beadloom reindex && beadloom lint --strict
+rm -f .beadloom/beadloom.db && uvx --from beadloom==9.0.0 beadloom reindex && uvx --from beadloom==9.0.0 beadloom lint --strict
 ```
 (апстрим-баг beadloom, BDL-UX #142 — третье подтверждение в дикой природе)
 
@@ -225,7 +555,7 @@ find src tests -name __pycache__ -prune -exec rm -rf {} +
 называй **имена** покрасневших тестов — их из сломанного вызова не получить.
 
 **6. Смотри на ЧИСЛО мутантов, а не только на score.**
-100% на четырёх мутантах — фикция. Слепые зоны mutmut и как писать ядро, чтобы гейт был
+100 % на четырёх мутантах — фикция. Слепые зоны mutmut и как писать ядро, чтобы гейт был
 настоящим, — в `.claude/dev-docs/MUTATION.md` §«Порог и честность».
 
 **7. Заявленная mutation-цель вне scope = гейта нет.**
@@ -255,7 +585,7 @@ mutation-целью и оставить её в адаптере — значи�
 
 **11. Не ставь обратные кавычки в текст, который уходит через shell.**
 Внутри двойных кавычек `` `…` `` — это подстановка команды: shell ИСПОЛНИТ содержимое.
-В этой сессии так трижды: в комментарии беады выполнились `git update-ref` и `git branch -f`
+Так трижды за одну сессию: в комментарии беады выполнились `git update-ref` и `git branch -f`
 (main выжил случайно), в сообщении коммита — `add -A` и `git config --list`. Длинный текст
 всегда через файл: `bd comments add <id> "$(cat file)"`, `git commit -F file`. В самом файле
 обратные кавычки безопасны.
@@ -281,142 +611,25 @@ mutation-целью и оставить её в адаптере — значи�
   предмет → покраснело» доказывает лишь кусачесть. Отдельно нужен прогон «предмет сломан, а
   гарду подсунута правдоподобная фраза» — на нём гард обязан остаться красным.
 
-## 1. Skills — Dynamic Loading
+🔴 **Дополнено 2026-10-21 (BOB-113).** Ast-гард на циклы импортов был слеп к формам
+`from bob import social` и к относительным импортам — проверял форму кода (п.12), ревью поймало.
+Гард читает **все** формы импорта; то же слепое пятно есть у `beadloom lint` (заведено в BDL-UX).
+И: mutation-цель, попавшая в scope, но лежащая в классе с декоратором, прогоняет 0 мутантов —
+«28/28» надо перемерять по модулю, а не читать из `.meta`.
 
-**Slash skills (main loop):**
+## П.3 Документы: язык, шаблоны, спека и беада
 
-| Situation | Command | Description |
-|-----------|---------|-------------|
-| New work item | `/task-init` | Setup any type: epic, feature, bug, task, chore |
-| Parallel work | `/coordinator` | Orchestrate multi-agent waves (spawns role subagents) |
-| Need templates | `/templates` | PRD, RFC, CONTEXT, PLAN, ACTIVE, BRIEF |
-| Create checkpoint | `/checkpoint` | Format, rules |
+**Язык документов — русский.** Задан как `language: ru` в `.beadloom/flow.yml` (решение проекта
+2026-06-18): auto-блок `doc-language` выше печатает Russian, общие фрагменты ролей (`_writing`,
+`_rooms`, `_landing`, `_tracker`) приходят локализованными. Ядро `/task-init` в beadloom 9.0.0 тег
+языка не читает и по-прежнему говорит «English» — это расхождение объявлено в
+`overlays.suppress` (см. уведомление в конце файла) и заведено апстриму; правило проекта —
+русский, без исключений. Комментарии к беадам, чекпоинты, отчёты ревью — тоже по-русски.
 
-**Role subagents (via the `Agent` tool — see §0.0):** `dev` (TDD implementation), `test` (pytest, coverage), `review` (quality, read-only), `tech-writer` (doc refresh). Defined in `.claude/agents/<role>.md`. For a single small bead without orchestration, the main loop adopts a role inline by following its `.claude/agents/<role>.md`.
-
-**Rule:** Invoke a slash skill when you need detailed instructions; launch a role subagent (or follow its agent file inline) to do role work.
-
----
-
-## 2. Beads CLI — Essentials
-
-```bash
-# Available tasks (no blockers)
-bd ready
-bd ready --claim                  # atomically claim the next ready bead (1.0.4)
-
-# All tasks
-bd list
-
-# Details + history
-bd show <id>
-bd comments <id>
-
-# Claim task
-bd update <id> --status in_progress --claim
-
-# Add checkpoint (does NOT overwrite description)
-bd comments add <id> "checkpoint text"
-
-# Close task (--suggest-next shows newly unblocked beads; 1.0.4)
-bd close <id> --suggest-next
-
-# Dependency graph
-bd graph --all
-
-# Add dependency
-bd dep add <id> <depends-on-id>
-```
-
-**Multi-agent coordination (new in 1.0.4) — used by `/coordinator`:**
-- `bd swarm` — epic → DAG → waves (`create` / `validate` / `status`)
-- `bd gate` — async wait conditions (review→tech-writer; CI via `gh:run` / `gh:pr`)
-- `bd merge-slot` — serialize parallel merges (one agent merges at a time)
-
-**IMPORTANT:**
-- `bd comments add` — for checkpoints (preserves history)
-- `bd update --append-notes` — for notes
-- NEVER work on a task without `--claim`
-- ALWAYS close via `bd close`; `--suggest-next` lists *candidate* unblocked beads — **confirm with `bd ready`** (it may list still-blocked beads; verified bd 1.0.4 quirk, see BDL-UX-Issues #97)
-- `--session "$CLAUDE_SESSION_ID"` on close is optional (audit trail; only if the env var is set)
-
----
-
-## 2.1 Beadloom CLI — Essentials
-
-```bash
-# Agent context (start of session)
-beadloom prime                   # compact context for AI agent injection (<2K tokens)
-
-# Project structure (use instead of hardcoded paths)
-beadloom status                  # overview: nodes, edges, docs, coverage, trends
-beadloom graph                   # Mermaid architecture diagram
-beadloom ctx <ref-id>            # full context: code, docs, constraints
-beadloom ctx <ref-id> --json     # structured JSON for parsing
-beadloom search "<query>"        # FTS5 search across nodes and docs
-beadloom why <ref-id>            # impact analysis: upstream deps + downstream dependents
-
-# Validation (run before committing)
-beadloom reindex                 # rebuild index after code/graph changes
-beadloom sync-check              # check doc-code freshness (exit 2 = stale)
-beadloom lint --strict           # architecture boundary check (exit 1 = violation)
-beadloom doctor                  # graph integrity validation
-
-# Change tracking & visualization
-beadloom diff --since <git-ref>  # graph changes vs a git ref (exit 1 = changes) — use in the review role
-beadloom snapshot save           # snapshot architecture state; `snapshot compare <a> <b>` to diff
-beadloom link <ref-id> <url>     # link a graph node to an external tracker issue (GitHub/Jira)
-
-# (Cross-repo federation `beadloom export/federate` intentionally omitted — Bob is a single
-#  monolith, not a federated microservices product.)
-
-# Documentation
-beadloom docs generate           # generate doc skeletons from graph
-beadloom docs polish             # structured data for AI doc enrichment
-
-# Setup (one-time)
-beadloom init                    # initialize beadloom in a project
-beadloom setup-rules             # create IDE rules files referencing AGENTS.md
-beadloom setup-mcp               # configure MCP server for IDE
-beadloom setup-agentic-flow      # compose+write role adapters from .beadloom/flow.yml (ddd|fsd × stack, claude/cursor)
-beadloom install-hooks           # pre-commit (lint + sync-check + coherence) + pre-push Beadloom Gate (full `beadloom ci`)
-
-# After changing code
-# 1. beadloom reindex            — re-index changed files
-# 2. beadloom sync-check         — check if docs went stale
-# 3. If stale: update the doc, then beadloom reindex again
-# 4. beadloom lint --strict      — verify architecture boundaries
-```
-
-**IMPORTANT:**
-- NEVER hardcode file paths — use `beadloom ctx`/`graph`/`search` to discover structure
-- ALWAYS start sessions with `beadloom prime` for project context
-- ALWAYS run `beadloom sync-check` before committing
-- If sync-check reports stale docs, update them before proceeding
-
----
-
-## 3. File Memory (protection against auto-compaction)
-
-**Document language:** ALL project documents (PRD, RFC, CONTEXT, PLAN, ACTIVE, BRIEF) MUST be written in **Russian** (project decision, 2026-06-18). This project-level rule **overrides** the vendored `/task-init` + `/templates` skill files, which still say "English" (they are drift-guarded byte-identical copies of the upstream beadloom flow and cannot be edited without breaking `config-check`).
-
-**Adapting templates to Bob (the `/templates` skeletons are generic upstream — DO NOT copy their placeholder facts verbatim):** when scaffolding a doc, substitute this project's real facts — write content in **Russian**; **Python 3.12+** (not the template's "3.10+"); Bob's **DDD + Clean Architecture** layering (NOT the template's example "CLI → Core → Storage", which is a beadloom-CLI artifact); stack per §0.1 (Telegram / Ollama / SQLite+FTS5).
-
-```
-.claude/development/docs/features/{ISSUE-KEY}/
-├── PRD.md       <- REQUIREMENTS: business goals (epic/feature only)
-├── RFC.md       <- ARCHITECTURE: technical solution (epic/feature only)
-├── CONTEXT.md   <- CORE: state, decisions, standards (epic/feature only)
-├── PLAN.md      <- DAG: beads and dependencies (epic/feature only)
-├── BRIEF.md     <- COMBINED: problem + solution + plan (bug/task/chore only)
-└── ACTIVE.md    <- FOCUS: current work, progress (ALL types)
-```
-
-| Priority | File | When to read |
-|----------|------|--------------|
-| **P0** | CONTEXT.md | Always at the start |
-| **P0** | ACTIVE.md | Always at the start |
-| **P1** | beads comments | When resuming work |
+**Адаптация шаблонов `/templates` к Bob** (скелеты — generic апстрим, их плейсхолдеры **не
+копировать дословно**): контент по-русски; **Python 3.12+**; слоение Bob — **DDD-вертикали +
+shared kernel** (а не пример «CLI → Core → Storage» из шаблона, это артефакт beadloom-CLI); стек
+по П.0.1 (Telegram/aiogram · Qwen/Ollama · SQLite+FTS5).
 
 ### 🔴 Спека — источник, беада — состояние (правило добавлено 2026-08-13 по факту дрейфа)
 
@@ -449,255 +662,91 @@ Issues #56). Этот класс ловится глазами при закры
 🔴 Без трекера (клон Боба-кодера, раннер CI) три из четырёх проверок дают **SKIP с причиной**
 «согласованность НЕ ПРОВЕРЯЛАСЬ» — не `ERROR` и, что важнее, не молчаливое зелёное.
 
-**Rule:** NEVER rely on "memory" from chat. Read the files!
+## П.6 Git — как оно есть в этом репозитории
 
----
-
-## 4. Agent Roles
-
-| Role | How it runs | When to use |
-|------|-------------|-------------|
-| **Developer** | `agents/dev.md` (`subagent_type: dev`) | Implementing beads (TDD) |
-| **Reviewer** | `agents/review.md` (`subagent_type: review`) | Quality verification (read-only) |
-| **Tester** | `agents/test.md` (`subagent_type: test`) | Writing tests |
-| **Tech Writer** | `agents/tech-writer.md` (`subagent_type: tech-writer`) | Documentation updates |
-| **Coordinator** | `/coordinator` skill (main loop) | Multi-agent orchestration |
-
-### Single agent (one small bead, no orchestration)
-The main loop adopts the role inline by following `.claude/agents/<role>.md` directly; use `/checkpoint` for saving progress.
-
-### Multi-agent mode (default for epics/features)
-Coordinator MUST be activated before multi-bead work:
-1. Invoke `/coordinator` skill (main-loop only — see §0.0).
-2. Complete `/task-init` flow BEFORE creating any beads or writing code.
-3. Coordinator gets technical context through filtered sources (strategy specs, sub-agent summaries), NEVER reads raw source code directly.
-4. Coordinator launches roles as first-class subagents via the `Agent` tool (`subagent_type: dev|test|review|tech-writer`), tracked through `bd swarm` / `gate` / `merge-slot`.
-
-Roles are defined canonically in `.claude/agents/{dev,test,review,tech-writer}.md` (single source of truth; no slash-command wrappers).
-
----
-
-## 5. DAG and Priorities
-
-| Priority | Description | Rule |
-|----------|-------------|------|
-| **P0** | Critical, blocks others | Execute first |
-| **P1** | High, important | After P0 |
-| **P2** | Medium, improvements | When there is time |
-| **P3** | Low, nice-to-have | Last priority |
-
-**Rules:**
-- Only take from `bd ready`
-- Do NOT take a bead with unresolved dependencies
-- Do NOT take P2/P3 while P0/P1 exist
-
----
-
-## 6. Git — Trunk-based development
-
-`main` integrates via a PR — **по дисциплине, а не по правам.**
+`main` интегрируется через PR — **по дисциплине, а не по правам.**
 
 🔴 **Branch protection на этом плане недоступна**: API отвечает `403 Upgrade to GitHub Pro or make
-this repository public`. Прямой push в `main` технически проходит.
+this repository public`. Прямой push в `main` технически проходит. Фразы ядра про «branch-protected»
+и «REQUIRED status check» здесь не действуют — это объявлено в `overlays.suppress`, а
+`beadloom setup-branch-protection` на этом плане молча ничего не настраивает.
 
 🔴 **CI по PR ЕСТЬ (BOB-095, отгружено 2026-08-18) — но ИНФОРМАТИВНЫЙ, не required.**
-_Исправлено по факту: до BOB-095 в `.github/workflows` лежал только `deploy-site.yml` (+ с BOB-094
-`deploy-bob.yml`), и `beadloom ci` по PR не запускался — это было верно тогда._ Теперь на
-`pull_request → main` работает `ci.yml`: `uv sync --extra dev` → `ruff` + `mypy(src,tests)` →
-`pytest -rs` → `beadloom ci` на **чистом** индексе. Красный виден в PR. 🔴 Но branch protection
-недоступна → CI **не может БЛОКИРОВАТЬ мёрж**: это видимая проверка, а не required status check.
-Называть его «required»/«blocking» — то же желаемое-за-действующее, что мы правили в BOB-089.
-🔴 На раннере нет `bd`/базы трекера → процессный гейт `test_process_drift_gate` даёт **SKIP с
-причиной** (флаг `-rs` её печатает), не ERROR и не молчаливое зелёное — CI не читается как
-«согласованность проверена».
+На `pull_request → main` работает `ci.yml`: `uv sync --extra dev` → `ruff` + `mypy(src,tests)` →
+`pytest -rs` → `beadloom ci` на **чистом** индексе. Красный виден в PR, но не может
+**БЛОКИРОВАТЬ** мёрж. Называть его «required»/«blocking» — то же желаемое-за-действующее, что
+мы правили в BOB-089. 🔴 На раннере нет `bd`/базы трекера → процессный гейт
+`test_process_drift_gate` даёт **SKIP с причиной** (флаг `-rs` её печатает), не ERROR и не
+молчаливое зелёное — CI не читается как «согласованность проверена».
 
 🔴 **BOB-108 (2026-08-18): beadloom-гейт в CI полтора дня не проверял НИЧЕГО.** Шаг стоял под
 `continue-on-error`, потому что `beadloom reindex` падал нативно (exit 139, ноль вывода), — и
-прогон читался зелёным при аннотации о сегфолте внутри себя. Корень оказался не «окруженческий»,
-как гласил комментарий workflow, а конкретный: beadloom требует `tree-sitter>=0.23` **без верхней
-границы**, грамматики собраны под ABI 0.25, свежая установка тянет ядро 0.26.0 → крах на загрузке
-грамматики. Отсюда «локально работает, на раннере падает»: дело было не в раннере, а в **дате
-установки**. Устранено пином `uv tool install beadloom --with "tree-sitter<0.26"`; пять проверок
-(`reindex`/`lint --strict`/`sync-check`/`docs audit`/`doctor`) снова валят прогон, кусачесть
-доказана саботажем границы (правило назвалось, файл и строка, exit 1).
-🔴 **Что из гейта ИСКЛЮЧЕНО и почему:** `config-check` — и причина оказалась не той, что
-напрашивалась. Это **рассинхрон релиза beadloom**, а не дрейф наших файлов: Cohesion-параграф в
-`agents/{dev,review}.md` и раздел автономии в `commands/coordinator.md` вкодифицированы в **сами
-шаблоны ролей beadloom** (BDL-059) — они есть в `main` beadloom, но опубликованный на PyPI 2.1.0
-их не содержит, версию не бампили. Отсюда расхождение сред: локально beadloom стоит **из
-исходника** → `config-check` exit 0; в CI `uv tool install beadloom` тянет PyPI 2.1.0 → 3 drifted,
-exit 1. Поэтому `--fix` здесь **разрушителен** — он привёл бы файлы к СТАРЫМ шаблонам (42 удаления,
-0 добавлений, включая стоячую методологию §0.2).
-🔴 **У исключения есть условие окончания, и оно САМООБЪЯВЛЯЕТСЯ** (иначе застынет — урок Issues
-#59): когда `config-check` начнёт проходить, шаг сам печатает аннотацию «условие наступило, верни
-меня в блокирующий гейт». Условие, которое надо ПОМНИТЬ, — это тот же долг, только отложенный.
-🔴 **И ещё одно, замеренное на живом прогоне PR #138:** `continue-on-error` даёт шагу conclusion
-**`success`**, а его ошибка **не попадает в ANNOTATIONS** — «информативный красный» не виден
-никому, кто не открыл лог шага. Поэтому здесь `continue-on-error` не используется вовсе: шаг сам
-решает исход и печатает `::warning`. Если где-то ставишь `continue-on-error` ради «видимого
-красного» — проверь ANNOTATIONS, а не намерение.
-Апстриму заведено BDL-UX #151 (релиз) + #152 (проектного оверлея нет вовсе — `roles_templates_root()`
-резолвит фрагменты только внутри пакета; это структурная причина, по которой методологию пришлось
-нести в сам beadloom, а не держать оверлеем у себя).
-🔴 **Практический вывод для всех ролей:** локальный `beadloom` и CI-шный — **разные сборки**.
-«У меня зелено» про beadloom-гейт ничего не доказывает про CI, и наоборот.
-✅ **Закрыто в BOB-112 (2026-10-21).** Условие окончания наступило: релиз **9.0.0** несёт
-шаблоны BDL-059, `config-check` вернулся в блокирующий гейт, обходной шаг удалён. Отсюда
-дисциплина версий: `ci.yml` и `deploy-bob.yml` пинят **`beadloom==9.0.0`** (бамп — осознанный
-коммит с замером на чистом индексе), а все артефакты beadloom в этом репозитории (роли,
-манифест, auto-блоки, сайт) пишутся **той же сборкой**: `uvx --from beadloom==9.0.0 beadloom …`.
-Editable из `~/beadloom` — для разработки beadloom, не для артефактов Боба. Рукописная
-методология (§0.2, §0.3, русский язык документов) живёт в проектном слое `.beadloom/flow/`
-(тот самый оверлей, которого не было — BDL-UX #152 закрыт апстримом в 3.0.0), а не в самих
-`.claude/agents/*.md` — иначе `config-check` снова читает нас как дрейф.
-Замер перехода 2.1.0 → 9.0.0 на нетронутом графе (lint 0 → 36 находок, sync 0 → 2) и его
-разбор: `.claude/development/docs/features/BOB-112/BRIEF.md`.
-🔴 **Урок в копилку §0.3:** дыра в гейте была **задокументирована** — и потому выглядела
-решением, а не долгом. Комментарий «best-effort, окруженческая проблема, не логическая» читался
-как разбор, хотя корень не искали. Честная запись про отключённую проверку не перестаёт быть
-отключённой проверкой; у неё должен быть срок и беада, иначе она застывает.
+прогон читался зелёным при аннотации о сегфолте внутри себя. Корень: beadloom требовал
+`tree-sitter>=0.23` **без верхней границы**, грамматики собраны под ABI 0.25, свежая установка
+тянула ядро 0.26.0 → крах на загрузке грамматики. «Локально работает, на раннере падает» — дело
+было не в раннере, а в **дате установки**. Три урока, которые остались правилами:
+- дыра в гейте была **задокументирована** — и потому выглядела решением, а не долгом. Честная
+  запись про отключённую проверку не перестаёт быть отключённой проверкой; у неё должен быть
+  срок и беада, иначе она застывает (см. «Без полумер», П.0.2);
+- у исключения условие окончания **самообъявляется** (шаг сам печатает «условие наступило,
+  верни меня в гейт»), иначе его надо помнить — а это тот же долг, только отложенный;
+- `continue-on-error` даёт шагу conclusion **`success`**, и его ошибка **не попадает в
+  ANNOTATIONS** — «информативный красный» не виден никому, кто не открыл лог шага (замерено на
+  PR #138). Если где-то ставишь `continue-on-error` ради «видимого красного» — проверь
+  ANNOTATIONS, а не намерение.
+Хроника, чтобы не переоткрывать: до BOB-095 в `.github/workflows` лежал только `deploy-site.yml`
+(+ с BOB-094 `deploy-bob.yml`) и `beadloom ci` по PR не запускался вовсе. BOB-108 устранён пином
+`uv tool install beadloom --with "tree-sitter<0.26"`; пять проверок (`reindex`/`lint --strict`/
+`sync-check`/`docs audit`/`doctor`) снова валят прогон, кусачесть доказана саботажем границы
+(правило назвалось, файл и строка, exit 1). Из гейта тогда остался исключён `config-check` — и
+не из-за дрейфа наших файлов, а из-за **рассинхрона релиза beadloom**: Cohesion-параграф ролей и
+раздел автономии координатора были вкодифицированы в сами шаблоны beadloom (BDL-059), лежали в
+`main` beadloom, но PyPI 2.1.0 их не содержал → локально (сборка из исходника) exit 0, в CI —
+3 drifted; `--fix` был бы разрушителен (42 удаления, 0 добавлений, включая методологию §0.2).
+Апстриму заведены BDL-UX #151 (релиз) и #152 (проектного оверлея нет — методологию пришлось
+нести в сам beadloom).
+✅ Закрыто в BOB-112 (2026-10-21): релиз **9.0.0** несёт шаблоны BDL-059 (#151) и проектный слой
+(#152, появился в 3.0.0 — этот самый файл), `config-check` вернулся в блокирующий гейт,
+обходной шаг удалён, версии пинятся (П.0.1), рукописная методология живёт здесь, а не в
+`.claude/agents/*.md` — иначе `config-check` снова читает нас как дрейф. Замер перехода
+2.1.0 → 9.0.0 на нетронутом графе (lint 0 → 36 находок, sync 0 → 2; после семантики 6.0 —
+925 строк, из них 904 — 15 пар type-only циклов → BOB-113) и разбор —
+`.claude/development/docs/features/BOB-112/BRIEF.md`.
 
 Что реально держит `main`: дисциплина ветки на эпик, перепроверка гейтов координатором на
 финальном состоянии дерева (каждую волну), **видимый CI по PR** (BOB-095, с работающим
-арх-гейтом — BOB-108) и pre-push хук
-**в основном репозитории** — он работает, когда пушит человек или координатор, но 🔴 НЕ работает на
-ветке Боба: её пушит процесс Боба, а он с BOB-089 хуков не исполняет (иначе хук модели был бы
-неотличим от хука владельца).
+арх-гейтом — BOB-108) и pre-push хук **в основном репозитории** — он работает, когда пушит
+человек или координатор, но 🔴 НЕ работает на ветке Боба: её пушит процесс Боба, а он с BOB-089
+хуков не исполняет (иначе хук модели был бы неотличим от хука владельца).
 
-```
-Trunk-based flow:
-1. Branch off main:   git switch -c features/{ISSUE-KEY}
-2. Commit per wave    onto features/{ISSUE-KEY} (dev → test → review → tech-writer)
-3. ONE PR to main     per epic/feature (or shippable slice) — not one PR per commit
-4. The PR triggers     the AI tech-writer (commits its doc refresh INTO the PR branch) +
-                       CI по PR (BOB-095): ruff/mypy/pytest -rs/beadloom ci на чистом индексе.
-                       🔴 CI ИНФОРМАТИВНЫЙ, не required (branch protection недоступна) —
-                       координатор всё равно перепроверяет гейты на финальном дереве
-5. Merge when green    мёржит человек/координатор — после того, как гейты перепроверены
-                       НА ФИНАЛЬНОМ дереве и доки обновлены. «Зелёный CI» здесь не
-                       гарантия, а описание того, чего пока нет
-```
+Мёржит человек/координатор — после того, как гейты перепроверены **на финальном дереве**
+релизной сборкой и доки обновлены. «Зелёный CI» здесь не гарантия, а описание того, чего пока
+нет. Коммиты и PR — с префиксом `[{ISSUE-KEY}]` по формату ядра; длинное сообщение — через
+файл (`git commit -F`), см. П.0.3 п.11.
 
-```
-Commit format:
-[{ISSUE-KEY}] <type>: <description>
-
-Types: feat, fix, refactor, docs, test, chore
-
-Example:
-[MCP-001] feat: add health endpoint
-```
-
-🔴 `beadloom setup-branch-protection` на этом плане **не работает** — `403 Upgrade to Pro`.
-Команда описана в апстрим-доке beadloom и годится для публичного репозитория или платного
-плана; здесь она молча ничего не настраивает. Пока защита недоступна, называем вещи своими
-именами: `main` держится дисциплиной и перепроверкой, а не правами.
-
----
-
-## 7. Anti-patterns (NEVER)
-
-### Planning
-- Starting without an agreed plan
-- Taking a bead with unresolved dependencies
-- Changing DAG without notifying the user
-- Creating beads before PLAN is approved (beads are created in Step 3 of /task-init)
-- Coordinator reading raw source code (use strategy specs + sub-agent summaries instead)
-
-### Work
-- Starting without reading CONTEXT.md
-- Relying on chat memory
-- Working on multiple beads simultaneously
-- Ignoring checkpoints
-
-### Completion
-- Completing a bead without `bd comments add`
-- Completing without `bd close`
-- Committing with failing tests
-
-### Beadloom
-- Committing without `beadloom sync-check`
-- Hardcoding file paths instead of using `beadloom ctx`/`graph`
-- Skipping `beadloom reindex` after graph YAML changes
-- Ignoring `beadloom lint` violations
+## П.7 Анти-паттерны Bob (сверх ядра)
 
 ### Shell
-- Using `cp`, `mv`, `rm` without `-f` flag (may hang on interactive prompts)
 - 🔴 **`uv run ruff format` на этом дереве** — репозиторий НЕ format-clean, и команда
   переписывает посторонние файлы (замечено в BOB-096: 12 файлов вне зоны работы). Форматирование
   проверяет и требует только `ruff check`; массовый `format` — отдельное решение отдельной
   работой, а не побочный эффект чужой волны.
+- Обратные кавычки в тексте, уходящем через shell (комментарий беады, сообщение коммита) —
+  П.0.3 п.11: только через файл.
+- `git checkout -- <файл>` как способ снять саботаж в незакоммиченной волне — П.0.3 п.9.
 
-### Code
-- Using `Any` / `# type: ignore` without reason
-- Leaving `print()` / `breakpoint()`
-- Writing code without a test (TDD violation)
-- Bare `except:` without specifying exception type
-- `import *`
-- Mutable default arguments (`def f(x=[]):`)
-
----
-
-## 8. Quick Reference
-
-### Session start
-```bash
-beadloom prime                        # project context
-bd ready
-bd update <id> --status in_progress --claim
-beadloom ctx <ref-id>                 # architecture context for the area
-# Read CONTEXT.md, ACTIVE.md (if epic)
-# Confirm to user
-```
-
-### During work
-```bash
-# Every 30 min
-bd comments add <id> "CHECKPOINT: ..."
-# Update ACTIVE.md
-```
-
-### Completing bead
-```bash
-uv run pytest
-bd comments add <id> "COMPLETED: ..."
-bd close <id> --suggest-next          # shows newly unblocked beads
-```
-
-### New work item
-```
-/task-init
-```
-
-### Need templates
-```
-/templates
-```
+### Процесс
+- Волна без спеки (папка `features/{ISSUE-KEY}/` с комплектом по типу) — П.3.
+- `exempt` / `severity: warn` / `until` как способ погасить красный гейт без решения владельца
+  и без всех четырёх условий — П.0.2 «Без полумер».
+- Гейт на несвежем индексе, mutation-цель вне scope, гард по форме кода, отчёт субагента как
+  доказательство — П.0.3 пп.1, 7, 12, 8.
 
 ---
 
-## 9. Agent Checklist
+## Project rule suppressions (declared in `.beadloom/flow.yml`)
 
-### At start
-- [ ] `beadloom prime` -> project overview
-- [ ] `bd ready` -> selected a task
-- [ ] `bd update <id> --status in_progress --claim`
-- [ ] `beadloom ctx <ref-id>` -> architecture context
-- [ ] Read CONTEXT.md and ACTIVE.md (if epic)
-- [ ] Confirmed understanding to user
+The core rules below are stood down **in this project only**. The core text above is unchanged — a suppression is a declaration, never a deletion — and each one names its reason and its exit condition.
 
-### During work
-- [ ] Updating ACTIVE.md
-- [ ] Checkpoint in beads every 30 min
-- [ ] Following TDD (if code)
-
-### At completion
-- [ ] Tests pass
-- [ ] `bd comments add` — final checkpoint
-- [ ] `bd close <id>`
-- [ ] ACTIVE.md cleaned
-
----
-
-> **Need detailed instructions?** Slash skills: `/task-init` | `/coordinator` | `/templates` | `/checkpoint`.
-> Role subagents (`Agent` tool / follow the agent file inline): `dev` | `test` | `review` | `tech-writer` — see §0.0.
+- Git — Trunk-based development: в CLAUDE.md §6 ядро утверждает «main is branch-protected», «beadloom ci is a REQUIRED status check» и что setup-branch-protection настраивает защиту — в этом репозитории всё три не действуют: репозиторий приватный на плане GitHub Free, API защиты ветки и rulesets отвечают «403 Upgrade to GitHub Pro or make this repository public»; main держится дисциплиной PR, перепроверкой гейтов координатором на финальном дереве и видимым (не required) CI по PR — раздел П.6 проектного слоя (until репозиторий станет публичным или план — GitHub Pro: тогда выполняется beadloom setup-branch-protection и эта запись снимается)
+- Template rules: в /task-init ядро 9.0.0 пишет «ALL documents MUST be in English» и «(in English)» в чеклисте, хотя язык документов задан здесь как language: ru и auto-блок doc-language в CLAUDE.md уже печатает Russian — ядро task-init тег языка не читает, расхождение внутри самого beadloom (BDL-UX); в этом проекте все документы по-русски, остальные пункты раздела (статусы, формат метаданных) действуют (until ядро /task-init в beadloom читает language из flow.yml и печатает тот же язык, что auto-блок doc-language)

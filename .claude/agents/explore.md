@@ -67,182 +67,191 @@ Every node carries one responsibility a phrase can name, and the project holds t
 
 Return the section(s) and nothing else. No preamble, no closing summary. `/task-init` pastes what you return into the work item's document, so anything that is not the section is something a person has to delete.
 
-<!-- Shared by every role. Edit once, here — not in a role file. -->
+<!-- Общий фрагмент для всех ролей. Правьте здесь, а не в файле роли. -->
 
-## Writing standard (every role that writes a document)
+## Стандарт письма (для каждой роли, которая пишет документы)
 
-The text you ship is part of the deliverable. It applies to the documents you
-produce — PRD, RFC, CONTEXT, PLAN, BRIEF, SPEC, README, review report, bead
-comment — not only to the ones the tech-writer touches.
+Текст, который вы сдаёте, — часть результата. Стандарт распространяется на все
+документы, которые вы создаёте: PRD, RFC, CONTEXT, PLAN, BRIEF, SPEC, README,
+отчёт ревью, комментарий к бусине, — а не только на те, которые правит
+технический писатель.
 
-**What is checkable, and is checked.** `beadloom lint` reports these; do not wait
-for it to tell you.
+**Что проверяется автоматически.** Эти пункты выдаёт `beadloom lint`; не ждите,
+пока он о них напомнит.
 
-- **A goal carries a measurable clause.** "Make it better" is not a goal; "the
-  core shrinks from 440 to 376 lines" is.
-- **A decision carries its reason, and the reason explains *why*** rather than
-  restating the decision. "We chose X because X is better" is not a reason.
-- **A risk carries a concrete mitigation.** "Monitor it" is not a mitigation.
-- **An approved document carries no `Pending` open question.** A plan approved
-  with its design undecided is a plan that has not been made.
-- **No template placeholder survives** — `[Name]`, `Criterion 1`, `TBD`. An
-  artifact that was scaffolded, looks right and was never filled in is the most
-  expensive kind of wrong.
+- **У цели есть измеримая формулировка.** «Сделать лучше» — не цель;
+  «ядро сокращается с 440 строк до 376» — цель.
+- **У решения есть причина, и причина объясняет «почему»**, а не пересказывает
+  само решение. «Выбрали X, потому что X лучше» — не причина.
+- **У риска есть конкретная мера снижения.** «Следить за этим» — не мера.
+- **В утверждённом документе не остаётся открытых вопросов со статусом
+  `Pending`.** План, утверждённый с нерешённым проектным вопросом, — это план,
+  который ещё не составлен.
+- **Ни один шаблонный placeholder не доживает до готового документа** —
+  `[Name]`, `Criterion 1`, `TBD`. Артефакт, который создали по шаблону, который
+  выглядит правильным и который никто не заполнил, — самая дорогая ошибка.
 
-**What is not checkable, and is still required.**
+**Что не проверяется автоматически и всё равно обязательно.**
 
-- **An open question states both sides of the trade-off**, not only the side
-  you took. A non-goal names what was rejected **and why**.
-- **Claims carry numbers and the word *measured*, not adjectives.** "Much
-  faster" is not a result; "755 ms, measured on a full reindex" is.
-- **No filler and no framing** — no bureaucratic padding, no apologetic or
-  persuasive section intros. Headings are neutral and descriptive.
-- **Full sentences.** Do not stitch two independent clauses with a semicolon;
-  write two sentences.
-- **Consistent terminology** across a document, and unambiguous pronouns.
-- **No translationese or calque**, and no clipped slang abbreviation — write the
-  full word. Do not switch languages mid-sentence: Latin script is for genuine
-  tool, method and command terms only.
-- **Every claim is verified against the code.** Describe what exists, never what
-  you assume it does.
-- **Lines wrap around 95 columns**, so a diff stays reviewable.
+- **Открытый вопрос описывает обе стороны компромисса**, а не только выбранную.
+  Раздел о том, что вне рамок, называет отвергнутый вариант **и причину отказа**.
+- **Утверждения опираются на числа и на слово «измерено», а не на прилагательные.**
+  «Намного быстрее» — не результат; «755 мс, измерено на полной переиндексации» —
+  результат.
+- **Никакой воды и никаких вводных оборотов** — ни канцелярита, ни извиняющихся
+  или убеждающих вступлений к разделам. Заголовки нейтральные и описательные.
+- **Полные предложения.** Не соединяйте два самостоятельных предложения точкой с
+  запятой — напишите два предложения.
+- **Единая терминология** внутри документа и однозначные местоимения.
+- **Никаких калек и никаких обрезанных разговорных сокращений** — пишите слово
+  целиком: «документация», а не «доки»; «репозиторий», а не «репо»;
+  «конфигурация», а не «конфиг». Не переключайте язык внутри предложения:
+  латиница — только для настоящих названий инструментов, методов и команд.
+- **Каждое утверждение проверено по коду.** Описывайте то, что есть, а не то,
+  что вы предполагаете.
+- **Строки переносятся примерно на 95 колонке**, чтобы диф оставался читаемым.
 
-**The document language is configuration.** It comes from `language:` in
-`.beadloom/flow.yml`, not from this file and not from your preference.
-<!-- Shared by every role that reports a measurement. Edit once, here — not in a role file. -->
+**Язык документов — это конфигурация.** Он берётся из поля `language:` в
+`.beadloom/flow.yml`, а не из этого файла и не из ваших предпочтений.
+<!-- Общий фрагмент для всех ролей, которые сообщают результат измерения. Правится здесь, один раз. -->
 
-## Rooms — a measurement is true of the room it was taken in
+## Среда измерения — результат верен для той среды, в которой он получен
 
-A verdict that does not name its room gets read as a claim about the product. That has been
-measured four times: nine "green on the tree" reports taken on one platform against CI legs on
-another, where the tenth measurement was red on six of them; fifteen tests that skip on Linux
-and do not skip on macOS; a type check run against one interpreter locally and four in CI,
-where an unnecessary suppression became a red pull request in eighteen seconds; and a
-clean-room verdict that was correct and could not see the bead running beside it.
+Вердикт, не назвавший свою среду, читают как утверждение о продукте. Это измерено четыре
+раза: девять отчётов «зелено на дереве», снятых на одной платформе, тогда как легы CI идут на
+другой, — и десятое измерение оказалось красным на шести из них; пятнадцать тестов, которые
+пропускаются на Linux и не пропускаются на macOS; проверка типов против одного интерпретатора
+локально и четырёх в CI, где лишнее подавление стало красным pull request за восемнадцать
+секунд; и вердикт из чистой комнаты, который был верен и не мог увидеть бид, работавший рядом.
 
-**Naming the room does not make a verdict stronger. It makes it answerable** — a reader can
-see which rooms the run covers and which it does not. Do not write that a room-naming verdict
-is a better one. It is the same verdict, attributed.
+**Названная среда не делает вердикт сильнее. Она делает его проверяемым** — читатель видит,
+какие среды прогон покрывает, а какие нет. Не пишите, что вердикт с названной средой лучше:
+это тот же вердикт, у которого есть адрес.
 
-- `beadloom rooms` lists the rooms this project **declares** — the supported interpreters from
-  its packaging metadata, the legs from its CI workflows — the room you are in, and the ones
-  your run did not enter. The list is derived from those declarations, so a leg added later is
-  covered without anyone editing a checklist.
-- `beadloom rooms --dimension <axis>` prints one axis, one value per line: the form a command
-  loops over instead of a spelled-out list that goes stale.
-- `beadloom ci` prints the room beside its verdict, and the MCP `complete_bead` tool carries it
-  on the verdict a bead is closed on.
-- Report a measurement in the words that say which one you made. **"green in a clean room over
-  N files"**, **"green on the tree"** and **"green on <leg>"** are three different claims;
-  reporting them with one word is what makes a later discrepancy read as a contradiction.
+- `beadloom rooms` перечисляет среды, которые проект **объявляет**: поддерживаемые
+  интерпретаторы из метаданных пакета, легы из воркфлоу CI, — среду, в которой вы находитесь, и
+  те, в которые ваш прогон не заходил. Список выводится из этих объявлений, поэтому лег,
+  добавленный позже, попадает в него без правки чек-листа.
+- `beadloom rooms --dimension <ось>` печатает одну ось, по значению на строку: форма, по которой
+  команда идёт циклом вместо перечисленного вручную списка, который устаревает.
+- `beadloom ci` печатает среду рядом со своим вердиктом, а инструмент MCP `complete_bead` несёт
+  её на том вердикте, по которому закрывается бид.
+- Сообщайте измерение теми словами, которые говорят, какое именно оно. «зелено в чистой комнате
+  на N файлах», «зелено на дереве» и «зелено на <леге>» — три разных утверждения; сообщённые
+  одним словом, они превращают позднее расхождение в противоречие.
 
 <!-- beadloom:carries=clean-room -->
 
-**The clean room, and what it cannot see.** Verifying in a clean room is correct and is blind
-by construction to any interaction with a bead running beside you — four agents once each
-reported green on a tree that was red, and none of them was wrong. State that limit where you
-state the result, and leave the combined tree to the wave's gate owner rather than writing a
-sentence that implies you covered it.
+**Чистая комната и то, чего она не видит.** Проверка в чистой комнате верна и по построению
+слепа к любому взаимодействию с бидом, который идёт рядом с вами: четыре агента однажды
+сообщили зелено каждый, а дерево было красным, и никто из них не ошибся. Называйте это
+ограничение там же, где называете результат, и оставляйте объединённое дерево владельцу гейта
+волны, а не пишите фразу, из которой следует, что вы его покрыли.
 
-- **Build the room with `beadloom clean-room <bead-id> --at <dir> --carry <path>...`.** The
-  command takes the room's directory from the bead, so two agents of one wave cannot be handed
-  the same one, and it CREATES that directory rather than entering it: a directory it did not
-  build is refused, so nothing inside a room postdates the room. It copies HEAD plus the files
-  you name and nothing else — on a shared tree, "everything that differs" is your neighbour's
-  work as well as yours. `--rebuild` replaces a room this command built, at the price of
-  retyping the whole `--carry` list, which is friction nobody has removed yet.
-- **The room holds the environment its verdict is taken under.** It builds its own interpreter,
-  installs the project into it and records what it installed, so a verdict is not decided by
-  what the machine happened to hold. `--extras` names a different set, for reproducing one
-  particular leg, and `--no-environment` builds no interpreter at all — which hands the
-  measurement back to the project's own environment and is a fact to report, not a default to
-  take. Read the exit code: 1 is a usable room with something about its measurement
-  unconfirmed, and that finding belongs in your report; 2 is no room at all, and the directory
-  is left exactly as it was found.
-- **The room is named `room-<bead-id>`, the name `beadloom waves` prints beside each bead, and
-  the name is only half of it.** Two agents once each built a room called `cleanroom` under one
-  shared session scratchpad, and one of them measured over its neighbour's untracked files and
-  got a result that looked exactly like a correct clean room. A room whose name cannot say
-  whose it is is a shared directory with a reassuring name — and a correct name isolates the
-  files and not the interpreter, which is why one command owns both.
-- **The wave's gate owner measures the combined tree; everyone else reports their own room
-  only.** `beadloom waves` names the owner for every wave, including a wave of one. If you are
-  not the owner, do not write a sentence that implies you covered the tree; if you are, say
-  "green on the tree" as a claim separate from your own room's.
-<!-- Shared by every role that lands a commit in a tree it shares. Edit once, here. -->
+- **Стройте комнату командой `beadloom clean-room <bead-id> --at <dir> --carry <path>...`.**
+  Команда берёт каталог комнаты из бида, поэтому двум агентам одной волны не может достаться
+  один и тот же, и она СОЗДАЁТ этот каталог, а не входит в него: каталог, который она не
+  строила, отвергается, поэтому ничто внутри комнаты не появилось позже самой комнаты. Она
+  копирует HEAD плюс те файлы, которые вы назвали, и ничего больше: на общем дереве «всё, что
+  отличается» — это и работа соседа тоже. `--rebuild` заменяет комнату, построенную этой же
+  командой, ценой повторного набора всего списка `--carry`, и это трение пока никто не убрал.
+- **Комната держит окружение, в котором взят её вердикт.** Она строит собственный интерпретатор,
+  ставит в него проект и записывает, что именно поставила, поэтому вердикт не решается тем, что
+  случайно оказалось на машине. `--extras` называет другой набор — чтобы воспроизвести один
+  конкретный лег, — а `--no-environment` не строит интерпретатора вовсе, то есть возвращает
+  измерение в окружение самого проекта: это факт, который сообщают, а не умолчание, которое
+  принимают. Читайте код возврата: 1 — комната пригодна, но что-то в её измерении не
+  подтверждено, и эта находка идёт в ваш отчёт; 2 — комнаты нет вовсе, а каталог оставлен ровно
+  таким, каким был найден.
+- **Комната называется `room-<bead-id>` — это имя `beadloom waves` печатает рядом с каждым
+  бидом, — и имя это только половина дела.** Два агента однажды создали каждый свою комнату с
+  именем `cleanroom` в одном общем скретчпаде сессии, и один из них снял измерение поверх
+  неотслеживаемых файлов соседа и получил результат, неотличимый от корректной чистой комнаты.
+  Комната, чьё имя не может сказать, чья она, — это общий каталог с успокаивающим именем; а
+  верное имя изолирует файлы, но не интерпретатор, поэтому обоим владеет одна команда.
+- **Объединённое дерево измеряет владелец гейта волны; остальные сообщают только про свою
+  комнату.** `beadloom waves` называет владельца для каждой волны, в том числе для волны из
+  одного бида. Если вы не владелец, не пишите фразу, из которой следует, что вы покрыли дерево;
+  если владелец — говорите «зелено на дереве» отдельным утверждением от вердикта своей комнаты.
+<!-- Общий фрагмент для каждой роли, которая делает коммит в общем дереве. Правьте здесь. -->
 
-## The landing lock — what it grants, and what it does not
+## Замок посадки — что он даёт и чего не даёт
 
 <!-- beadloom:carries=landing-lock -->
 
-Two things keep concurrent agents out of each other's work, and they are not the same
-thing. **What keeps two agents out of one FILE is the disjoint scopes `beadloom waves`
-derived** for the beads of a wave. **What keeps two commits from interleaving is the merge
-slot** — and only in the call form that grants it.
+Две вещи удерживают параллельных агентов от столкновения, и это разные вещи. **От
+одновременной правки одного ФАЙЛА защищают непересекающиеся области**, которые
+`beadloom waves` вывела для бидов волны. **От чередования коммитов защищает merge-slot** —
+и только в той форме вызова, которая это даёт.
 
-The distinction is not pedantry. Conflating the two was found twice, independently, nine days
-apart, by two agents that had never met, and in between three sets of concurrent waves ran
-believing they held a lock that granted nothing. Those commits did not collide because the file
-sets were disjoint — which is the property the lock exists so that nobody has to rely on.
+Различие не педантичное. Смешение этих двух гарантий обнаружили дважды и независимо, с
+разницей в девять дней, два агента, которые не пересекались; между этими датами трижды шли
+параллельные волны в уверенности, что держат замок, который не давал ни одной из них. Те
+коммиты не столкнулись потому, что наборы файлов не пересекались, — а это ровно то свойство,
+ради которого замок и существует.
 
-Measured on bd 1.0.4: the slot itself is sound. `acquire` on a held slot exits 1, and of 32
-simultaneous acquires across four rounds exactly one won each round. What granted nothing was
-the way this flow asked for it.
+Измерено на bd 1.0.4: сам примитив исправен. `acquire` на занятом слоте возвращает код 1, и
+из 32 одновременных попыток в четырёх раундах побеждала ровно одна за раунд. Ничего не давал
+способ, которым этот поток его запрашивал.
 
-- **Name the holder, and name it with your bead's id.** The default holder is the tracker
-  actor — `$BEADS_ACTOR`, then `git user.name`, then `$USER` — which is ONE identity for
-  every role on one machine, so the slot cannot tell a neighbour's hold from your own. With
-  `--holder <bead-id>` the holder names a bead, and a bead has a status you can check.
-- **Read the exit code; there is nothing else to read.** A non-zero exit means you do NOT
-  hold the slot. Retry, or land later, but do not commit.
-- **Do not ask it to wait.** The `--wait` flag appends you to a queue that nothing drains and
-  returns at once. Nothing removes a waiter either, so the queue accumulates identities from
-  sessions that ended weeks ago. If you want to wait, write the loop and give it a bound.
-- **Release with your holder.** A release that names no holder frees whoever holds the slot,
-  including a live neighbour, and reports success. bd checks the holder only when you pass
-  one.
+- **Называйте владельца, и называйте его идентификатором своего бида.** По умолчанию
+  владелец — актор трекера (`$BEADS_ACTOR`, затем `git user.name`, затем `$USER`), то есть
+  ОДНА личность для всех ролей на одной машине: слот не отличит захват соседа от вашего
+  собственного. С `--holder <bead-id>` владельцем становится бид, а у бида есть статус,
+  который можно проверить.
+- **Читайте код возврата, читать больше нечего.** Ненулевой код означает, что слот НЕ ваш.
+  Повторите попытку или садитесь позже, но не коммитьте.
+- **Не просите его ждать.** Флаг `--wait` дописывает вас в очередь, которую никто не
+  разбирает, и возвращает управление сразу. Ожидающих оттуда тоже никто не удаляет, поэтому
+  очередь копит личности из давно закончившихся сессий. Нужно ждать — напишите цикл и
+  ограничьте его.
+- **Освобождайте с указанием владельца.** Освобождение без владельца снимает чужой захват,
+  в том числе живого соседа, и рапортует об успехе. bd сверяет владельца только тогда,
+  когда вы его передали.
 
 ```bash
-bd merge-slot acquire --holder <bead-id>   # exit 0 means you hold it; anything else means you do not
-# ... stage your own files by path, then commit ...
-bd merge-slot release --holder <bead-id>   # the only release form bd verifies
+bd merge-slot acquire --holder <bead-id>   # 0 — слот ваш; любой другой код — не ваш
+# ... добавьте в индекс только свои файлы по путям, затем коммит ...
+bd merge-slot release --holder <bead-id>   # единственная форма освобождения, которую bd сверяет
 ```
 
-**And say which guarantee you are leaning on.** If you land while a neighbour is editing, the
-slot ordered your commits and nothing ordered your edits. That is the wave plan's job, and
-`beadloom waves` reports it as the `landing-order` medium on every plan, at every size.
-<!-- Shared by every role that reads an answer from the tracker. Edit once, here. -->
+**И говорите, на какую из двух гарантий вы опираетесь.** Если вы делаете коммит, пока сосед
+правит, слот упорядочил ваши коммиты и ничто не упорядочило ваши правки. Это задача плана
+волн, и `beadloom waves` сообщает её как среду `landing-order` в каждом плане любого размера.
+<!-- Общий фрагмент для каждой роли, которая читает ответ трекера. Правьте здесь. -->
 
-## The tracker's answers — each covers a population, and it is not the one you asked for
+## Ответы трекера — каждый покрывает свою выборку, и это не та, о которой вы спросили
 
 <!-- beadloom:carries=tracker-answers -->
 
-`bd` answers three of this flow's most-used questions with a population that is narrower or
-wider than the question named, and no answer has room to say so. Measured on bd 1.0.4, streams
-read separately and exit codes read without a pipe.
+На три самых частых вопроса этого потока `bd` отвечает выборкой уже или шире той, которую
+назвал вопрос, и сказать об этом ответу негде. Измерено на bd 1.0.4, потоки читались
+раздельно, коды возврата — без конвейера.
 
-- **`bd list --all` is the form that names the whole tracker.** Without it there are TWO
-  default filters and bd announces exactly one of them: the status filter omits every closed
-  bead and is silent on stdout AND stderr — 55 rows of 842 on this project's own tracker —
-  while the 50-row cap does print `Showing 50 issues; …`, on stderr, where a consumer that
-  merged its streams has already destroyed its own JSON.
-- **`bd ready --limit 0` is the form that returns every ready bead.** The default caps at 100
-  and says so on stderr only: 100 of 120 over a rig grown past it. This flow treats that
-  answer as authoritative, so it is the assumption every other one rests on.
-- **`bd close <bead-id> --suggest-next` produces CANDIDATES, never a work queue.** It names
-  beads the closed one blocked without checking whether other blockers remain. Measured over
-  twenty-three dependency shapes in twenty-three separate rigs, it named a still-blocked bead
-  in sixteen of them. The ready list was correct in all twenty-three.
+- **`bd list --all` — форма, которая называет весь трекер.** Без неё действуют ДВА фильтра
+  по умолчанию, и об одном из них bd не сообщает вовсе: фильтр статуса убирает все закрытые
+  биды и молчит и в stdout, и в stderr — 55 строк из 842 на трекере самого проекта, — тогда
+  как ограничение в 50 строк печатает `Showing 50 issues; …` в stderr, где потребитель,
+  слепивший оба потока, уже разрушил собственный JSON.
+- **`bd ready --limit 0` — форма, которая возвращает все готовые биды.** По умолчанию
+  ограничение равно 100 и сообщается только в stderr: 100 из 120 на стенде, выращенном выше
+  порога. Этот поток считает такой ответ авторитетным, так что на этом допущении держатся
+  все остальные.
+- **`bd close <bead-id> --suggest-next` даёт КАНДИДАТОВ, а не очередь работ.** Команда
+  называет биды, которые закрытый блокировал, не проверяя, остались ли другие блокировки.
+  Измерено на двадцати трёх формах зависимостей в двадцати трёх отдельных стендах: в
+  шестнадцати она назвала бид, который всё ещё заблокирован. Список готовых бидов был прав
+  во всех двадцати трёх.
 
 ```bash
-bd close <bead-id> --suggest-next   # candidates; some of these can still be blocked
-bd ready --limit 0                  # authoritative, and --limit 0 because the default caps at 100
+bd close <bead-id> --suggest-next   # кандидаты; часть из них может быть ещё заблокирована
+bd ready --limit 0                  # авторитетно, и --limit 0 потому, что по умолчанию порог 100
 ```
 
-**Report the population you actually got, not the one you asked about.** A count taken from a
-filtered view is a claim about the filter. `beadloom bd-calls` derives every place this project
-reaches `bd` and states what each call form assumes about the answer; a site it calls
-`unsecured` is one whose answer can be narrower than it reads.
+**Сообщайте ту выборку, которую получили, а не ту, о которой спрашивали.** Число, снятое с
+отфильтрованного среза, — утверждение о фильтре. `beadloom bd-calls` выводит каждое место, где
+проект обращается к `bd`, и называет, что каждая форма вызова допускает об ответе; сайт с
+вердиктом `unsecured` — тот, чей ответ может оказаться уже, чем читается.
 
 <!-- overlay:ddd — what the Node column names in a DDD graph, and when a route stops fitting. -->
 ## ARCHITECTURE (Domain-Driven Design)
@@ -269,3 +278,12 @@ beadloom impact src/pkg/module.py --json         # the same computation, for a t
 - `--root` narrows the tree that is swept; the default is derived from the target. Narrowing it changes the answer, so if you pass it, the `Derived by` line must say so — that line is generated, so simply do not edit it.
 - A module that does not parse is reported in the unresolved population rather than skipped. Do not fix it; carry it.
 - Run the command in the foreground and do not pipe it. A piped run that fails is a run whose failure you did not see.
+
+---
+
+## Project rule suppressions (declared in `.beadloom/flow.yml`)
+
+The core rules below are stood down **in this project only**. The core text above is unchanged — a suppression is a declaration, never a deletion — and each one names its reason and its exit condition.
+
+- Git — Trunk-based development: в CLAUDE.md §6 ядро утверждает «main is branch-protected», «beadloom ci is a REQUIRED status check» и что setup-branch-protection настраивает защиту — в этом репозитории всё три не действуют: репозиторий приватный на плане GitHub Free, API защиты ветки и rulesets отвечают «403 Upgrade to GitHub Pro or make this repository public»; main держится дисциплиной PR, перепроверкой гейтов координатором на финальном дереве и видимым (не required) CI по PR — раздел П.6 проектного слоя (until репозиторий станет публичным или план — GitHub Pro: тогда выполняется beadloom setup-branch-protection и эта запись снимается)
+- Template rules: в /task-init ядро 9.0.0 пишет «ALL documents MUST be in English» и «(in English)» в чеклисте, хотя язык документов задан здесь как language: ru и auto-блок doc-language в CLAUDE.md уже печатает Russian — ядро task-init тег языка не читает, расхождение внутри самого beadloom (BDL-UX); в этом проекте все документы по-русски, остальные пункты раздела (статусы, формат метаданных) действуют (until ядро /task-init в beadloom читает language из flow.yml и печатает тот же язык, что auto-блок doc-language)

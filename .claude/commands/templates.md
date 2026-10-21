@@ -5,6 +5,9 @@
 
 **Rules:**
 - Use templates EXACTLY as written — no improvisation
+- **Acceptance criteria for behaviour-bearing work are Gherkin scenarios**, and the `.feature`
+  file is the source of truth: the document references the scenario BY NAME and the suite holds
+  its text. Non-behavioural work says so, with a reason
 - No numbered sections (use `##` / `###` headings)
 - Status: always `Draft` / `Approved` / `Done`
 - Date in separate field, never inside status
@@ -45,22 +48,41 @@ Used for: `epic`, `feature`
 ### US-1: [Name]
 **As** [role], **I want** [action], **so that** [result].
 
-**Acceptance criteria:**
-- [ ] Criterion 1
-- [ ] Criterion 2
+**Acceptance criteria** (each references a scenario in `tests/acceptance/features/`):
+- [ ] Scenario: `<the scenario's exact name>`
+- [ ] Scenario: `<the scenario's exact name>`
 
 ### US-2: [Name]
 **As** [role], **I want** [action], **so that** [result].
 
-**Acceptance criteria:**
-- [ ] Criterion 1
-- [ ] Criterion 2
+**Acceptance criteria** (each references a scenario in `tests/acceptance/features/`):
+- [ ] Scenario: `<the scenario's exact name>`
+- [ ] Scenario: `<the scenario's exact name>`
 
 ## Acceptance Criteria (overall)
 
-- [ ] Criterion 1
-- [ ] Criterion 2
-- [ ] Criterion 3
+Behaviour-bearing criteria are scenarios; the suite holds their text and this list references
+them by name. `beadloom lint` reports a referenced scenario the suite does not contain.
+
+- [ ] Scenario: `<the scenario's exact name>`
+- [ ] Scenario: `<the scenario's exact name>`
+
+**Non-behavioural criteria** stay checkboxes and are labelled, so the absence of a scenario is
+a stated decision rather than a gap:
+
+- [ ] [what is done] — non-behavioural: [why no observer can see a change]
+```
+
+### The scenario the criteria reference
+
+```gherkin
+@bead:{ISSUE-KEY}.N @node:<ref-id>
+Feature: [the capability, in the user's words]
+
+  Scenario: [what an observer can see happen]
+    Given [the state the world is in]
+    When [the one thing that happens]
+    Then [the observable consequence]
 ```
 
 ---
@@ -92,12 +114,34 @@ Used for: `epic`, `feature`
 ## Technical Context
 
 ### Constraints
-- Python 3.10+
-- SQLite (WAL mode)
+- [Language/runtime constraint — see the STACK section appended below, composed
+  from `.beadloom/flow.yml`; the core does not assume a language]
 - [Additional constraints specific to this task]
 
 ### Affected Areas
-[Which domains/services/modules will be touched — discover via `beadloom ctx`]
+[Constraints of the surrounding code — the areas themselves are derived below, not listed here]
+
+## Axes
+
+Derived, never authored. Run `beadloom impact <path|symbol>`, paste its answer into the table,
+then take the scope decision in the last two columns — the derivation says what a change ranges
+over, a person says how much of it this work item takes. The `refs:` of every bead below is
+generated from the rows kept in scope, so a bead naming a node this table does not is a finding.
+
+Rule each row by the node's role in the change: the axis a node surfaced under is not its role.
+The axis is the node's relation to the seed, so a `callers` row can be a work site — a node that
+calls into the change can also own what the change must edit. `Owns unread` names the files the
+node owns that the derivation could not read; a count there is a question to answer before `no`.
+
+> **Derived by:** `beadloom impact` over [the target the derivation was run on]
+> **Seed:** [the seed the answer names, and the rule that derived it — `none` when the rule
+> found no seed, in which case every axis below is unresolved and not empty]
+> **Unresolved:** [what the derivation could not read, by kind and count — `none` is a claim
+> about a run, so say which run]
+
+| Axis | Node | Sites | Owns unread | In scope | Why |
+|------|------|-------|-------------|----------|-----|
+| co-writers | [ref-id] | [how many, and the first one] | [files the node owns the derivation could not read, or none] | yes / no | [why it is in or out] |
 
 ## Proposed Solution
 
@@ -158,33 +202,30 @@ Used for: `epic`, `feature`
 ## Code Standards
 
 ### Language and Environment
-- **Language:** Python 3.10+ (type hints, `str | None` syntax)
-- **Package manager:** uv
-- **Virtual environment:** uv venv
+- Filled from the STACK section appended below (composed from
+  `.beadloom/flow.yml`). Do NOT hardcode a language here: this template ships to
+  every adopter, and most of them are not on the one Beadloom happens to use.
 
 ### Methodologies
 
 | Methodology | Application |
 |-------------|-------------|
 | TDD | Red -> Green -> Refactor |
-| Clean Code | snake_case, SRP, DRY, KISS |
-| Modular architecture | CLI -> Core -> Storage |
+| Clean Code | SRP, DRY, KISS |
+| Architecture | see the ARCHITECTURE section appended below (from `.beadloom/flow.yml`) |
 
 ### Testing
-- **Framework:** pytest + pytest-cov
+- **Framework:** see the STACK section appended below
 - **Coverage:** minimum 80%
 
 ### Code Quality
-- **Linter:** ruff (lint + format)
-- **Typing:** mypy --strict
+- **Linter/type-checker:** see the STACK section appended below
 
 ### Restrictions
-- No `Any` without justification
-- No `print()` / `breakpoint()` — use logging
-- No bare `except:` — only `except SpecificError:`
-- No `os.path` — pathlib only
-- No f-strings in SQL — parameterized queries `?`
-- No `yaml.load()` — safe_load only
+- No unjustified escape hatch from the type system
+- No stray debug output — use the language's logging facility
+- No catch-all exception handler — name the exception
+- Language-specific restrictions: see the STACK section appended below
 
 ## Architectural Decisions
 
@@ -234,11 +275,15 @@ graph TD
 
 ## Beads
 
-| ID | Name | Priority | Depends On | Status |
-|----|------|----------|------------|--------|
-| BEAD-01 | [Name] | P0 | - | Pending |
-| BEAD-02 | [Name] | P0 | 01 | Pending |
-| BEAD-03 | [Name] | P1 | 01 | Pending |
+Status lives in ACTIVE.md, reconciled from the tracker by the pre-commit active-sync, so this
+table names the plan and carries no status. The Tracker cell holds `-` until the beads are
+created, and then the id the tracker answered.
+
+| ID | Tracker | Name | Priority | Depends On |
+|----|---------|------|----------|------------|
+| BEAD-01 | - | [Name] | P0 | - |
+| BEAD-02 | - | [Name] | P0 | 01 |
+| BEAD-03 | - | [Name] | P1 | 01 |
 
 ## Bead Details
 
@@ -316,14 +361,115 @@ Used for: `bug`, `task`, `chore`
 
 [How we will solve it]
 
+## Axes
+
+Derived, never authored. Run `beadloom impact <path|symbol>`, paste its answer into the table,
+then take the scope decision in the last two columns — the derivation says what a change ranges
+over, a person says how much of it this work item takes. The `refs:` of every bead below is
+generated from the rows kept in scope, so a bead naming a node this table does not is a finding.
+
+Rule each row by the node's role in the change: the axis a node surfaced under is not its role.
+The axis is the node's relation to the seed, so a `callers` row can be a work site — a node that
+calls into the change can also own what the change must edit. `Owns unread` names the files the
+node owns that the derivation could not read; a count there is a question to answer before `no`.
+
+> **Derived by:** `beadloom impact` over [the target the derivation was run on]
+> **Seed:** [the seed the answer names, and the rule that derived it — `none` when the rule
+> found no seed, in which case every axis below is unresolved and not empty]
+> **Unresolved:** [what the derivation could not read, by kind and count — `none` is a claim
+> about a run, so say which run]
+
+| Axis | Node | Sites | Owns unread | In scope | Why |
+|------|------|-------|-------------|----------|-----|
+| co-writers | [ref-id] | [how many, and the first one] | [files the node owns the derivation could not read, or none] | yes / no | [why it is in or out] |
+
 ## Beads
 
-| ID | Name | Priority | Status |
-|----|------|----------|--------|
-| BEAD-01 | [Name] | P0 | Pending |
+Status lives in ACTIVE.md, reconciled from the tracker by the pre-commit active-sync, so this
+table names the beads and carries no status. The Tracker cell holds `-` until the beads are
+created, and then the id the tracker answered.
+
+| ID | Tracker | Name | Priority |
+|----|---------|------|----------|
+| BEAD-01 | - | [Name] | P0 |
 
 ## Acceptance Criteria
 
-- [ ] Criterion 1
-- [ ] Criterion 2
+- [ ] Scenario: `<the scenario's exact name>`
+
+## Non-behavioural declaration
+
+Only for a `chore` or a `task` no observer can see the result of. Fill BOTH fields or delete
+the section — an exclusion without a stated reason is a check switched off without saying so.
+
+| Node | Reason it carries no behaviour |
+|------|-------------------------------|
+| [ref-id] | [why no observer can see a change — not a restatement of "it is a chore"] |
 ```
+
+---
+
+## ARCHITECTURE (DDD) — composed from `.beadloom/flow.yml`
+
+- **Layering:** `services → application → domains → infrastructure`, never the
+  reverse. No domain depends on a peer domain.
+- **Boundaries are machine-enforced:** `beadloom lint --strict`. Discover the
+  live layer map with `beadloom graph` / `beadloom ctx` — never hardcode it.
+- **One nameable responsibility per module.** A CONTEXT that says "and" in a
+  module's responsibility is describing two modules.
+
+---
+
+## STACK (Python) — composed from `.beadloom/flow.yml`
+
+Fill the placeholders above from this section; it replaces nothing, it supplies.
+
+### Language and Environment
+- **Language:** Python 3.10+ (type hints, `str | None` syntax)
+- **Package manager:** uv
+- **Virtual environment:** uv venv
+
+### Testing
+- **Framework:** pytest + pytest-cov
+
+### Code Quality
+- **Linter:** ruff (lint + format)
+- **Typing:** mypy --strict
+
+### Restrictions (Python)
+- No `Any` without justification
+- No `print()` / `breakpoint()` — use logging
+- No bare `except:` — only `except SpecificError:`
+- No `os.path` — pathlib only
+- No f-strings in SQL — parameterized queries `?`
+- No `yaml.load()` — safe_load only
+
+---
+
+## Проектный слой Bob — как читать эти шаблоны здесь
+
+Скелеты выше — generic апстрим beadloom. При скаффолдинге документа для Bob:
+
+- **Контент — по-русски** (`language: ru`, `CLAUDE.md` П.3); заголовки разделов можно оставить
+  как в шаблоне, текст — русский.
+- **Факты проекта — из `CLAUDE.md` П.0.1**, не из плейсхолдеров: Python **3.12+**; слоение —
+  **DDD-вертикали + shared kernel** (`docs/architecture.md`), а не «CLI → Core → Storage»;
+  стек — Telegram/aiogram 3.x · Tier-1 Qwen + дублёр Ollama `qwen3:8b` · SQLite+FTS5 · pytest ·
+  ruff · mypy --strict; версия — текущая версия Bob (auto-блок `project-info`).
+- **PRD**: каталог сценариев и инварианты — обязательный раздел для работы с поведением (из
+  них роль test выводит `.feature`, П.0.2).
+- **PLAN**: у каждой dev-беады — mutation-цель или явное «не применима»; тест-беада зависит от
+  всех dev-беад, review — от test, tech-writer — от review (структура ядра).
+- **CONTEXT**: стандарты кода копируются из `CLAUDE.md` (П.0.1 + STACK-раздел ядра), а не
+  опрашиваются у владельца.
+- **BRIEF** (bug/task/chore): «Что НЕ входит» и «Acceptance» — обязательные разделы; приёмка —
+  числами (гейты, тесты), а не «зелёное».
+
+---
+
+## Project rule suppressions (declared in `.beadloom/flow.yml`)
+
+The core rules below are stood down **in this project only**. The core text above is unchanged — a suppression is a declaration, never a deletion — and each one names its reason and its exit condition.
+
+- Git — Trunk-based development: в CLAUDE.md §6 ядро утверждает «main is branch-protected», «beadloom ci is a REQUIRED status check» и что setup-branch-protection настраивает защиту — в этом репозитории всё три не действуют: репозиторий приватный на плане GitHub Free, API защиты ветки и rulesets отвечают «403 Upgrade to GitHub Pro or make this repository public»; main держится дисциплиной PR, перепроверкой гейтов координатором на финальном дереве и видимым (не required) CI по PR — раздел П.6 проектного слоя (until репозиторий станет публичным или план — GitHub Pro: тогда выполняется beadloom setup-branch-protection и эта запись снимается)
+- Template rules: в /task-init ядро 9.0.0 пишет «ALL documents MUST be in English» и «(in English)» в чеклисте, хотя язык документов задан здесь как language: ru и auto-блок doc-language в CLAUDE.md уже печатает Russian — ядро task-init тег языка не читает, расхождение внутри самого beadloom (BDL-UX); в этом проекте все документы по-русски, остальные пункты раздела (статусы, формат метаданных) действуют (until ядро /task-init в beadloom читает language из flow.yml и печатает тот же язык, что auto-блок doc-language)

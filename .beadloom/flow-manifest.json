@@ -1,7 +1,15 @@
 {
   "version": 1,
   "written": {
-    ".claude/agents/explore.md": "c08ff97ade9bb3eafeb03e4d3dd5aa1e8718180d0683a80a5beb5139da4eba80",
-    ".claude/commands/checkpoint.md": "d6019d0b91d01f6243b749bf9d8beb61426aa8e190d2660110942c6c2468e900"
+    ".claude/CLAUDE.md": "cda9cbd6ed3b664786b4aca370d0874c313c6a30a08510e456d86801f7b60a3c",
+    ".claude/agents/dev.md": "79e183aeecc2dac39d61e2802dd4b3ea4c375b94a4ac96f994ff0653830dbaff",
+    ".claude/agents/explore.md": "4f0d241bd0a12a2d3553aa2f1a55dd6ee7da074277be6815a18fc73a6bdf8e58",
+    ".claude/agents/review.md": "02b3b1f2e5c5d904a429562dccaf5d3a52b05c01a774ba63ded553f07a29f6ca",
+    ".claude/agents/tech-writer.md": "bde5f65ac99b2d45de835382f34519974523701afc355c3e99d17412c822ac08",
+    ".claude/agents/test.md": "4a13cdedd8843594f28277c6d8bae0a940d2639378e1b780d4bfbd31c865785f",
+    ".claude/commands/checkpoint.md": "39f41cd974ee18fcf7e0907f1d8020d1d56a59d7510fabfa6c64cef127356456",
+    ".claude/commands/coordinator.md": "6e7d18640d3f2f37f57d82e4660b12a3266624cd590c887d1d0c0f4b5f0237d4",
+    ".claude/commands/task-init.md": "4a428d92506720369dab32bff620d438faea21f3de3b840652284966d6be1552",
+    ".claude/commands/templates.md": "e59e20db3c3e77be2716c116e082a5febed5cdbbd8c866698348ce7a2e8a2cb7"
   }
 }
