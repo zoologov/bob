@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -104,8 +104,8 @@ def test_env_double_underscore_denotes_nesting() -> None:
     # Act
     config = loader.load()
 
-    # Assert: BOB_<section>__<key> maps to config[section][key].
-    assert config["telegram"]["poll_timeout"] == "30"
+    # Assert: BOB_<section>__<key> maps to config[section][key], typed like the default.
+    assert config["telegram"]["poll_timeout"] == 30
 
 
 def test_missing_yaml_file_falls_back_to_defaults(tmp_path: Path) -> None:
@@ -199,8 +199,8 @@ def test_llm_temperature_overridable_via_env() -> None:
     # Act
     llm = loader.load()["llm"]
 
-    # Assert: env wins (arrives as a string; the factory parses it numerically).
-    assert llm["tier1_temperature"] == "0.9"
+    # Assert: env wins, coerced to the float type of the default (BOB-116).
+    assert llm["tier1_temperature"] == 0.9
 
 
 def test_tier0_fallback_is_off_by_default() -> None:
@@ -280,8 +280,8 @@ def test_consolidation_overridable_via_env() -> None:
     consolidation = loader.load()["memory"]["consolidation"]
 
     # Assert: env wins; the rest of the section keeps its defaults.
-    assert consolidation["enabled"] == "true"
-    assert consolidation["max_age_days"] == "7"
+    assert consolidation["enabled"] is True
+    assert consolidation["max_age_days"] == 7.0
     assert consolidation["batch_size"] == 50
 
 
@@ -312,7 +312,7 @@ def test_diagram_section_overridable_via_env() -> None:
     diagrams = loader.load()["diagrams"]
 
     assert diagrams["send_as"] == "photo"
-    assert diagrams["scale"] == "2"
+    assert diagrams["scale"] == 2
     assert diagrams["background"] == "white"
 
 
@@ -422,3 +422,155 @@ def test_guppi_env_token_overrides_yaml_placeholder(tmp_path: Path) -> None:
 
     # Assert
     assert telegram["guppi"]["token"] == _GUPPI_TOKEN
+
+
+# --- Env values typed like the default at their path (BOB-116 D8a) -------------
+#
+# Env carries strings only. Before BOB-116 they landed in the config as strings, and the
+# consumers' readers guessed: ``_int`` took ``str.isdigit`` and so turned a NEGATIVE group
+# id (every Telegram supergroup) into the default ``0``. The loader now coerces each env
+# value to the type of the built-in default at the same path, and refuses a value it
+# cannot coerce by naming the env key.
+
+
+def _load_env(env: dict[str, str]) -> dict[str, Any]:
+    return ConfigLoader(yaml_path=None, env=env).load()
+
+
+def test_env_negative_group_id_becomes_an_int() -> None:
+    telegram = _load_env({"BOB_TELEGRAM__CHAT_ID": "-100123"})["telegram"]
+
+    assert telegram["chat_id"] == -100123
+
+
+def test_env_owner_id_becomes_an_int() -> None:
+    telegram = _load_env({"BOB_TELEGRAM__OWNER_ID": "123"})["telegram"]
+
+    assert telegram["owner_id"] == 123
+    assert type(telegram["owner_id"]) is int
+
+
+def test_env_nested_topic_id_spelled_with_double_separators_becomes_an_int() -> None:
+    telegram = _load_env({"BOB_TELEGRAM__BOB__TOPIC_ID": "32"})["telegram"]
+
+    assert telegram["bob"]["topic_id"] == 32
+    assert type(telegram["bob"]["topic_id"]) is int
+
+
+def test_env_allowed_chat_ids_csv_becomes_a_list_of_ints() -> None:
+    telegram = _load_env({"BOB_TELEGRAM__ALLOWED_CHAT_IDS": "-100123, -100456"})["telegram"]
+
+    assert telegram["allowed_chat_ids"] == [-100123, -100456]
+
+
+def test_env_single_allowed_chat_id_is_a_one_element_list() -> None:
+    telegram = _load_env({"BOB_TELEGRAM__ALLOWED_CHAT_IDS": "-100123"})["telegram"]
+
+    assert telegram["allowed_chat_ids"] == [-100123]
+
+
+def test_env_blank_list_is_an_empty_list() -> None:
+    telegram = _load_env({"BOB_TELEGRAM__ALLOWED_CHAT_IDS": "  "})["telegram"]
+
+    assert telegram["allowed_chat_ids"] == []
+
+
+def test_env_list_with_int_default_elements_becomes_a_list_of_ints() -> None:
+    health = _load_env({"BOB_LLM__HEALTH__PROBE_SECONDS": "30,90"})["llm"]["health"]
+
+    assert health["probe_seconds"] == [30, 90]
+
+
+def test_env_empty_list_default_with_no_declared_element_type_is_a_list_of_strings() -> None:
+    coder = _load_env({"BOB_CODER__EXTRA_DIRS": "/srv/a, /srv/b"})["coder"]
+
+    assert coder["extra_dirs"] == ["/srv/a", "/srv/b"]
+
+
+@pytest.mark.parametrize("raw", ["true", "TRUE", "1", "yes", "Yes", "on", " true "])
+def test_env_truthy_spellings_become_true(raw: str) -> None:
+    llm = _load_env({"BOB_LLM__DISABLE_THINKING": raw})["llm"]
+
+    assert llm["disable_thinking"] is True
+
+
+@pytest.mark.parametrize("raw", ["false", "FALSE", "0", "no", "No", "off"])
+def test_env_falsy_spellings_become_false(raw: str) -> None:
+    llm = _load_env({"BOB_LLM__DISABLE_THINKING": raw})["llm"]
+
+    assert llm["disable_thinking"] is False
+
+
+def test_env_float_default_accepts_a_fraction() -> None:
+    # The cloud timeout is read as a float by the LLM factory, so its default says so
+    # and a sub-second env value (the Tier-0 harness uses one) stays legal.
+    llm = _load_env({"BOB_LLM__TIMEOUT_SECONDS": "0.35"})["llm"]
+
+    assert llm["timeout_seconds"] == 0.35
+
+
+def test_env_float_default_accepts_a_whole_number_as_a_float() -> None:
+    llm = _load_env({"BOB_LLM__TIER0_TEMPERATURE": "1"})["llm"]
+
+    assert llm["tier0_temperature"] == 1.0
+    assert type(llm["tier0_temperature"]) is float
+
+
+def test_env_string_default_keeps_a_digit_string_a_string() -> None:
+    llm = _load_env({"BOB_LLM__TIER1_MODEL": "7"})["llm"]
+
+    assert llm["tier1_model"] == "7"
+
+
+def test_env_path_with_no_default_keeps_the_raw_string() -> None:
+    # owner_dm_chat_id has no built-in default on purpose (it falls back to owner_id
+    # in the consumer), so the loader has no type to coerce to.
+    config = _load_env(
+        {"BOB_TELEGRAM__OWNER_DM_CHAT_ID": "555", "BOB_UNKNOWN__KNOB": "42"}
+    )
+
+    assert config["telegram"]["owner_dm_chat_id"] == "555"
+    assert config["unknown"] == {"knob": "42"}
+
+
+@pytest.mark.parametrize(
+    ("env_key", "raw"),
+    [
+        ("BOB_TELEGRAM__OWNER_ID", "abc"),
+        ("BOB_TELEGRAM__OWNER_ID", "1.5"),
+        ("BOB_TELEGRAM__OWNER_ID", ""),
+        ("BOB_TELEGRAM__OWNER_ID", "true"),
+        ("BOB_LLM__DISABLE_THINKING", "maybe"),
+        ("BOB_LLM__TIER1_TEMPERATURE", "warm"),
+        ("BOB_TELEGRAM__ALLOWED_CHAT_IDS", "-100,x"),
+        ("BOB_TELEGRAM__ALLOWED_CHAT_IDS", "-100,,-200"),
+        ("BOB_LLM__HEALTH__REMINDERS_SECONDS", "600,1h"),
+    ],
+)
+def test_env_value_that_cannot_be_coerced_raises_naming_the_key(env_key: str, raw: str) -> None:
+    with pytest.raises(ValueError, match=env_key):
+        _load_env({env_key: raw})
+
+
+def test_env_coercion_error_names_the_config_path_too() -> None:
+    with pytest.raises(ValueError, match=r"telegram\.bob\.topic_id"):
+        _load_env({"BOB_TELEGRAM__BOB__TOPIC_ID": "general"})
+
+
+def test_llm_health_defaults_spell_out_the_rfc_policy() -> None:
+    health = _load_env({})["llm"]["health"]
+
+    assert health == {
+        "failures_threshold": 5,
+        "duration_threshold_seconds": 180,
+        "reminders_seconds": [600, 3600, 21600, 86400],
+        "probe_seconds": [60, 120, 300],
+        "owner_alert": True,
+    }
+
+
+def test_llm_health_owner_alert_can_be_switched_off_from_env() -> None:
+    health = _load_env({"BOB_LLM__HEALTH__OWNER_ALERT": "false"})["llm"]["health"]
+
+    assert health["owner_alert"] is False
+    assert health["failures_threshold"] == 5

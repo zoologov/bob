@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from bob.application.runtime import AsyncEventBus
     from bob.coding.usecases.coding_assistant import CodingAssistant
     from bob.infrastructure.telegram.gateway import BobMessageFilter, BotLike
-    from bob.kernel.ports import Clock
+    from bob.kernel.ports import Clock, HealthReader
     from bob.proactivity.adapters import (
         SqliteGoalStore,
         SqliteProactivityStore,
@@ -64,6 +64,7 @@ def _build_multibot(
     rule_store: SqliteSelfImprovementStore | None = None,
     coding_assistant: CodingAssistant | None = None,
     bob_reaction_filter: BobMessageFilter | None = None,
+    health: HealthReader | None = None,
 ) -> MultiBotGateway:
     """Build the two-bot gateway: Bob (his topic) + GUPPI (General), one poller.
 
@@ -71,7 +72,8 @@ def _build_multibot(
     (``telegram.bob.token`` / ``telegram.guppi.token``). Bob is scoped to the
     group's Bob topic so his replies pin to that thread; GUPPI owns the General /
     un-threaded scope. The shared :class:`Authorizer` drives GUPPI's reject + the
-    owner commands — no duplicated authz.
+    owner commands — no duplicated authz. ``health`` (BOB-116) is the LLM-provider health
+    reader GUPPI's ``/status`` shows; ``None`` → ``/status`` as before.
     """
     telegram = _section(config, "telegram")
     chat_id = _int(telegram, "chat_id", 0)
@@ -121,4 +123,5 @@ def _build_multibot(
         rule_max_magnitude=_self_improvement_max_magnitude(config),
         coding_assistant=coding_assistant,
         bob_reaction_filter=bob_reaction_filter,
+        health=health,
     )

@@ -21,7 +21,9 @@ import random
 from typing import TYPE_CHECKING
 
 from bob.application.runtime import periodic
+from bob.application.runtime.heartbeat import health_gated
 from bob.infrastructure.telegram.restart_notifier import _RestartNotifier
+from bob.kernel.provider_health import TIER0_EFFECTIVE, TIER0_PRIMARY
 from bob.personality.language import DEFAULT_LANGUAGE
 from bob.proactivity.adapters import KvRestartMarkerStore, RepoProactivitySources
 from bob.proactivity.decision import ProactiveDecider
@@ -45,6 +47,7 @@ if TYPE_CHECKING:
 
     from bob.application.router import LLMRouter
     from bob.application.runtime.agent import BackgroundTask
+    from bob.application.runtime.heartbeat import Tick
     from bob.application.usecases.heartbeat import (
         InnerMonologueTick,
         MoodDriftTick,
@@ -53,7 +56,7 @@ if TYPE_CHECKING:
     from bob.conversation.conversation import RepeatThresholds
     from bob.infrastructure.telegram.multibot import MultiBotGateway
     from bob.infrastructure.telegram.restart_notifier import _PlainNotifyBot
-    from bob.kernel.ports import Clock, MemoryRecall, ReplyGateway
+    from bob.kernel.ports import Clock, HealthReader, MemoryRecall, ReplyGateway
     from bob.memory.adapters import SqliteMemoryRepo
     from bob.personality.state import PersonalityState
     from bob.personality.usecases.fascination_sources import StoreFascinationReader
@@ -159,6 +162,7 @@ def _background_tasks(
     reflect_tick: ReflectTick,
     proactive_tick: ProactiveTick,
     pursue_goals_tick: PursueGoalsTick | None = None,
+    health: HealthReader | None = None,
 ) -> list[BackgroundTask]:
     """Build the supervised background tasks: polling + the heartbeat ticks.
 
@@ -169,6 +173,22 @@ def _background_tasks(
     ticks make ZERO LLM calls). The self-directed goal-pursuit tick (BOB-015 .3) is
     scheduled ONLY when wired (``goals.pursuit_enabled``), on its own (rare) cadence
     ``goals.tick_seconds``; unwired (the default) the schedule is exactly as before.
+
+    LLM-health gate (BOB-116, RFC «Гейт дорожек»): with ``health`` wired, the lanes that
+    think with Tier 0 stop calling a provider the monitor has declared degraded.
+    ``inner_monologue`` (Tier 0, the shortest cadence) is the PROBE — it runs only when a
+    probe is due and its success lifts the degradation through the router's ordinary
+    report; ``reflect``, ``proactive`` and ``pursue_goals`` wait silently until it does.
+    ``poll`` and ``mood_drift`` make no LLM call and are not gated. A lane closes only when
+    Tier 0 as a whole cannot think (BOB-116 F2, review M2): the cloud is down AND the
+    understudy is absent, stood down at startup or down too — the monitor's answer for
+    ``TIER0_EFFECTIVE``, the same rule that tells the owner «не могу думать». While the
+    understudy holds a dead cloud every lane keeps its rhythm (PRD US-2). The probe, its
+    schedule and its log line stay ``tier0-primary``'s — the id under which both the router
+    and the understudy wrapper report the cloud's call; the wrapper calls the dead cloud only
+    when its probe is due and answers on the understudy in between (review R2 N1), so a
+    cloud that came back is seen by the first call after its next due probe. ``None`` → the
+    schedule is exactly as before BOB-116.
     """
     runtime = _section(config, "runtime")
     heartbeat = float(_int(runtime, "heartbeat_seconds", _DEFAULT_HEARTBEAT_SECONDS))
@@ -176,10 +196,17 @@ def _background_tasks(
     async def poll() -> None:
         await multibot.poll_once()
 
+    def gated(tick: Tick, *, probe: bool = False) -> Tick:
+        if health is None:
+            return tick
+        return health_gated(
+            tick, reader=health, provider_id=TIER0_PRIMARY, probe=probe, gate_id=TIER0_EFFECTIVE
+        )
+
     tasks: list[BackgroundTask] = [
         periodic(poll, interval_seconds=0.0),
         periodic(
-            inner_monologue_tick.run,
+            gated(inner_monologue_tick.run, probe=True),
             interval_seconds=heartbeat,
             retry=_TICK_RETRY_POLICY,
         ),
@@ -189,12 +216,12 @@ def _background_tasks(
             retry=_TICK_RETRY_POLICY,
         ),
         periodic(
-            reflect_tick.run,
+            gated(reflect_tick.run),
             interval_seconds=heartbeat * 10,
             retry=_TICK_RETRY_POLICY,
         ),
         periodic(
-            proactive_tick.run,
+            gated(proactive_tick.run),
             interval_seconds=heartbeat * _PROACTIVE_TICK_MULTIPLIER,
             retry=_TICK_RETRY_POLICY,
         ),
@@ -202,7 +229,7 @@ def _background_tasks(
     if pursue_goals_tick is not None:
         tasks.append(
             periodic(
-                pursue_goals_tick.run,
+                gated(pursue_goals_tick.run),
                 interval_seconds=_build_pursuit_tick_seconds(config),
                 retry=_TICK_RETRY_POLICY,
             )

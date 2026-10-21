@@ -10,6 +10,9 @@ Precedence (lowest to highest): built-in :data:`DEFAULT_CONFIG`, an optional YAM
 file (``yaml.safe_load``), then environment variables. Env vars use the prefix
 ``BOB_`` and ``__`` to denote nesting, e.g. ``BOB_LLM__TIER1_MODEL`` maps to
 ``config["llm"]["tier1_model"]``. Later layers deep-merge over earlier ones.
+An env value takes the type of the built-in default at its path (``int``, ``float``,
+``bool``, a comma-separated list) — see :mod:`bob.infrastructure.config.env_coercion`;
+a path with no default keeps the raw string.
 
 Two-bot tokens are special-cased because they don't follow the nesting rule
 one-to-one: the bot tokens live under ``telegram.bob.token`` /
@@ -28,6 +31,8 @@ from collections.abc import Mapping, MutableMapping
 from typing import TYPE_CHECKING, Any
 
 import yaml
+
+from bob.infrastructure.config.env_coercion import ElementType, coerce_env_value
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -49,6 +54,15 @@ _TOKEN_ENV_MAPPING: dict[str, tuple[str, ...]] = {
     "GUPPI_TELEGRAM__TOKEN": ("telegram", "guppi", "token"),
 }
 
+# Element type of a list whose built-in default is EMPTY and so cannot say what it holds.
+# A list default with elements types its env items by them; an empty one not named here
+# takes strings (``coder.extra_dirs``, ``goals.safe_capabilities``). The chat allowlist
+# is fed from ``.env`` on the VPS (the tracked config carries no ids, BOB-116), so its
+# items must arrive as ints — the consumer drops anything that is not one.
+_LIST_ELEMENT_TYPES: dict[tuple[str, ...], ElementType] = {
+    ("telegram", "allowed_chat_ids"): int,
+}
+
 # Built-in defaults — the safe baseline the runtime boots from with no YAML/env.
 DEFAULT_CONFIG: Config = {
     "runtime": {
@@ -63,8 +77,9 @@ DEFAULT_CONFIG: Config = {
     "llm": {
         "tier0_model": "qwen2.5:0.5b",
         "tier1_model": "qwen2.5:7b",
-        # Generous timeout for slow Tier 1 reasoning replies (seconds).
-        "timeout_seconds": 180,
+        # Generous timeout for slow Tier 1 reasoning replies (seconds). A float: the
+        # factory reads it as one, and an env value is coerced to the default's type.
+        "timeout_seconds": 180.0,
         # Replies don't need chain-of-thought: disabling it cuts cost/latency and
         # avoids the empty-content case where a reasoning model spends its whole
         # budget on reasoning_content.
@@ -90,6 +105,19 @@ DEFAULT_CONFIG: Config = {
         "tier0_fallback": "",
         "tier0_fallback_base_url": "http://localhost:11434/v1",
         "tier0_fallback_model": "qwen2.5:0.5b",
+        # Provider health (BOB-116): a provider that keeps failing is declared DEGRADED
+        # after ``failures_threshold`` consecutive failures OR ``duration_threshold_seconds``
+        # of failing, whichever comes first; the owner gets one signal then reminders on
+        # the ``reminders_seconds`` schedule (the last interval repeats), and a degraded
+        # provider is probed on the ``probe_seconds`` schedule (the last one repeats).
+        # ``owner_alert`` false keeps the log line and drops the owner's message.
+        "health": {
+            "failures_threshold": 5,
+            "duration_threshold_seconds": 180,
+            "reminders_seconds": [600, 3600, 21600, 86400],
+            "probe_seconds": [60, 120, 300],
+            "owner_alert": True,
+        },
     },
     # Local semantic-memory embeddings (BOB-011). Provider-agnostic: a LOCAL
     # Ollama server (privacy — memory content never leaves the machine), default
@@ -537,11 +565,13 @@ DEFAULT_CONFIG: Config = {
         "propose_app_id": "",
         "propose_app_key": "",
         "propose_repo": "",
-        "token_margin_seconds": 300,
-        "jwt_lifetime_seconds": 480,
+        # The three durations are floats: the adapter reads them as such, and an env
+        # value is coerced to the default's type (BOB-116).
+        "token_margin_seconds": 300.0,
+        "jwt_lifetime_seconds": 480.0,
         "api_base_url": "https://api.github.com",
         "openssl_bin": "openssl",
-        "timeout_seconds": 30,
+        "timeout_seconds": 30.0,
     },
     # Web search — «Боб ищет в интернете» (BOB-053). The ``web_search`` skill (behind
     # the capability seam) makes ONE Qwen-native call over the MaaS **Responses API**
@@ -559,7 +589,7 @@ DEFAULT_CONFIG: Config = {
         "model": "qwen3.7-plus",
         "base_url": "",
         "api_key": "",
-        "timeout_seconds": 180,
+        "timeout_seconds": 180.0,  # a float: the factory reads it as one (BOB-116)
     },
     # Read a link — «Боб читает присланную ссылку» (BOB-054). The ``read_url`` skill
     # (behind the capability seam, twin of ``web_search``) makes ONE ``aiohttp`` GET
@@ -573,7 +603,7 @@ DEFAULT_CONFIG: Config = {
     # the model; ``user_agent`` is the fixed UA sent on every request (no auth headers).
     "read_url": {
         "enabled": True,
-        "timeout_seconds": 15,
+        "timeout_seconds": 15.0,  # a float: the reader factory reads it as one (BOB-116)
         "max_bytes": 2_000_000,
         "max_redirects": 5,
         "max_chars": 10_000,
@@ -657,7 +687,14 @@ class ConfigLoader:
             if key in _TOKEN_ENV_MAPPING or not key.startswith(_ENV_PREFIX):
                 continue
             path = key[len(_ENV_PREFIX) :].lower().split(_ENV_NESTING_SEPARATOR)
-            _assign_nested(overrides, path, value)
+            typed = coerce_env_value(
+                key,
+                path,
+                value,
+                defaults=DEFAULT_CONFIG,
+                list_element_types=_LIST_ELEMENT_TYPES,
+            )
+            _assign_nested(overrides, path, typed)
         return overrides
 
     def _apply_token_mapping(self, config: Config) -> None:
@@ -678,7 +715,7 @@ def _deep_merge(base: MutableMapping[str, Any], overlay: Mapping[str, Any]) -> N
             base[key] = value
 
 
-def _assign_nested(target: Config, path: list[str], value: str) -> None:
+def _assign_nested(target: Config, path: list[str], value: object) -> None:
     """Assign ``value`` into ``target`` at the nested ``path`` of keys."""
     cursor: MutableMapping[str, Any] = target
     for segment in path[:-1]:

@@ -13,14 +13,27 @@ and same-author detection) and the two structural rails (empty burst / no-judge)
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+import aiohttp
+from multidict import CIMultiDict, CIMultiDictProxy
+from yarl import URL
+
+from bob.application.router.llm_router import LLMRouter
 from bob.application.runtime.staleness_reassessor import StalenessReassessor
 from bob.kernel.events import MessageReceived
+from bob.presence.adapters.staleness_judge import LlmStalenessJudge
 from bob.presence.staleness import (
     StalenessContext,
     StalenessGate,
     StalenessOutcome,
     StalenessReading,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Sequence
+
+    from bob.kernel.ports import LLMMessage
 
 _BOB_USER_ID = 100
 _AUTHOR_ID = 7
@@ -202,3 +215,33 @@ async def test_peek_burst_maps_every_arrival_in_order() -> None:
     assert judge.seen is not None
     assert [a.text for a in judge.seen.newly_arrived] == ["первое", "второе", "третье"]
     assert [a.from_draft_author for a in judge.seen.newly_arrived] == [True, False, True]
+
+
+# --- BOB-116 D13: недоступный Tier-0 под настоящим судьёй — черновик уходит, ход жив ----
+
+
+class _ForbiddenTier0:
+    """Tier 0, чей ключ отозван: каждый вызов — настоящий ответ 403."""
+
+    async def complete(
+        self, messages: Sequence[LLMMessage], *, stream: bool = False
+    ) -> str | AsyncIterator[str]:
+        del messages, stream  # отказ одинаков для любого запроса
+        url = URL("http://llm.example/v1/chat/completions")
+        headers: CIMultiDictProxy[str] = CIMultiDictProxy(CIMultiDict())
+        info = aiohttp.RequestInfo(url, "POST", headers, url)
+        raise aiohttp.ClientResponseError(info, (), status=403, message="Forbidden")
+
+
+async def test_an_unavailable_judge_sends_the_draft_instead_of_killing_the_turn() -> None:
+    judge = LlmStalenessJudge(router=LLMRouter(providers={0: _ForbiddenTier0()}))
+    reassessor = StalenessReassessor(judge, StalenessGate())
+
+    outcome = await reassessor.reassess(
+        drafted="черновик",
+        newly_arrived=(_message(update_id=2, sender_id=9, text="уже ответил Норман"),),
+        draft_author_sender_id=_AUTHOR_ID,
+        bob_user_id=_BOB_USER_ID,
+    )
+
+    assert outcome is StalenessOutcome.SEND

@@ -14,15 +14,24 @@ LLMRouter — Tier 0/1 model routing with privacy redaction before any model cal
 ## Public symbols
 
 - `GenerationDoor`
+- `HealthNotice`
 - `LLMRequest`
 - `LLMRouter`
+- `NoopHealthObserver`
 - `OutageVoice`
+- `ProviderHealthMonitor`
+- `Situation`
 - `TaskType`
 - `VoiceCanon`
+- `classify_failure`
+- `degraded_text`
 - `door_for`
 - `fold_voice_canon`
+- `recovered_text`
+- `reminder_text`
 - `select_reply_tier`
 - `should_fall_back`
+- `understudy_missing_text`
 - `who_may_answer_for_bob`
 
 ## Relationships

@@ -34,7 +34,18 @@ GUPPI's policy layer over the provider-agnostic :class:`LLMProvider` ports
    :mod:`bob.application.router.voice_integrity` core: a turn that is «the voice that
    STAYS» (BOB-096.4 — the door both speaks AS BOB and is kept) keeps the stand-in out and
    escalates **UP** to Tier 1 (one hop, same redaction), or fails honestly.
-5. **Carries the VOICE canon to every door** (BOB-096.3). The ban on role-playing GUPPI
+5. **Reports every provider outcome to the health monitor** (BOB-116). Each attempt on a
+   tier is reported to the injected :class:`~bob.kernel.ports.HealthObserver` — as ``tier1``
+   or ``tier0-primary`` — ONLY when the provider actually called does not report itself.
+   Two kinds do: the understudy wrapper
+   (:class:`~bob.kernel.ports.UnderstudyBackedProvider`) reports its primary and its
+   stand-in, and a :class:`~bob.kernel.ports.SelfReportingProvider` reports its own calls —
+   the factory wraps Tier 1 so, because the tool loop calls Tier 1 past this router (F1). One
+   HTTP call is one record, never two. Bob's own voice on Tier 0 goes to the BARE primary
+   (``without_understudy``), past the understudy wrapper — that call the router reports.
+   🔴 A failure is recorded BEFORE it propagates: the heartbeat lane gate reads the snapshot
+   right after the tick (BOB-116 D5).
+6. **Carries the VOICE canon to every door** (BOB-096.3). The ban on role-playing GUPPI
    stood on ONE door out of sixteen — the conversational turn — while the reflection,
    its reappraisal, the consolidation digest, the proactive line, the work journal and
    ``extract_facts`` all walked past it and wrote canon-breaking few-shot INTO memory,
@@ -47,6 +58,15 @@ GUPPI's policy layer over the provider-agnostic :class:`LLMProvider` ports
    through :class:`~bob.capabilities.usecases.tool_loop.ToolLoop`, which the privileged
    fulfilment drove with the router nowhere in sight — so it carried no canon at all until
    BOB-096.8 put the SAME seam at that second door too.
+7. **Lets a turn survive a side step the provider could not serve** (BOB-116 D13).
+   :meth:`LLMRouter.run_optional` is for a step its CALLER declares optional — the mood read
+   off the inbound, the staleness re-read before sending. When the provider could not or
+   would not serve it (the same verdict that decides a fallback: 401/403, 429, 5xx, timeout,
+   a dropped channel) the step yields ``None`` and the turn goes on to the voice door, which
+   already ends in Bob's reply or the honest GUPPI notice. Until D13 a 403 on the mood
+   classifier killed the whole turn before that door, so with no understudy the room got
+   silence instead of the notice. A ``contract`` failure and anything that is not a provider
+   failure at all still propagate: the seam skips an outage, it does not hide a defect.
 
 This module is pure application policy: it holds no transport/HTTP knowledge —
 that lives behind the injected :class:`LLMProvider` adapters.
@@ -59,17 +79,18 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from bob.application.router.fallback_policy import should_fall_back
+from bob.application.router.fallback_policy import classify_failure, should_fall_back
 from bob.application.router.generation_door import TaskType, door_for
+from bob.application.router.health_monitor import TIER0_PRIMARY, TIER1, NoopHealthObserver
 from bob.application.router.voice_canon import fold_voice_canon
 from bob.application.router.voice_integrity import OutageVoice, who_may_answer_for_bob
-from bob.kernel.ports import UnderstudyBackedProvider
+from bob.kernel.ports import HealthReader, SelfReportingProvider, UnderstudyBackedProvider
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from bob.application.router.voice_canon import VoiceCanon
-    from bob.kernel.ports import LLMMessage, LLMProvider
+    from bob.kernel.ports import HealthObserver, LLMMessage, LLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -182,6 +203,7 @@ class LLMRouter:
         providers: Mapping[int, LLMProvider],
         tier1_max_concurrency: int | None = None,
         voice_canon: VoiceCanon | None = None,
+        health: HealthObserver | None = None,
     ) -> None:
         if _TIER_LOCAL not in providers:
             raise ValueError("LLMRouter requires a Tier 0 (local) provider")
@@ -209,6 +231,27 @@ class LLMRouter:
         self._tier0_has_understudy = isinstance(
             self._providers[_TIER_LOCAL], UnderstudyBackedProvider
         )
+        # Provider health (BOB-116): every attempt's outcome goes here. ``None`` → a no-op,
+        # so a hand-built router and every existing test are byte-identical. When the same
+        # object can also READ health (the monitor does), a Tier-0 failure during an outage
+        # the monitor already declared is logged as one line instead of a fresh stack.
+        self._health: HealthObserver = health if health is not None else NoopHealthObserver()
+        self._health_reader = health if isinstance(health, HealthReader) else None
+
+    def stand_down_tier0_understudy(self) -> None:
+        """Take the Tier-0 stand-in out for the rest of the process (BOB-116 D11).
+
+        The composition root calls this at startup when the understudy is enabled in the
+        config but not ready (no Ollama, no model): Tier 0 then goes on as the bare primary,
+        exactly as if the understudy had never been composed — its calls are reported here
+        under ``tier0-primary`` and the voice policy no longer counts on a stand-in. There is
+        no way back short of a restart: a model pulled later is not picked up. A plain Tier-0
+        provider is left untouched.
+        """
+        provider = self._providers[_TIER_LOCAL]
+        if isinstance(provider, UnderstudyBackedProvider):
+            self._providers[_TIER_LOCAL] = provider.without_understudy()
+        self._tier0_has_understudy = False
 
     async def run(self, request: LLMRequest) -> str:
         """Complete ``request`` on its preferred tier, with ONE rescue attempt on failure.
@@ -260,13 +303,52 @@ class LLMRouter:
         "connection trouble, Bob is temporarily unavailable" system line) — the interlocutor
         gets a live line, never a borrowed voice, a bare traceback or silence.
         """
+        return await self._run(request, optional=False)
+
+    async def run_optional(self, request: LLMRequest) -> str | None:
+        """Complete a step the caller declares OPTIONAL; ``None`` when no provider could serve it.
+
+        For a side step of a turn — the mood read off the inbound, the staleness re-read
+        before sending — whose absence the turn survives (BOB-116 D13). The routing, the
+        rescue matrix and the health reporting are exactly those of :meth:`run`; only the end
+        differs. When the last attempt failed because the endpoint could not or would not
+        serve us — the SAME verdict that decides a fallback
+        (:func:`~bob.application.router.fallback_policy.should_fall_back`: auth, rate, server,
+        timeout, connection, shape) — the step is skipped: one WARNING line without a stack,
+        and ``None``. The monitor has already recorded that failure, so nothing more is
+        reported, and the caller leaves its state as it was.
+
+        🔴 Not a catch-all. A ``contract`` failure (a 400, a broken body, our own bug) is a
+        defect the fallback policy refuses to hide, and this method refuses to hide it too;
+        an error that is not a provider failure at all (a database error, a ``TypeError``)
+        classifies as ``contract`` and propagates as well. Cancellation is not an
+        ``Exception`` and is never caught.
+        """
+        try:
+            return await self._run(request, optional=True)
+        except Exception as error:
+            if not should_fall_back(error):
+                raise
+            logger.warning(
+                "optional step %s skipped: the provider could not serve it (%s: %s: %s)",
+                request.task_type.value,
+                classify_failure(error),
+                type(error).__name__,
+                error,
+            )
+            return None
+
+    async def _run(self, request: LLMRequest, *, optional: bool) -> str:
+        """The one routing path behind :meth:`run` and :meth:`run_optional`."""
         preferred = self._destination_tier(request)
         messages = self._build_messages(request)
         voice = self._who_may_answer(request)
         try:
             return await self._complete_gated(preferred, messages, voice)
         except Exception as error:
-            rescue = self._rescue_tier(request, preferred=preferred, voice=voice, error=error)
+            rescue = self._rescue_tier(
+                request, preferred=preferred, voice=voice, error=error, optional=optional
+            )
             if rescue is None:
                 raise
         return await self._complete_gated(rescue, messages, voice)
@@ -278,6 +360,7 @@ class LLMRouter:
         preferred: int,
         voice: OutageVoice,
         error: Exception,
+        optional: bool,
     ) -> int | None:
         """Which tier — if any — may try this turn once more; ``None`` = the failure stands.
 
@@ -285,6 +368,8 @@ class LLMRouter:
         a rescue and the right to have one at all are read in one screen instead of being
         spread over the ``except`` arms. Announcing the switch is part of it: a degradation
         the owner cannot see in the log is exactly the silent one Срез E ruled out.
+        ``optional`` (from :meth:`run_optional`) changes only what a Tier-0 outage that
+        nobody rescues writes to the log here: nothing, because the skip writes its own line.
         """
         if preferred != _TIER_LOCAL:
             if not should_fall_back(error):
@@ -308,6 +393,22 @@ class LLMRouter:
                 request.task_type.value,
             )
             return _TIER_API
+        if optional and should_fall_back(error):
+            # The skip in run_optional is the one line about this outage: logging it here
+            # too would report one failure twice, once with a stack. A contract failure is
+            # not skipped, so it keeps the stack below.
+            return None
+        if self._health_reader is not None and self._health_reader.is_degraded(TIER0_PRIMARY):
+            # The outage is already declared — the monitor logged the transition once and
+            # told the owner; a stack per failed turn would only bury that line.
+            logger.warning(
+                "Tier 0 completion failed with no fallback on %s while %s is degraded (%s: %s)",
+                request.task_type.value,
+                TIER0_PRIMARY,
+                type(error).__name__,
+                error,
+            )
+            return None
         logger.exception("Tier 0 completion failed with no fallback")
         return None
 
@@ -428,7 +529,31 @@ class LLMRouter:
         self, tier: int, messages: Sequence[LLMMessage], voice: OutageVoice
     ) -> str:
         provider = self._provider_for(tier, voice)
-        result = await provider.complete(messages, stream=False)
+        provider_id = self._reported_id(tier, provider)
+        try:
+            result = await provider.complete(messages, stream=False)
+        except Exception as error:
+            if provider_id is not None:
+                # Awaited BEFORE the error propagates: the lane gate compares snapshots
+                # around the tick and must already see this failure (BOB-116 D5).
+                await self._health.record_failure(provider_id, classify_failure(error))
+            raise
+        if provider_id is not None:
+            await self._health.record_success(provider_id)
         if not isinstance(result, str):
             raise TypeError("non-stream completion must return str")
         return result
+
+    @staticmethod
+    def _reported_id(tier: int, provider: LLMProvider) -> str | None:
+        """Under which id the router reports a call to ``provider`` — ``None``: not its to report.
+
+        The understudy wrapper reports ``tier0-primary`` and ``tier0-understudy`` itself, and
+        a self-reporting provider (Tier 1 from the factory, BOB-116 F1) reports its own calls,
+        so a call that goes THROUGH either is left to it; reporting it here as well would
+        count one HTTP call twice. The decision is made on the provider actually called, so
+        the bare primary behind Bob's own voice (``without_understudy``) is reported here.
+        """
+        if isinstance(provider, (UnderstudyBackedProvider, SelfReportingProvider)):
+            return None
+        return TIER0_PRIMARY if tier == _TIER_LOCAL else TIER1

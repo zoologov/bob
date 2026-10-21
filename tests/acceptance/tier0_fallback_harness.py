@@ -35,12 +35,13 @@ from bob.infrastructure.config.loader import Config, ConfigLoader
 from bob.infrastructure.llm.factory import build_tier_providers
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Iterator, Mapping
+    from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 
 # What an endpoint does with a request: answer it, break it, or kill the connection.
 type _Reaction = Callable[[web.Request, str], Awaitable[web.StreamResponse]]
 
 _CHAT_PATH = "/v1/chat/completions"
+_MODELS_PATH = "/v1/models"
 
 # What each endpoint says when it answers — the ONLY way a scenario can tell which model
 # actually served the turn, observed through the router's return value.
@@ -70,6 +71,8 @@ ANSWERS: Final = "answers"
 REFUSES: Final = "refuses"
 BROKEN_SHAPE: Final = "broken_shape"
 BAD_REQUEST: Final = "bad_request"
+UNAUTHORIZED: Final = "unauthorized"
+FORBIDDEN: Final = "forbidden"
 SERVER_ERROR: Final = "server_error"
 HANGS: Final = "hangs"
 DISCONNECTS: Final = "disconnects"
@@ -102,15 +105,33 @@ class TurnOutcome:
     tier1_payload: str = ""
 
 
-class _Endpoint:
-    """A real loopback HTTP endpoint speaking the OpenAI chat-completions shape."""
+class LoopbackEndpoint:
+    """A real loopback HTTP endpoint speaking the OpenAI chat-completions shape.
 
-    def __init__(self, *, behaviour: str, reply: str) -> None:
-        self._behaviour = behaviour
+    Public for the LLM-health harness (BOB-116), which stages the same endpoints under a
+    whole application: ``behaviour`` can be changed between calls (a provider that comes
+    back), ``script`` stages the first calls one by one (a single 503 among answers), and
+    ``models`` makes the endpoint answer ``GET /models`` in the Ollama shape, which the
+    understudy check at startup reads. ``calls`` counts chat completions only.
+    """
+
+    def __init__(
+        self,
+        *,
+        behaviour: str,
+        reply: str,
+        script: Sequence[str] = (),
+        models: Sequence[str] | None = None,
+    ) -> None:
+        self.behaviour = behaviour
         self._reply = reply
+        self._script = list(script)
+        self._models = None if models is None else tuple(models)
         self._runner: web.AppRunner | None = None
         self.base_url = ""
         self.calls = 0
+        #: ``GET /models`` lookups — the understudy check at startup, not a completion.
+        self.model_lookups = 0
         #: Raw request bodies, in arrival order — what this endpoint was actually sent.
         self.bodies: list[str] = []
 
@@ -118,13 +139,15 @@ class _Endpoint:
         """Bind on loopback; for ``UNREACHABLE``, bind then release so the port refuses."""
         app = web.Application()
         app.router.add_post(_CHAT_PATH, self._handle)
+        if self._models is not None:
+            app.router.add_get(_MODELS_PATH, self._list_models)
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(runner, "127.0.0.1", 0)
         await site.start()
         host, port = runner.addresses[0][0], runner.addresses[0][1]
         self.base_url = f"http://{host}:{port}/v1"
-        if self._behaviour == UNREACHABLE:
+        if self.behaviour == UNREACHABLE:
             # Hand back a URL nobody is listening on: the connection is genuinely
             # refused, exactly as when the Ollama daemon is not running.
             await runner.cleanup()
@@ -141,8 +164,14 @@ class _Endpoint:
         # Keep the body BEFORE reacting: even a hanging or disconnecting endpoint has
         # already been told everything, so «what crossed the wire» stays observable.
         self.bodies.append((await request.read()).decode("utf-8", errors="replace"))
-        react = _REACTIONS.get(self._behaviour, _answer)
+        behaviour = self._script.pop(0) if self._script else self.behaviour
+        react = _REACTIONS.get(behaviour, _answer)
         return await react(request, self._reply)
+
+    async def _list_models(self, _request: web.Request) -> web.StreamResponse:
+        self.model_lookups += 1
+        listed = [{"id": model} for model in self._models or ()]
+        return web.json_response({"object": "list", "data": listed})
 
     @property
     def payload(self) -> str:
@@ -175,6 +204,16 @@ async def _bad_request(_request: web.Request, _reply: str) -> web.StreamResponse
     return web.json_response({"error": "unknown model"}, status=400)
 
 
+async def _unauthorized(_request: web.Request, _reply: str) -> web.StreamResponse:
+    # A revoked / expired key: the cloud refuses US (BOB-116) — not our malformed request.
+    return web.json_response({"error": "invalid api key"}, status=401)
+
+
+async def _forbidden(_request: web.Request, _reply: str) -> web.StreamResponse:
+    # The BOB-116 production shape: an exhausted account / access denied, ten days of 403.
+    return web.json_response({"error": "access denied"}, status=403)
+
+
 async def _server_error(_request: web.Request, _reply: str) -> web.StreamResponse:
     return web.json_response({"error": "upstream exploded"}, status=503)
 
@@ -203,6 +242,8 @@ _REACTIONS: Final[dict[str, _Reaction]] = {
     ANSWERS: _answer,
     REFUSES: _refuse,
     BAD_REQUEST: _bad_request,
+    UNAUTHORIZED: _unauthorized,
+    FORBIDDEN: _forbidden,
     SERVER_ERROR: _server_error,
     BROKEN_SHAPE: _broken_shape,
     HANGS: _hang,
@@ -261,9 +302,9 @@ class TurnRequest:
 
 async def run_turn(request: TurnRequest) -> TurnOutcome:
     """Run one real turn through the router and report what crossed the boundary."""
-    cloud = _Endpoint(behaviour=request.cloud_tier0, reply=CLOUD_REPLY)
-    local = _Endpoint(behaviour=request.local, reply=LOCAL_REPLY)
-    tier1 = _Endpoint(behaviour=request.tier1, reply=TIER1_REPLY)
+    cloud = LoopbackEndpoint(behaviour=request.cloud_tier0, reply=CLOUD_REPLY)
+    local = LoopbackEndpoint(behaviour=request.local, reply=LOCAL_REPLY)
+    tier1 = LoopbackEndpoint(behaviour=request.tier1, reply=TIER1_REPLY)
     endpoints = (cloud, local, tier1)
     for endpoint in endpoints:
         await endpoint.start()
@@ -277,9 +318,9 @@ async def run_turn(request: TurnRequest) -> TurnOutcome:
 async def _drive(
     request: TurnRequest,
     *,
-    cloud: _Endpoint,
-    local: _Endpoint,
-    tier1: _Endpoint,
+    cloud: LoopbackEndpoint,
+    local: LoopbackEndpoint,
+    tier1: LoopbackEndpoint,
 ) -> TurnOutcome:
     config = _load_config(request, cloud=cloud, local=local, tier1=tier1)
     llm_section = config["llm"]
@@ -312,9 +353,9 @@ async def _drive(
 def _load_config(
     request: TurnRequest,
     *,
-    cloud: _Endpoint,
-    local: _Endpoint,
-    tier1: _Endpoint,
+    cloud: LoopbackEndpoint,
+    local: LoopbackEndpoint,
+    tier1: LoopbackEndpoint,
 ) -> Config:
     """Resolve the effective config through the REAL loader (defaults <- env).
 

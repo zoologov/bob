@@ -43,7 +43,10 @@ src/bob/
                      #   интейка, порты памяти/ответа/tool-calling, RuleModulators и
                      #   социальный словарь (Interlocutor/Trust/Gender, Relationship,
                      #   RosterMember, SulkState; поведение — в social; инварианты значений
-                     #   — в функциях модульного уровня, под мутацией). Чистый inward-safe leaf
+                     #   — в функциях модульного уровня, под мутацией); с BOB-116 — здоровье
+                     #   LLM-провайдеров (provider_health + порты HealthObserver/HealthReader/
+                     #   OwnerAlertSink/SelfReportingProvider), время и русские слова для
+                     #   человека (local_time, ru_text). Чистый inward-safe leaf
                      #   (только stdlib/typing); любой модуль может импортить,
                      #   kernel НЕ импортит модули (правила kernel-no-*).
   <module>/          # 8 ВЕРТИКАЛЬНЫХ бизнес-модулей (domain-first, BOB-062): coding,
@@ -57,13 +60,16 @@ src/bob/
   application/       # Тонкий слой кросс-доменных оркестраторов (нужны несколько
                      #   bounded-context'ов): usecases/ (HandleMessage-оркестратор +
                      #   EssentialRunner/PreComposeGate/privileged_fulfiller/perceive_reaction),
-                     #   router/ (LLMRouter: задача → Tier + правило редакции),
+                     #   router/ (LLMRouter: задача → Tier + правило редакции; монитор
+                     #   здоровья провайдеров и тексты владельцу, BOB-116),
                      #   runtime/ (async-примитивы: AgentRuntime, AsyncEventBus, periodic, retry +
                      #   intake/ — concurrency-шов между поллером и Бобом: ChatDispatcher/
                      #   ChatInbox/TurnScope, BOB-066).
   infrastructure/    # Адаптеры общих компонентов: telegram/ (MultiBotGateway + GUPPI +
-                     #   aiogram), llm/ (OpenAICompatProvider + фабрика + аварийный
-                     #   фолбэк Tier 0 на локальную модель, по умолчанию выключен),
+                     #   aiogram; сигнал владельцу в личку и снимок здоровья для /status,
+                     #   BOB-116), llm/ (OpenAICompatProvider + фабрика + аварийный
+                     #   фолбэк Tier 0 на локальную модель, по умолчанию выключен; доклад
+                     #   здоровья обёрткой Tier-1 и композитом дублёра, BOB-116),
                      #   persistence/ (connection-kernel SqliteConnection + schema.sql),
                      #   config/ (ConfigLoader).
   runtime/           # composition root + entrypoint (единственный слой, зовущий все
@@ -346,7 +352,9 @@ compose/guard), так что конкурентные чаты никогда �
    (personality) читает сигналы — сентимент (Tier 0, локально), частоту, время
    суток, присутствие — и собирает `MoodDelta`. Шаг сентимент→валентность
    асимметричен (диспозиция, BOB-033), а позитивный входящий сначала тянет
-   настроение к baseline — главный анти-депрессант. → см.
+   настроение к baseline — главный анти-депрессант. Сентимент — необязательный шаг хода:
+   он идёт через `LLMRouter.run_optional`, и при недоступном провайдере настроение остаётся
+   прежним, а ход доходит до голосовой двери (BOB-116 D13). → см.
    [personality](domains/personality/README.md).
 3. **Гейт хода: семантическое решение об отклике (BOB-049).** `_gate_turn` решает,
    **берёт ли Боб ход и как** (`REPLY`/`REACT`/`IGNORE`): `DecideResponse`
@@ -371,7 +379,8 @@ compose/guard), так что конкурентные чаты никогда �
    (BOB-006): casual → быстрый **Tier 0**, сложное/длинное/с инструментами →
    качественный **Tier 1**. `shareable_context` сопровождает вызов (память Боба);
    `private_context` **редактируется** перед любым Tier 1 (привязка к политике
-   задачи, не к тиру). При сбое Tier 1 — откат на Tier 0, но ход, чей голос
+   задачи, не к тиру). При сбое Tier 1 (авария связи, а с BOB-116 и 401/403) — откат на
+   Tier 0, но ход, чей голос
    ОСТАЁТСЯ, получает Tier-0 без аварийного локального дублёра (BOB-087.E-M1,
    BOB-096.4). Генерация — существенный шаг (ретрай → честный GUPPI-нотис при
    провале). Запрет отыгрывать GUPPI при этом доезжает не только сюда: он
@@ -395,7 +404,67 @@ compose/guard), так что конкурентные чаты никогда �
 
 Параллельно идёт лёгкий **heartbeat** — фоновые asyncio-задачи рантайма, каждая
 изолирована: ошибка в одном тике не роняет остальные, транзиентный сбой ретраится
-с backoff. Подробнее о сборке и запуске — [`services/runtime.md`](services/runtime.md).
+с backoff. Дорожки, которые думают Tier-0, стоят под гейтом здоровья LLM (ниже).
+Подробнее о сборке и запуске — [`services/runtime.md`](services/runtime.md).
+
+## Здоровье LLM-стека (BOB-116)
+
+Отказ LLM-провайдера больше не беззвучен. В октябре 2026 Tier-0 десять дней отвечал 403, и об
+этом не знал никто: 32 086 строк лога, ноль эпизодов, ноль сигналов (Issues #64). Теперь у
+каждого провайдера есть состояние, переходы которого видит владелец.
+
+```
+              исход каждого HTTP-вызова (успех / отказ + класс из classify_failure)
+  LLMRouter._complete ────────┐     ┌──── FallbackLLMProvider (композит дублёра Tier-0)
+  (голый Tier-0, голый Tier-1 │     │     tier0-primary и tier0-understudy по отдельности
+   ручной сборки)             │     │  ┌── ReportingLLMProvider (обёртка Tier-1 из фабрики:
+                              ▼     ▼  ▼     и роутер, и ToolLoop) — tier1
+                    HealthObserver (порт, kernel/ports.py)
+                              │
+                 ProviderHealthMonitor (application/router/health_monitor.py)
+                   состояние на провайдера = kernel/provider_health.py (чистое ядро)
+                              │ переходы: DEGRADED · REMINDER · RECOVERED
+         ┌────────────────────┼─────────────────────┬────────────────────────┐
+         ▼                    ▼                     ▼                        ▼
+  OwnerAlertSink         logger (1 строка     HealthReader              колбэк on_recovered
+  (kernel/ports.py)       на переход)         → GUPPI /status           → эпизод «я молчал»
+  → infrastructure/                           → гейт дорожек heartbeat    (OUTAGE_RECOVERED,
+    telegram/owner_alert.py                     (TIER0_EFFECTIVE)          только после
+    (бот Боба, личка owner_id,                → breaker композита          настоящей немоты)
+     шаблон health_messages, без LLM)           дублёра
+```
+
+- **Кто докладывает.** Один HTTP-вызов — одна запись. Композит дублёра докладывает облако и
+  дублёр отдельно: мёртвый ключ облака за живым дублёром иначе не увидит никто. Tier-1 фабрика
+  оборачивает докладывающей обёрткой, потому что ход владельца идёт через `ToolLoop` прямо на
+  Tier-1, мимо роутера (ревью M1). Роутер докладывает только провайдера, который не
+  докладывает сам (`_reported_id`).
+- **Класс отказа** — `auth` (401/403), `rate` (429), `server` (5xx/408), `timeout`,
+  `connection`, `shape`, `contract` (`application/router/fallback_policy.classify_failure`).
+  Дублёр — для всех классов, кроме `contract`; `retry.is_transient` не меняется (403 не
+  ретраится).
+- **Пороги** — блок `llm.health`: 5 отказов подряд или 180 с, напоминания 10 мин → 1 ч → 6 ч →
+  сутки, зонд 1 → 2 → 5 мин.
+- **Гейт дорожек.** `inner_monologue` — зонд; `reflect`, `proactive`, `pursue_goals` ждут
+  молча; `poll` и `mood_drift` не гейтятся. Дорожка закрыта, только когда Tier-0 целиком не
+  может думать: облако лежит И дублёра нет, он снят при старте или лежит тоже. Пока дублёр
+  держит, дорожки идут, а в мёртвое облако между зондами не стучится композит (breaker).
+- **Старт.** Дублёр, включённый в конфигурации, но без модели, снимается до перезапуска на
+  роутере и в мониторе сразу, и владелец получает сообщение «стартовал без дублёра».
+- **Сервисная дверь хода не роняет ход** (D13): побочные шаги (настроение, пересмотр
+  черновика) идут через `LLMRouter.run_optional` и при отказе доступности пропускаются.
+- 🔴 **Чего монитор не покрывает.** Отказ самого Telegram: сигнал идёт через Telegram (PRD
+  non-goal). Состояние живёт в памяти процесса: после рестарта монитор начинает со «здоров».
+  Уведомление GUPPI о недоступности на ход в личке уходит в тему группы, а не в личку
+  (`bob-hod`, Issues #71).
+
+Подробности: [`router`](domains/application/features/router/SPEC.md),
+[`llm`](domains/infrastructure/features/llm/SPEC.md),
+[`kernel`](domains/domain/features/kernel/SPEC.md),
+[`telegram`](domains/infrastructure/features/telegram/SPEC.md),
+[`runtime`](services/runtime.md). Живая документация —
+`tests/acceptance/features/llm_health.feature` (S1–S14) и сценарии S25/S26 в
+`tests/acceptance/features/tier0_fallback.feature`.
 
 ## Intake-развязка: поллер ⇄ Боб (BOB-066 Срез 2.1)
 

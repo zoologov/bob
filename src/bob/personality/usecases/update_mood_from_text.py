@@ -32,6 +32,14 @@ talking to people").
 
 This layer only orchestrates: every bound/clamp and the vector math live in the
 domain, so the use-case stays thin and the rules stay testable without an LLM.
+
+🔴 The mood read is a SIDE step of the turn (BOB-116 D13). The sentiment goes through
+:meth:`LLMRouter.run_optional`: when Tier 0 cannot serve it (a revoked key, an outage) the
+whole update is skipped and the mood is returned exactly as it was — not reset to neutral,
+and without the frequency/time/presence nudges either, so an outage leaves no trace in how
+Bob feels. Until D13 that 403 propagated out of the turn before the voice door, and with
+no understudy the room got silence instead of the honest GUPPI notice. A failure that is
+not an outage (a contract defect, a database error) still propagates.
 """
 
 from __future__ import annotations
@@ -113,6 +121,8 @@ class UpdateMoodFromText:
         update is the (disposition-scaled) per-signal delta alone — backward-compatible.
         """
         sentiment = await self._classify_sentiment(signals.text)
+        if sentiment is None:
+            return mood  # Tier 0 could not serve the read: the step is skipped (BOB-116 D13)
         # "Displace the low" FIRST (BOB-033 .3): a warm message charges Bob back up
         # toward his baseline before the per-signal delta lands, so the warm exchange
         # genuinely lifts him out of a dip rather than only nudging valence.
@@ -130,8 +140,8 @@ class UpdateMoodFromText:
             return mood
         return mood.lift_toward(target, rate=self._disposition.social_lift_rate())
 
-    async def _classify_sentiment(self, text: str) -> str:
-        """Run Tier 0 sentiment classification through the router."""
+    async def _classify_sentiment(self, text: str) -> str | None:
+        """Run Tier 0 sentiment classification; ``None`` when Tier 0 could not serve it."""
         request = LLMRequest(
             task_type=TaskType.SENTIMENT,
             messages=[
@@ -139,8 +149,8 @@ class UpdateMoodFromText:
                 {"role": "user", "content": text},
             ],
         )
-        label = await self._router.run(request)
-        return label.strip().casefold()
+        label = await self._router.run_optional(request)
+        return None if label is None else label.strip().casefold()
 
     def _valence_step(self, sentiment: str) -> float:
         """Asymmetric sentiment→valence step: a warm message lifts more than a cold dips.

@@ -537,7 +537,7 @@
       "src": "usecases"
     }
   ],
-  "generated_at": "2026-10-21T08:51:35.594070+00:00",
+  "generated_at": "2026-10-21T21:12:17.361992+00:00",
   "layer_order": "top-down",
   "layer_rules": [
     {
@@ -612,252 +612,252 @@
       {
         "file": "",
         "line": null,
-        "message": "Rule 'capabilities-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'capabilities-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "capabilities-no-composition-root",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'coding-internals-no-adapters-untrusted_repo' cannot fire: its `from` glob 'src/bob/coding/untrusted_repo.py' matches 0 of 385 indexed source files. It is counted as evaluated but checks nothing",
+        "message": "Rule 'coding-internals-no-adapters-untrusted_repo' cannot fire: its `from` glob 'src/bob/coding/untrusted_repo.py' matches 0 of 396 indexed source files. It is counted as evaluated but checks nothing",
         "rule": "coding-internals-no-adapters-untrusted_repo",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'coding-internals-no-usecases-untrusted_repo' cannot fire: its `from` glob 'src/bob/coding/untrusted_repo.py' matches 0 of 385 indexed source files. It is counted as evaluated but checks nothing",
+        "message": "Rule 'coding-internals-no-usecases-untrusted_repo' cannot fire: its `from` glob 'src/bob/coding/untrusted_repo.py' matches 0 of 396 indexed source files. It is counted as evaluated but checks nothing",
         "rule": "coding-internals-no-usecases-untrusted_repo",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'coding-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'coding-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "coding-no-composition-root",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'conversation-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'conversation-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "conversation-no-composition-root",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-boundary-no-capabilities-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-boundary-no-capabilities-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "identity-boundary-no-capabilities-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-boundary-no-coding-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-boundary-no-coding-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "identity-boundary-no-coding-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-boundary-no-conversation-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-boundary-no-conversation-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "identity-boundary-no-conversation-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-boundary-no-interactive-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-boundary-no-interactive-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "identity-boundary-no-interactive-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-boundary-no-memory-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-boundary-no-memory-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "identity-boundary-no-memory-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-boundary-no-personality-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-boundary-no-personality-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "identity-boundary-no-personality-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-boundary-no-presence-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-boundary-no-presence-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "identity-boundary-no-presence-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-boundary-no-proactivity-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-boundary-no-proactivity-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "identity-boundary-no-proactivity-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-boundary-no-social-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-boundary-no-social-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "identity-boundary-no-social-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-internals-no-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-internals-no-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "identity-internals-no-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "identity-no-composition-root",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-usecases-no-adapters' cannot fire: its `from` glob 'src/bob/identity/usecases/*' matches 0 of 385 indexed source files. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-usecases-no-adapters' cannot fire: its `from` glob 'src/bob/identity/usecases/*' matches 0 of 396 indexed source files. It is counted as evaluated but checks nothing",
         "rule": "identity-usecases-no-adapters",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-usecases-no-infra' cannot fire: its `from` glob 'src/bob/identity/usecases/*' matches 0 of 385 indexed source files. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-usecases-no-infra' cannot fire: its `from` glob 'src/bob/identity/usecases/*' matches 0 of 396 indexed source files. It is counted as evaluated but checks nothing",
         "rule": "identity-usecases-no-infra",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'interactive-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'interactive-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "interactive-no-composition-root",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'memory-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'memory-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "memory-no-composition-root",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'personality-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'personality-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "personality-no-composition-root",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-boundary-no-capabilities-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-boundary-no-capabilities-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "presence-boundary-no-capabilities-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-boundary-no-coding-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-boundary-no-coding-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "presence-boundary-no-coding-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-boundary-no-conversation-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-boundary-no-conversation-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "presence-boundary-no-conversation-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-boundary-no-identity-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-boundary-no-identity-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "presence-boundary-no-identity-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-boundary-no-interactive-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-boundary-no-interactive-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "presence-boundary-no-interactive-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-boundary-no-memory-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-boundary-no-memory-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "presence-boundary-no-memory-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-boundary-no-personality-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-boundary-no-personality-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "presence-boundary-no-personality-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-boundary-no-proactivity-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-boundary-no-proactivity-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "presence-boundary-no-proactivity-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-boundary-no-social-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-boundary-no-social-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "presence-boundary-no-social-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-internals-no-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-internals-no-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "presence-internals-no-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "presence-no-composition-root",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-usecases-no-adapters' cannot fire: its `from` glob 'src/bob/presence/usecases/*' matches 0 of 385 indexed source files. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-usecases-no-adapters' cannot fire: its `from` glob 'src/bob/presence/usecases/*' matches 0 of 396 indexed source files. It is counted as evaluated but checks nothing",
         "rule": "presence-usecases-no-adapters",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-usecases-no-infra' cannot fire: its `from` glob 'src/bob/presence/usecases/*' matches 0 of 385 indexed source files. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-usecases-no-infra' cannot fire: its `from` glob 'src/bob/presence/usecases/*' matches 0 of 396 indexed source files. It is counted as evaluated but checks nothing",
         "rule": "presence-usecases-no-infra",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'proactivity-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'proactivity-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "proactivity-no-composition-root",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'social-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'social-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "social-no-composition-root",
         "severity": "warn"
       }
@@ -868,9 +868,9 @@
   "nodes": [
     {
       "activity": {
-        "commits_30d": 8,
+        "commits_30d": 15,
         "level": "hot",
-        "lines_30d": 2271
+        "lines_30d": 6253
       },
       "debt": {
         "inside": {
@@ -914,7 +914,7 @@
         "omitted": 0
       },
       "source": "src/bob/",
-      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob",
+      "source_url": "https://github.com/zoologov/bob/tree/6040790720a74687d51b5e4da209c065d7fa20b3/src/bob",
       "summary": "Bob — Telegram-native companion agent: GUPPI process, LLM Tier 0/1 router with privacy redaction, SQLite+FTS5 memory, Higher Mind, Genesis, heartbeat. Two admin bots in one process (BOB-003): a MultiBotGateway (BotRegistry) polls both Bob and GUPPI, dedups cross-bot by (chat_id, message_id), and a central router dispatches by identity+scope — Bob lives in his forum topic, GUPPI is the gatekeeper in General with a visible unauthorized reject + owner commands. aiogram transport (native draft streaming + Rich Messages), owner/allowlist/chat-scope authz, resilient ticks, and a capability seam (registry + tool-loop) executed by GUPPI.",
       "symbols": 0,
       "tags": [],
@@ -930,9 +930,9 @@
     },
     {
       "activity": {
-        "commits_30d": 3,
+        "commits_30d": 9,
         "level": "cool",
-        "lines_30d": 359
+        "lines_30d": 1792
       },
       "debt": {
         "inside": {
@@ -984,7 +984,7 @@
         "omitted": 0
       },
       "source": "src/bob/application/",
-      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/application",
+      "source_url": "https://github.com/zoologov/bob/tree/6040790720a74687d51b5e4da209c065d7fa20b3/src/bob/application",
       "summary": "GUPPI orchestration: AgentRuntime + AsyncEventBus, LLMRouter (tier routing + privacy redaction), use-cases (HandleMessage, RunGenesis, UpdateMoodFromText), resilient heartbeat ticks (retry/backoff), the Authorizer access policy and the capability seam (CapabilityRegistry + ToolLoop + recall_memory). Depends on domain via ports; never imports infrastructure.",
       "symbols": 1,
       "tags": [
@@ -1002,9 +1002,9 @@
     },
     {
       "activity": {
-        "commits_30d": 8,
+        "commits_30d": 14,
         "level": "warm",
-        "lines_30d": 1779
+        "lines_30d": 2911
       },
       "debt": {
         "inside": {
@@ -1068,33 +1068,56 @@
           "EpisodeReader",
           "EventBus",
           "Gender",
+          "HealthObserver",
+          "HealthPolicy",
+          "HealthReader",
+          "HealthState",
+          "HealthView",
           "Interlocutor",
           "InterlocutorKind",
           "LLMProvider",
           "MemoryRecall",
           "MessageReceived",
+          "OwnerAlertSink",
+          "ProviderHealth",
           "Relationship",
           "ReplyGateway",
           "RosterMember",
           "RuleModulators",
+          "SelfReportingProvider",
+          "Speaker",
           "SulkState",
           "ToolCall",
           "ToolCallResult",
           "ToolCallingProvider",
+          "Transition",
           "Trust",
           "UnderstudyBackedProvider",
+          "duration",
+          "failure_now",
+          "failure_report",
+          "failure_then",
+          "in_local_zone",
           "is_owner_private",
           "next_backoff",
+          "next_probe_interval",
+          "on_failure",
+          "on_success",
+          "outage_duration",
           "outage_state",
+          "period",
+          "plural",
+          "probe_due",
+          "provider_speaker",
           "strictest_visibility",
           "under_root"
         ],
-        "omitted": 0
+        "omitted": 1
       },
       "source": "src/bob/kernel/",
-      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/kernel",
+      "source_url": "https://github.com/zoologov/bob/tree/6040790720a74687d51b5e4da209c065d7fa20b3/src/bob/kernel",
       "summary": "Umbrella of the seven module-vertical bounded contexts (personality, conversation, memory, proactivity, coding, capabilities, social) plus the shared `kernel` (infra-neutral cross-module contracts — the domain LAYER proper). Each vertical spans domain+usecases+adapters inside its own boundary; the kernel is pure logic + Protocol definitions: no I/O, no LLM, no transport.",
-      "symbols": 30,
+      "symbols": 66,
       "tags": [],
       "tests": {
         "count": 0,
@@ -1108,9 +1131,9 @@
     },
     {
       "activity": {
-        "commits_30d": 2,
+        "commits_30d": 6,
         "level": "cool",
-        "lines_30d": 31
+        "lines_30d": 965
       },
       "debt": {
         "inside": {
@@ -1155,7 +1178,7 @@
         "omitted": 0
       },
       "source": "src/bob/infrastructure/",
-      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/infrastructure",
+      "source_url": "https://github.com/zoologov/bob/tree/6040790720a74687d51b5e4da209c065d7fa20b3/src/bob/infrastructure",
       "summary": "Port adapters: aiogram Telegram gateway (long-polling + authz gate, native draft streaming, Rich Messages, markdown<->RichMessage, topic-thread reply pinning), MultiBotGateway (BotRegistry + cross-bot dedup + central identity/scope router) and the GuppiHandler gatekeeper (visible reject + owner commands), OpenAI-compatible LLM provider (Tier 0/1 + tool-calling), SQLite+FTS5 persistence, KvAllowlistStore and SoulStore, two-bot layered config loader.",
       "symbols": 0,
       "tags": [
@@ -1174,7 +1197,7 @@
     {
       "activity": {
         "commits_30d": 3,
-        "level": "warm",
+        "level": "cool",
         "lines_30d": 163
       },
       "debt": {
@@ -1274,7 +1297,7 @@
         "omitted": 54
       },
       "source": "src/bob/capabilities/",
-      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/capabilities",
+      "source_url": "https://github.com/zoologov/bob/tree/6040790720a74687d51b5e4da209c065d7fa20b3/src/bob/capabilities",
       "summary": "Capabilities module («Bob's tools») — the full vertical GUPPI tool seam in one place: `ports.py` (Capability contract + web/url/diagram/introspection/outbound ports; the LLM tool-calling vocabulary lives in `kernel`, BOB-113) + pure `diagrams`/`introspection` cores (PrivacyGuard, tracker intent/digest, graph form + impact digest, health form + health digest — every dynamic argv slot is validated and every long report is condensed BEFORE it reaches a chat), `usecases/` (CapabilityRegistry + ToolLoop and the skills: recall/search memory, read code/url, web search, render diagram, progress announcer; repo navigation — list_dir / find_file / read_code (BOB-067); read-only dev introspection — recent_commits git history + list_tasks / show_task / task_comments over the beads tracker (BOB-081); and the read-only beadloom trio — draw_architecture (the mermaid source of the graph), architecture_impact («что сломается, если тронуть X») and project_health (status / prime / doctor / sync-check / lint / diff) (BOB-091)), and `adapters/` (aiohttp URL reader behind an SSRF guard, mermaid renderer, beadloom/bd/git introspector over a fixed read-only allowlist — never a shell, Qwen web-search transport). Domain-first slice BOB-062.4.",
       "symbols": 228,
       "tags": [
@@ -1292,9 +1315,9 @@
     },
     {
       "activity": {
-        "commits_30d": 2,
-        "level": "warm",
-        "lines_30d": 167
+        "commits_30d": 3,
+        "level": "cool",
+        "lines_30d": 174
       },
       "debt": {
         "reasons": [],
@@ -1391,7 +1414,7 @@
         "omitted": 61
       },
       "source": "src/bob/coding/",
-      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/coding",
+      "source_url": "https://github.com/zoologov/bob/tree/6040790720a74687d51b5e4da209c065d7fa20b3/src/bob/coding",
       "summary": "Coding module («Bob writes code») — the GATED vertical (plan → approve → PR) plus the shared coding-session surface: `ports.py` + pure domain logic (state/naming/sandbox+push policy/stream-json), `usecases/` orchestration, and `adapters/` (Claude Code CLI, git worktree, gh PR, session store, indicator). Domain-first slice BOB-062.1; the live terminal split out into `interactive` in BOB-087.E.",
       "symbols": 200,
       "tags": [
@@ -1409,9 +1432,9 @@
     },
     {
       "activity": {
-        "commits_30d": 0,
-        "level": "quiet",
-        "lines_30d": 0
+        "commits_30d": 1,
+        "level": "cool",
+        "lines_30d": 180
       },
       "debt": {
         "reasons": [],
@@ -1445,14 +1468,15 @@
       "parent": "bob-infrastructure",
       "public_symbols": {
         "names": [
-          "ConfigLoader"
+          "ConfigLoader",
+          "coerce_env_value"
         ],
         "omitted": 0
       },
       "source": "src/bob/infrastructure/config/",
-      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/infrastructure/config",
+      "source_url": "https://github.com/zoologov/bob/tree/6040790720a74687d51b5e4da209c065d7fa20b3/src/bob/infrastructure/config",
       "summary": "Config adapter — two-bot layered config loader (env + files) for the running process.",
-      "symbols": 3,
+      "symbols": 10,
       "tags": [
         "layer-infra"
       ],
@@ -1469,7 +1493,7 @@
     {
       "activity": {
         "commits_30d": 3,
-        "level": "warm",
+        "level": "cool",
         "lines_30d": 140
       },
       "debt": {
@@ -1566,7 +1590,7 @@
         "omitted": 51
       },
       "source": "src/bob/conversation/",
-      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/conversation",
+      "source_url": "https://github.com/zoologov/bob/tree/6040790720a74687d51b5e4da209c065d7fa20b3/src/bob/conversation",
       "summary": "Conversation module («how a turn is conducted») — the full turn-conduct vertical in one place: `ports.py` (conversation-floor store, closer log, ZoneClassifier) + pure domain (addressivity, conversation + floor continuity, brevity, engagement, zone classifier, interim line, response choice, response/volatility judgments), `usecases/` (decide_response), and `adapters/` (Tier-0 response/volatility/interim judges + SQLite conversation-floor & closer-log stores). Depends on personality one-directionally. Domain-first slice BOB-062.6a.",
       "symbols": 185,
       "tags": [
@@ -1659,7 +1683,7 @@
         "omitted": 0
       },
       "source": "src/bob/identity/",
-      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/identity",
+      "source_url": "https://github.com/zoologov/bob/tree/6040790720a74687d51b5e4da209c065d7fa20b3/src/bob/identity",
       "summary": "Identity module («кем Боб представляется GitHub'у») — github-идентичность как отдельный bounded context: чистые ядра (Purpose→Principal — work пушит только в форк, propose лишь читает апстрим; реквизиты принципала из конфига с проверкой формы; claims App-JWT RS256 с поправкой на расхождение часов и предел GitHub; вердикт «токен годен / пора обновить» с обновлением ЗАРАНЕЕ, а не по факту 401) и `adapters/` (подпись настоящим `openssl dgst -sha256 -sign` — без новых зависимостей; транспорт двух ручек GitHub App API на aiohttp — секрет только в заголовке, никогда в argv; кэш installation-токенов на принципала). Заведён в BOB-089 срез B; `coding` его не импортит, провайдер приходит на композиции.",
       "symbols": 40,
       "tags": [
@@ -1770,7 +1794,7 @@
         "omitted": 2
       },
       "source": "src/bob/interactive/",
-      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/interactive",
+      "source_url": "https://github.com/zoologov/bob/tree/6040790720a74687d51b5e4da209c065d7fa20b3/src/bob/interactive",
       "summary": "Interactive module («Боб держит живой терминал») — the live bidirectional `claude` session in the owner's DM: pure domain (mode intent, resume policy + negotiation, argv policy, the mode's voice, the live-session holder), `usecases/` (session manager, teardown, DM intake router, boot-time sweep of orphaned sessions), and `adapters/` (the persistent stream-json runner). Rests on coding's shared session surface; coding never imports it. Split out of `coding` in BOB-087.E.",
       "symbols": 76,
       "tags": [
@@ -1831,33 +1855,56 @@
           "EpisodeReader",
           "EventBus",
           "Gender",
+          "HealthObserver",
+          "HealthPolicy",
+          "HealthReader",
+          "HealthState",
+          "HealthView",
           "Interlocutor",
           "InterlocutorKind",
           "LLMProvider",
           "MemoryRecall",
           "MessageReceived",
+          "OwnerAlertSink",
+          "ProviderHealth",
           "Relationship",
           "ReplyGateway",
           "RosterMember",
           "RuleModulators",
+          "SelfReportingProvider",
+          "Speaker",
           "SulkState",
           "ToolCall",
           "ToolCallResult",
           "ToolCallingProvider",
+          "Transition",
           "Trust",
           "UnderstudyBackedProvider",
+          "duration",
+          "failure_now",
+          "failure_report",
+          "failure_then",
+          "in_local_zone",
           "is_owner_private",
           "next_backoff",
+          "next_probe_interval",
+          "on_failure",
+          "on_success",
+          "outage_duration",
           "outage_state",
+          "period",
+          "plural",
+          "probe_due",
+          "provider_speaker",
           "strictest_visibility",
           "under_root"
         ],
-        "omitted": 0
+        "omitted": 1
       },
       "source": "src/bob/kernel/",
-      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/kernel",
+      "source_url": "https://github.com/zoologov/bob/tree/6040790720a74687d51b5e4da209c065d7fa20b3/src/bob/kernel",
       "summary": "Shared kernel — the infra-neutral contracts every vertical module rests on: the runtime seams (Clock, EventBus, EventHandler, DomainEvent, LLMProvider), the shared value objects (LLMMessage, JsonValue), the intake events (MessageReceived, BobMessageReaction), the memory/reply ports (EpisodeReader, MemoryRecall, Recalled, ReplyGateway, BobUserIdSource), the LLM tool-calling vocabulary (ToolDefinition, ToolCall, ToolCallResult, ToolCallingProvider, ToolLoopMessage), the self-improvement RuleModulators, and the social vocabulary — who talks to Bob and how he stands with them (Interlocutor, InterlocutorKind, Trust, Gender, Relationship, RosterMember, SulkState) — whose behaviour stays in `social` (BOB-113). Pure Protocol/type/value definitions; no I/O. Every module may import from here; the kernel imports from no module.",
-      "symbols": 30,
+      "symbols": 66,
       "tags": [
         "layer-domain"
       ],
@@ -1873,9 +1920,9 @@
     },
     {
       "activity": {
-        "commits_30d": 1,
-        "level": "cool",
-        "lines_30d": 20
+        "commits_30d": 4,
+        "level": "warm",
+        "lines_30d": 458
       },
       "debt": {
         "reasons": [],
@@ -1915,17 +1962,24 @@
         "names": [
           "FallbackLLMProvider",
           "OpenAICompatProvider",
+          "ReportingLLMProvider",
           "ToolCallingFallbackLLMProvider",
+          "ToolCallingReportingLLMProvider",
+          "UnderstudyCheck",
+          "UnderstudyEndpoint",
           "build_fallback_provider",
+          "build_reporting_provider",
           "build_tier_providers",
-          "build_web_search_provider"
+          "build_web_search_provider",
+          "probe_understudy",
+          "understudy_endpoint"
         ],
         "omitted": 0
       },
       "source": "src/bob/infrastructure/llm/",
-      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/infrastructure/llm",
+      "source_url": "https://github.com/zoologov/bob/tree/6040790720a74687d51b5e4da209c065d7fa20b3/src/bob/infrastructure/llm",
       "summary": "LLM adapter — OpenAI-compatible provider for Tier 0/1 completion + tool-calling (Ollama/Qwen backend).",
-      "symbols": 24,
+      "symbols": 34,
       "tags": [
         "layer-infra"
       ],
@@ -1941,9 +1995,9 @@
     },
     {
       "activity": {
-        "commits_30d": 2,
-        "level": "cool",
-        "lines_30d": 69
+        "commits_30d": 5,
+        "level": "warm",
+        "lines_30d": 405
       },
       "debt": {
         "reasons": [],
@@ -2006,6 +2060,7 @@
           "NoOpSelfActionRecorder",
           "OllamaEmbedder",
           "OllamaReranker",
+          "OutageSpan",
           "Register",
           "RegisterResolver",
           "RenderedSelfAction",
@@ -2034,9 +2089,9 @@
         "omitted": 0
       },
       "source": "src/bob/memory/",
-      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/memory",
+      "source_url": "https://github.com/zoologov/bob/tree/6040790720a74687d51b5e4da209c065d7fa20b3/src/bob/memory",
       "summary": "Memory module («Bob remembers») — the full vertical capability in one place: `ports.py` (MemoryRepo, SelfActionRecorder, Embedder, Reranker — the read ports MemoryRecall/EpisodeReader and `Recalled` live in `kernel`, BOB-113) + pure `entities`, `usecases/` (extract facts, consolidate, dedup), and `adapters/` (FTS5/hybrid recall + local Ollama embedder/reranker). Domain-first slice BOB-062.2.",
-      "symbols": 87,
+      "symbols": 90,
       "tags": [
         "module-vertical"
       ],
@@ -2094,7 +2149,7 @@
         "omitted": 0
       },
       "source": "src/bob/infrastructure/persistence/",
-      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/infrastructure/persistence",
+      "source_url": "https://github.com/zoologov/bob/tree/6040790720a74687d51b5e4da209c065d7fa20b3/src/bob/infrastructure/persistence",
       "summary": "Persistence kernel — the shared `SqliteConnection` (open/WAL/foreign_keys/sqlite-vec load/`schema.sql`/kv/close) that the memory adapter and the 13 per-module durable stores read through the injected `connection` seam. Pure I/O: carries no memory/business logic — those realisations live in their owning modules' `adapters/` (BOB-062.2–.7b).",
       "symbols": 2,
       "tags": [
@@ -2112,9 +2167,9 @@
     },
     {
       "activity": {
-        "commits_30d": 5,
-        "level": "warm",
-        "lines_30d": 116
+        "commits_30d": 6,
+        "level": "cool",
+        "lines_30d": 134
       },
       "debt": {
         "reasons": [],
@@ -2210,7 +2265,7 @@
         "omitted": 50
       },
       "source": "src/bob/personality/",
-      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/personality",
+      "source_url": "https://github.com/zoologov/bob/tree/6040790720a74687d51b5e4da209c065d7fa20b3/src/bob/personality",
       "summary": "Personality module («who Bob is») — the full character vertical in one place: `ports.py` + pure domain (Mood five-axis affect, TasteEngine + evolution, disposition, fascination + phantoms, language/profanity, expression incl. verbosity/engagement vocabulary, voice, the reaction family, negotiation stance, reflection, absence), `usecases/` (update mood from text, apply/reappraise/parse reflection, evolve fascination/phantoms), and `adapters/` (Tier-0 reaction judge + SQLite/kv fascination & notable-reaction stores). Domain-first slice BOB-062.6a. (Being-received reaction perception is a cross-domain use-case over mood + relationship, so it lives in `application/usecases/perceive_reaction`, not here.)",
       "symbols": 153,
       "tags": [
@@ -2228,9 +2283,9 @@
     },
     {
       "activity": {
-        "commits_30d": 0,
-        "level": "quiet",
-        "lines_30d": 0
+        "commits_30d": 1,
+        "level": "cool",
+        "lines_30d": 19
       },
       "debt": {
         "reasons": [],
@@ -2306,7 +2361,7 @@
         "omitted": 0
       },
       "source": "src/bob/presence/",
-      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/presence",
+      "source_url": "https://github.com/zoologov/bob/tree/6040790720a74687d51b5e4da209c065d7fa20b3/src/bob/presence",
       "summary": "Presence module («Bob's living rhythm») — the ритм-слой of human group presence: `ports.py` + pure domain (OutgoingActivity rolling window, ShareOfVoicePolicy soft ambient ceiling with focus-bypass, NaturalDelayPolicy human reply floor, ReactionBudget gentle like budget, RhythmConfig tunables) + `adapters/` (episodic-log OutgoingActivityStore). Domain-first slice BOB-066.2.3; inert behind the `presence.rhythm` flag until the epic ships.",
       "symbols": 40,
       "tags": [
@@ -2422,7 +2477,7 @@
         "omitted": 33
       },
       "source": "src/bob/proactivity/",
-      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/proactivity",
+      "source_url": "https://github.com/zoologov/bob/tree/6040790720a74687d51b5e4da209c065d7fa20b3/src/bob/proactivity",
       "summary": "Proactivity module («Bob's background life») — the full vertical capability in one place: `ports.py` + pure domain (drive-model urge/governance/social-energy, goals graph, self-improvement rules — the RuleModulators value they build lives in `kernel`, BOB-113), `usecases/` (engine/tick, plan/pursue goals, detect-patterns/announce-rules), and `adapters/` (proactivity/goal/self-improvement stores + live read-seams). Domain-first slice BOB-062.3.",
       "symbols": 143,
       "tags": [
@@ -2440,9 +2495,9 @@
     },
     {
       "activity": {
-        "commits_30d": 0,
-        "level": "quiet",
-        "lines_30d": 0
+        "commits_30d": 6,
+        "level": "hot",
+        "lines_30d": 1331
       },
       "debt": {
         "reasons": [],
@@ -2489,23 +2544,32 @@
       "public_symbols": {
         "names": [
           "GenerationDoor",
+          "HealthNotice",
           "LLMRequest",
           "LLMRouter",
+          "NoopHealthObserver",
           "OutageVoice",
+          "ProviderHealthMonitor",
+          "Situation",
           "TaskType",
           "VoiceCanon",
+          "classify_failure",
+          "degraded_text",
           "door_for",
           "fold_voice_canon",
+          "recovered_text",
+          "reminder_text",
           "select_reply_tier",
           "should_fall_back",
+          "understudy_missing_text",
           "who_may_answer_for_bob"
         ],
         "omitted": 0
       },
       "source": "src/bob/application/router/",
-      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/application/router",
+      "source_url": "https://github.com/zoologov/bob/tree/6040790720a74687d51b5e4da209c065d7fa20b3/src/bob/application/router",
       "summary": "LLMRouter — Tier 0/1 model routing with privacy redaction before any model call.",
-      "symbols": 19,
+      "symbols": 34,
       "tags": [
         "layer-application"
       ],
@@ -2521,9 +2585,9 @@
     },
     {
       "activity": {
-        "commits_30d": 3,
-        "level": "cool",
-        "lines_30d": 100
+        "commits_30d": 6,
+        "level": "hot",
+        "lines_30d": 583
       },
       "debt": {
         "reasons": [
@@ -2579,6 +2643,7 @@
       "public_symbols": {
         "names": [
           "Application",
+          "LlmHealth",
           "RhythmWiring",
           "RosterConfig",
           "SystemClock",
@@ -2588,6 +2653,10 @@
           "build_disclosure_consent_gate",
           "build_disclosure_guard",
           "build_endorsement_seeder",
+          "build_health_policy",
+          "build_llm_health",
+          "build_outage_episode_writer",
+          "build_owner_alert_sink",
           "build_register_resolver",
           "build_rhythm_wiring",
           "build_room_mood_modulator",
@@ -2596,19 +2665,23 @@
           "build_self_action_recorder",
           "build_send_to_chat",
           "build_staleness_reassessor",
+          "build_understudy_stand_down",
           "build_work_journal_recorder",
           "collect_requirements",
+          "configured_understudy",
+          "health_owner_name",
           "known_destinations",
           "main",
           "report_tool_health",
+          "report_understudy",
           "staleness_enabled"
         ],
         "omitted": 0
       },
       "source": "src/bob/runtime/",
-      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/runtime",
+      "source_url": "https://github.com/zoologov/bob/tree/6040790720a74687d51b5e4da209c065d7fa20b3/src/bob/runtime",
       "summary": "Composition root (`src/bob/runtime/` package + the thin `app.py` shim) — the only layer allowed to wire all layers + all vertical modules at once: `config.py` loads layered config (incl. `_REPO_ROOT`), `wiring/*` build infrastructure adapters + compose application policy/use-cases per bounded context, `composition.py` (`build_application` + `Application`) subscribes handlers to the EventBus and registers ticks + Telegram polling, `clock.py` provides `SystemClock`, and `main.py` runs Genesis once and starts the process.",
-      "symbols": 105,
+      "symbols": 117,
       "tags": [
         "layer-runtime"
       ],
@@ -2624,9 +2697,9 @@
     },
     {
       "activity": {
-        "commits_30d": 2,
+        "commits_30d": 5,
         "level": "cool",
-        "lines_30d": 30
+        "lines_30d": 132
       },
       "debt": {
         "reasons": [],
@@ -2682,6 +2755,7 @@
           "TurnScope",
           "batch_grew",
           "derive_turn_seed",
+          "health_gated",
           "is_transient",
           "make_focus_predicate",
           "message_is_focused",
@@ -2693,9 +2767,9 @@
         "omitted": 0
       },
       "source": "src/bob/application/runtime/",
-      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/application/runtime",
+      "source_url": "https://github.com/zoologov/bob/tree/6040790720a74687d51b5e4da209c065d7fa20b3/src/bob/application/runtime",
       "summary": "Application runtime — AgentRuntime, AsyncEventBus, and resilient heartbeat ticks (retry/backoff); the intake events it carries live in the shared kernel. Distinct from the `runtime` composition root.",
-      "symbols": 26,
+      "symbols": 29,
       "tags": [
         "layer-application"
       ],
@@ -2712,7 +2786,7 @@
     {
       "activity": {
         "commits_30d": 3,
-        "level": "hot",
+        "level": "warm",
         "lines_30d": 428
       },
       "debt": {
@@ -2810,7 +2884,7 @@
         "omitted": 45
       },
       "source": "src/bob/social/",
-      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/social",
+      "source_url": "https://github.com/zoologov/bob/tree/6040790720a74687d51b5e4da209c065d7fa20b3/src/bob/social",
       "summary": "Social module («Bob distinguishes people») — the full vertical capability in one place: `ports.py` + pure domain behaviour over the shared-kernel social values (classify an interlocutor, self-gender inference, first-impression, relationship accrual, roster building, sulk dynamics — the values Interlocutor/Gender/Relationship/RosterMember/SulkState live in `kernel`, BOB-113) + `permission/` value objects, `usecases/` (authorizer/sender+reactor perception, permission flow/execution, first-impression/relationship/sulk sources, run-genesis), and `adapters/` (first-impression/relationship/sulk/allowlist/permission-request/soul stores + privilege-judge). Domain-first slice BOB-062.5.",
       "symbols": 155,
       "tags": [
@@ -2828,9 +2902,9 @@
     },
     {
       "activity": {
-        "commits_30d": 2,
-        "level": "cool",
-        "lines_30d": 11
+        "commits_30d": 5,
+        "level": "warm",
+        "lines_30d": 327
       },
       "debt": {
         "reasons": [],
@@ -2890,6 +2964,8 @@
           "MessageReactionCountUpdatedLike",
           "MessageReactionUpdatedLike",
           "MultiBotGateway",
+          "NoopOwnerAlert",
+          "OwnerAlert",
           "ProactivityStoreLike",
           "PursuitStoreLike",
           "RichMarkdownSender",
@@ -2898,14 +2974,15 @@
           "TelegramGateway",
           "TelegramOutboundMessenger",
           "UpdateLike",
-          "is_reaction_update"
+          "is_reaction_update",
+          "render_health_status"
         ],
         "omitted": 0
       },
       "source": "src/bob/infrastructure/telegram/",
-      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/infrastructure/telegram",
+      "source_url": "https://github.com/zoologov/bob/tree/6040790720a74687d51b5e4da209c065d7fa20b3/src/bob/infrastructure/telegram",
       "summary": "Telegram adapter — aiogram gateway (long-polling, authz gate, native draft streaming, Rich Messages, topic-thread reply pinning), MultiBotGateway (BotRegistry + cross-bot dedup + identity/scope router) and the GuppiHandler gatekeeper.",
-      "symbols": 63,
+      "symbols": 71,
       "tags": [
         "layer-infra"
       ],
@@ -2922,7 +2999,7 @@
     {
       "activity": {
         "commits_30d": 3,
-        "level": "hot",
+        "level": "warm",
         "lines_30d": 329
       },
       "debt": {
@@ -3013,7 +3090,7 @@
         "omitted": 0
       },
       "source": "src/bob/application/usecases/",
-      "source_url": "https://github.com/zoologov/bob/tree/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/application/usecases",
+      "source_url": "https://github.com/zoologov/bob/tree/6040790720a74687d51b5e4da209c065d7fa20b3/src/bob/application/usecases",
       "summary": "Use-cases — HandleMessage, RunGenesis, UpdateMoodFromText, goal/memory/reflection flows orchestrating domain + ports.",
       "symbols": 55,
       "tags": [
@@ -3033,8 +3110,8 @@
   "schema_version": 2,
   "scope": "architecture",
   "source_ref": {
-    "commit": "29b589ffd6be7a24190106b3480d62aca4fb98a2",
-    "linked": "29b589ffd6be7a24190106b3480d62aca4fb98a2",
+    "commit": "6040790720a74687d51b5e4da209c065d7fa20b3",
+    "linked": "6040790720a74687d51b5e4da209c065d7fa20b3",
     "pushed": true
   }
 }

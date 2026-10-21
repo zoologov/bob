@@ -26,12 +26,43 @@ source `src/bob/application/router/`) — единственная точка, �
     (`shareable_context` уходит на любой тир, `private_context` — только Tier 0).
   - `LLMRouter.run(...)` — маршрутизировать задачу на тир, редактируя приватный контекст
     перед Tier 1, и при сбое сделать РОВНО ОДНУ спасательную попытку — по матрице ниже.
+  - `LLMRouter.run_optional(...)` (BOB-116 D13) — тот же путь для побочного шага хода,
+    который вызывающий объявил необязательным: настроение по входящей реплике
+    (`UpdateMoodFromText`) и пересмотр черновика перед отправкой (`LlmStalenessJudge`).
+    Если последняя попытка упала по вердикту `should_fall_back` (auth, rate, server,
+    timeout, connection, shape), шаг пропускается: одна строка `WARNING` без стека и
+    `None`. Отказ `contract` и ошибка не провайдера (БД, `TypeError`) пробрасываются: шов
+    пропускает недоступность, а не прячет дефект. До D13 403 на классификаторе настроения
+    ронял ход раньше голосовой двери, и без дублёра комната получала тишину вместо
+    уведомления GUPPI.
+  - `LLMRouter.stand_down_tier0_understudy()` (BOB-116 D11) — снять дублёр Tier-0 до
+    перезапуска процесса: Tier 0 дальше идёт «голым» облаком (`without_understudy`), флаг
+    дублёра для политики голоса сброшен. Зовёт его сборка при старте, когда дублёр включён в
+    конфигурации, но не готов (`services/runtime.md`, «Здоровье LLM»).
+  - Доклад исходов (BOB-116): каждая попытка на тире докладывается монитору здоровья через
+    порт `HealthObserver` (параметр `health`, по умолчанию `NoopHealthObserver`) — под id
+    `tier1` или `tier0-primary`. Решает `_reported_id` по ВЫЗВАННОМУ провайдеру: дублёр-обёртку
+    (`UnderstudyBackedProvider`) и провайдера, который докладывает сам
+    (`SelfReportingProvider`, им фабрика оборачивает Tier 1), роутер не докладывает, иначе один
+    HTTP-вызов дал бы две записи. Голый облачный Tier-0 под голосом Боба (`without_understudy`)
+    докладывает роутер. Отказ записывается ДО того, как ошибка уйдёт к вызывающему: гейт
+    дорожек heartbeat читает снимок сразу после тика. Когда монитор уже признал
+    `tier0-primary` деградированным, отказ Tier-0 без спасателя пишется одной строкой
+    `WARNING` без стека, а не новым стеком на каждый ход.
 - **fallback_policy.py** (BOB-087.E1, переехал сюда в bob-41o) — чистое ядро вердикта
   `should_fall_back(error)`: считать ли сбой поводом уйти на более слабую модель.
-  Транспорт/доступность (таймаут, обрыв, отказ соединения, DNS, оборванное тело ответа,
-  5xx, 408, 429) — да; контракт (прочие 4xx, битая форма ответа, `InvalidURL`, `TypeError`,
-  отмена) — нет, иначе фолбэк прячет наш собственный дефект за тихо деградировавшим
-  ответом. Ядро ОБЩЕЕ для обоих этажей: по нему судит и `LLMRouter` (Tier-1 → Tier-0), и
+  С BOB-116 вердикт выводится из классификации `classify_failure(error)` → один из классов
+  `auth` (401/403), `rate` (429), `server` (5xx и 408), `timeout`, `connection`, `shape`
+  (оборванное тело ответа) и `contract`: `should_fall_back` — «класс не `contract`». Класс
+  нужен не только маршрутизации: его считает монитор здоровья и называет владельцу, а 403 и
+  503 чинятся по-разному. Транспорт/доступность (таймаут, обрыв, отказ соединения, DNS,
+  оборванное тело ответа, 5xx, 408, 429, а с BOB-116 и 401/403) — да; контракт (прочие 4xx,
+  битая форма ответа, `InvalidURL`, `TypeError`, отмена) — нет, иначе фолбэк прячет наш
+  собственный дефект за тихо деградировавшим ответом. 🔴 401/403 до BOB-116 считались
+  контрактом «плохой ключ должен всплыть»: он всплыл в 32 086 строк лога, а Боб молчал десять
+  дней (Issues #64). Отозванный ключ облако не прячет — оно отказывается нас обслуживать, как
+  на 429, — поэтому для маршрутизации это недоступность, а дойти до владельца ему помогает
+  сигнал монитора здоровья. Ядро ОБЩЕЕ для обоих этажей: по нему судит и `LLMRouter` (Tier-1 → Tier-0), и
   композит `FallbackLLMProvider` из infrastructure (облачный Tier-0 → локальный дублёр),
   который импортирует его ВНИЗ по слоям — легальное направление, тогда как обратный импорт
   (роутер → infrastructure) запрещён правилом `application-no-infra`. В `kernel` вердикт
@@ -75,6 +106,47 @@ source `src/bob/application/router/`) — единственная точка, �
   через порт `VoiceCanon` (реализация — `bob.personality.voice.guppi_voice_canon`): канон
   принадлежит персоне, а `personality` уже зависит от роутера, поэтому связь между ними
   живёт в композиционном корне. Взято под mutation отдельным файлом.
+- **health_monitor.py** (BOB-116) — `ProviderHealthMonitor`, единственная точка, которая
+  держит здоровье LLM-провайдеров по исходам каждого вызова и действует на ПЕРЕХОДАХ.
+  Реализует оба порта — `HealthObserver` (`record_success` / `record_failure`, async) и
+  `HealthReader` (`snapshot`, `is_degraded`, `probe_due`). Правила переходов — чистое ядро
+  `bob.kernel.provider_health`, слова — `health_messages`. На переход монитор делает три вещи:
+  одна строка лога (`LLM health tier0-primary: healthy → degraded (auth, 5 failures, since
+  09:10:42 +03:00)`, время — в поясе процесса со смещением, `kernel/local_time`, D12),
+  сообщение владельцу через `OwnerAlertSink` (ошибка доставки глотается с одной строкой
+  `WARNING`) и, на восстановлении, колбэк `on_recovered(provider_id, since, until,
+  failure_class)` — через него сборка пишет эпизод «я молчал» (колбэк — `Callable`, а не порт
+  `memory`: `application` в `memory` не ходит).
+  - Идентификаторы `TIER0_PRIMARY` / `TIER0_UNDERSTUDY` / `TIER1` и `TIER0_EFFECTIVE`
+    объявлены в ядре и реэкспортируются отсюда.
+  - `TIER0_EFFECTIVE` (`"tier0"`, F2/G1) — вопрос «Tier-0 целиком может думать?»:
+    `is_degraded(TIER0_EFFECTIVE)` истинно, только когда облако лежит И дублёра нет, он снят
+    при старте или лежит тоже. Это одно правило (`_tier0_mute`) на три места: гейт дорожек
+    heartbeat, ситуацию в тексте владельцу и решение о эпизоде.
+  - 🔴 Эпизод «я молчал» — только после настоящей немоты (решение координатора, CONTEXT
+    BOB-116): ситуации `MUTE` (облако лежит, дублёра нет или он тоже лежит) и `VOICE_DOWN`
+    (лежит `tier1`). Облако мертво при живом дублёре — сигнал владельцу есть, эпизода нет:
+    ложная память хуже дыры. Когда лежали оба этажа Tier-0, молчание отсчитывается от падения
+    позднего из них, и эпизод пишется один раз.
+  - Состояние обновляется ДО любого `await`: к моменту, когда исключение дошло до
+    вызывающего, `snapshot()` уже видит отказ, даже если сообщение владельцу ещё в пути.
+  - `stand_down_understudy(reason)` (D11) — дублёр снят при старте: монитор считает, что
+    дублёра нет, снимок несёт его деградированным с причиной (`HealthView.stood_down_reason`),
+    `probe_due` для него ложно.
+  - `snapshot()` с первой секунды содержит `tier0-primary` и `tier1`, а `tier0-understudy` —
+    только когда дублёр подключён; незнакомый id читается здоровым.
+  - `NoopHealthObserver` — заглушка для ручных сборок и тестов.
+- **health_messages.py** (BOB-116) — что Боб пишет владельцу о здоровье провайдеров: живые
+  фразы от первого лица по-русски, без LLM (решение владельца Р2 — путь сигнала не зависит от
+  того, что сломалось). `Situation` различает новости: `MUTE` («я не могу думать»),
+  `UNDERSTUDY_HOLDS` («облако отказывает…, пока держусь на дублёре»), `UNDERSTUDY_DOWN`,
+  `VOICE_DOWN` и `OTHER`. `degraded_text`, `reminder_text`, `recovered_text`,
+  `understudy_missing_text` строят текст из `HealthNotice`. 🔴 Текст `VOICE_DOWN` правдив на
+  пути владельца (G2): ход владельца и команды идёт через `ToolLoop` на Tier-1 без отступления,
+  поэтому Боб пишет «Тебе и команде я сейчас ответить не могу — вместо меня GUPPI пишет, что я
+  недоступен. Гостям отвечаю облаком попроще, пока оно живо». Склонение, длительность, период,
+  говорящий и причина отказа — из `bob.kernel.ru_text`, своих копий здесь нет (ревью M3); время
+  — в поясе процесса со смещением («Молчал 32 минуты (1 октября с 06:10 до 06:42 +03:00)»).
 
 ### Кто куда падает (матрица спасательной попытки)
 
@@ -83,7 +155,7 @@ source `src/bob/application/router/`) — единственная точка, �
 
 | Предпочтительный тир | Сбой | Что происходит |
 |---|---|---|
-| Tier 1 | авария связи (5xx, 408, 429, таймаут, обрыв, отказ соединения, оборванное тело) | один прыжок ВНИЗ на Tier 0 тем же отредактированным payload'ом (ход голосом Боба получает Tier-0 без дублёра) |
+| Tier 1 | авария связи (5xx, 408, 429, 401/403 с BOB-116, таймаут, обрыв, отказ соединения, оборванное тело) | один прыжок ВНИЗ на Tier 0 тем же отредактированным payload'ом (ход голосом Боба получает Tier-0 без дублёра) |
 | Tier 1 | контракт (прочие 4xx, битая форма ответа, `InvalidURL`, наш баг) | не отвечает никто — ошибка уходит наружу (bob-41o) |
 | Tier 0, служебный ход | любой | спасателя здесь нет: дублёр под Tier-0 уже применил ТУ ЖЕ политику этажом ниже |
 | Tier 0, ход голосом Боба | любой | один прыжок ВВЕРХ на Tier 1 (BOB-087.E-M1) |
@@ -97,6 +169,20 @@ source `src/bob/application/router/`) — единственная точка, �
 (это обычный вызов КАЧЕСТВЕННОГО тира), поэтому контрактный дефект Tier-0 не должен стоить
 собеседнику настоящего ответа — и невидимым он всё равно не станет: его показывает каждый
 служебный Tier-0-ход.
+
+🔴 **Поправка BOB-116 (2026-10-21).** Протухший ключ Tier-1 (401/403) больше не «наш дефект»:
+он уходит вниз, как 429. Маскировкой это не стало, потому что видимость теперь даёт не
+упавший ход, а монитор здоровья: каждый вызов Tier-1 докладывается под `tier1`, и после
+порога владелец получает личное сообщение, а `/status` у GUPPI показывает `tier1`
+деградированным. Строгость против кривого запроса и несуществующей модели (прочие 4xx,
+битая форма) осталась прежней.
+
+🔴 **Где спасения нет вовсе (BOB-116 F1/G2).** Ход владельца и не-гостя при непустом реестре
+способностей идёт через `ToolLoop` прямо на Tier-1, мимо роутера, и отступления на Tier-0 там
+нет: при лежащем Tier-1 ход кончается уведомлением GUPPI. Простым путём через роутер (и,
+значит, со спуском на облачный Tier-0) отвечают гости — это держит сценарий S14
+`llm_health.feature`. Отступление `ToolLoop` на Tier-0 для владельца — решение владельца, не
+этой работы.
 
 Что видит собеседник, когда не отвечает никто: ошибка доходит до `EssentialRunner`
 (генерация ответа — ESSENTIAL-шаг), тот ретраит с backoff и, если сбой держится, ход
@@ -115,6 +201,17 @@ source `src/bob/application/router/`) — единственная точка, �
   одним чистым ядром `bob.application.router.fallback_policy.should_fall_back`.
 - Спасательная попытка ровно одна и лежит вне `try` — петли Tier1 → Tier0 → Tier1 (и
   обратной) не существует структурно.
+- Один HTTP-вызов — одна запись в мониторе здоровья (BOB-116): роутер докладывает только тот
+  вызов, чей провайдер не докладывает сам (`_reported_id`). Это держит
+  `tests/infrastructure/llm/test_health_reporting_loopback.py` на настоящих loopback-эндпоинтах:
+  число записей под каждым id равно числу HTTP-вызовов соответствующего эндпоинта, лишних id
+  нет.
+- Отказ записывается в монитор до того, как исключение уйдёт к вызывающему, — на этом
+  стоит классификация отказа в гейте дорожек heartbeat (`runtime-app`, `health_gated`).
+- `run_optional` пропускает только отказ доступности провайдера; `contract` и ошибки не
+  провайдера пробрасываются так же, как из `run`.
+- Сообщение владельцу о здоровье не зависит от LLM: тексты `health_messages` — шаблоны, а
+  путь сигнала — порт `OwnerAlertSink` (бот Боба, личка владельца).
 - Голос, который ОСТАЁТСЯ, аварийным дублёром не подменяется (BOB-087.E-M1, BOB-096.4):
   ход двери, у которой `speaks_as_bob and output_is_kept` (разговорный ход и проактивная
   реплика, пробуждение, рефлексия/переоценка/дайджест, work_journal, правило-поправка,
@@ -194,12 +291,33 @@ source `src/bob/application/router/`) — единственная точка, �
 ## API
 
 Модуль `src/bob/application/router/llm_router.py`:
+- `LLMRouter(*, providers, tier1_max_concurrency=None, voice_canon=None, health=None)` —
+  `health: HealthObserver | None`; если объект ещё и `HealthReader`, роутер читает из него
+  деградацию `tier0-primary` для строки лога.
 - `LLMRouter.run(request)` — маршрутизация одной `LLMRequest` с редакцией и fallback.
+- `LLMRouter.run_optional(request)` → `str | None` — побочный шаг хода; `None`, когда
+  провайдер не смог обслужить (BOB-116 D13).
+- `LLMRouter.stand_down_tier0_understudy()` — снять дублёр Tier-0 до перезапуска (BOB-116 D11).
 - `LLMRequest` — промпт + `shareable_context` / `private_context`.
 - `TaskType` — перечисление видов работы → тир.
 
 Модуль `src/bob/application/router/fallback_policy.py`:
-- `should_fall_back(error)` → вердикт «это авария связи, уходим на более слабую модель».
+- `classify_failure(error)` → `str` — класс отказа: `auth` / `rate` / `server` / `timeout` /
+  `connection` / `shape` / `contract` (BOB-116).
+- `should_fall_back(error)` → вердикт «это авария связи, уходим на более слабую модель»
+  (`classify_failure(error) != "contract"`).
+
+Модуль `src/bob/application/router/health_monitor.py`:
+- `ProviderHealthMonitor(*, clock, policy, sink, on_recovered=None, has_understudy=False,
+  owner_name=None)` — монитор; `record_success(provider_id)` / `record_failure(provider_id,
+  failure_class)` (async), `snapshot()` → `Mapping[str, HealthView]`, `is_degraded(provider_id)`,
+  `probe_due(provider_id)`, `stand_down_understudy(reason)`.
+- `OutageRecovered` — тип колбэка `(provider_id, since, until, failure_class) -> Awaitable[None]`.
+- `NoopHealthObserver`; реэкспорт `TIER0_PRIMARY`, `TIER0_UNDERSTUDY`, `TIER1`, `TIER0_EFFECTIVE`.
+
+Модуль `src/bob/application/router/health_messages.py`:
+- `Situation`, `HealthNotice`; `degraded_text(notice)`, `reminder_text(notice)`,
+  `recovered_text(notice, *, tz=None)`, `understudy_missing_text(reason, owner_name)` → `str`.
 
 Модуль `src/bob/application/router/reply_tier_selector.py`:
 - `select_reply_tier(...)` — гибридный выбор быстрого/качественного тира под сообщение.
@@ -231,7 +349,17 @@ source `src/bob/application/router/`) — единственная точка, �
 (роутер × реальный композит-провайдер, включая инвариант приватности по всем `TaskType`).
 BDD-сценарии целостности голоса и приватности аварийного пути — в
 `tests/acceptance/features/tier0_fallback.feature` (S15–S21), строгости верхнего фолбэка —
-там же (S14, S22–S24).
+там же (S14, S22–S24), 401/403 на Tier-0 при подключённом дублёре — S25 и S26.
+
+Здоровье провайдеров (BOB-116): `tests/application/router/test_health_monitor.py` (переходы,
+сигнал, эпизод только после немоты, `TIER0_EFFECTIVE`, строки лога в поясе процесса),
+`test_health_messages.py` (тексты владельцу целиком), `test_llm_router_health.py` (кто
+докладывает и когда), `test_llm_router_run_optional.py` (что пропускается, а что
+пробрасывается), `test_fallback_policy.py` (`classify_failure` по классам). Живая
+документация — `tests/acceptance/features/llm_health.feature` (S1–S14, имена S1–S11 — из PRD
+BOB-116): программа собрана `build_application`, облако, Tier-1 и дублёр — настоящие
+loopback-эндпоинты, фейки — только боты Telegram и часы (харнесс
+`tests/acceptance/llm_health_harness.py`).
 
 Досягаемость канона (BOB-096.3): `tests/application/router/test_generation_door.py`
 (понятие двери + полнота таблицы + fail-closed),
@@ -280,3 +408,5 @@ payload'е, а свернувшее на роутер привилегирова
 <!-- beadloom:track=src/bob/application/router/voice_integrity.py -->
 <!-- beadloom:track=src/bob/application/router/generation_door.py -->
 <!-- beadloom:track=src/bob/application/router/voice_canon.py -->
+<!-- beadloom:track=src/bob/application/router/health_monitor.py -->
+<!-- beadloom:track=src/bob/application/router/health_messages.py -->

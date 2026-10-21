@@ -24,20 +24,32 @@ default) → Tier 0 is the plain provider, exactly as before.
 
 The result maps tier index -> provider, ready for the
 :class:`bob.application.router.LLMRouter`.
+
+Provider health (BOB-116): an optional :class:`~bob.kernel.ports.HealthObserver` is
+threaded into the understudy wrapper, which reports the cloud and the stand-in separately,
+and Tier 1 is handed over wrapped by
+:func:`~bob.infrastructure.llm.reporting_provider.build_reporting_provider` (F1): the tool
+loop calls Tier 1 past the router, so the report has to live on the provider itself.
+:func:`understudy_endpoint` is the one reading of «is a stand-in configured, and where» —
+the composition root learns ``has_understudy`` from it for the monitor and hands it to
+:func:`bob.infrastructure.llm.understudy_probe.probe_understudy` at startup.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from bob.capabilities.adapters.web_search_qwen import QwenWebSearchProvider
 from bob.infrastructure.llm.fallback_provider import build_fallback_provider
 from bob.infrastructure.llm.openai_compat import OpenAICompatProvider
+from bob.infrastructure.llm.reporting_provider import build_reporting_provider
+from bob.kernel.provider_health import TIER1
 
 if TYPE_CHECKING:
     from bob.capabilities.ports import WebSearchProvider
-    from bob.kernel.ports import LLMProvider
+    from bob.kernel.ports import HealthObserver, LLMProvider
 
 _TIER_LOCAL = 0
 _TIER_API = 1
@@ -56,8 +68,50 @@ _DEFAULT_SEARCH_MODEL = "qwen3.7-plus"
 _FALLBACK_BACKENDS = frozenset({"ollama"})
 
 
-def build_tier_providers(config: Mapping[str, object]) -> dict[int, LLMProvider]:
-    """Build ``{0: tier0_provider, 1: tier1_provider}`` from ``config['llm']``."""
+@dataclass(frozen=True, slots=True)
+class UnderstudyEndpoint:
+    """Where the local Tier-0 stand-in lives: its OpenAI-compatible base URL and model."""
+
+    base_url: str
+    model: str
+
+
+def understudy_endpoint(config: Mapping[str, object]) -> UnderstudyEndpoint | None:
+    """The configured Tier-0 stand-in, or ``None`` when ``llm.tier0_fallback`` is off.
+
+    An unrecognised backend is a typo and fails loudly (``KeyError``), exactly as when the
+    providers are built — one reading of the flag for the factory and for its callers.
+    """
+    llm = config.get("llm")
+    if not isinstance(llm, Mapping):
+        raise KeyError("config is missing the 'llm' section")
+    backend = (_optional_str(llm, "tier0_fallback") or "").strip().lower()
+    if not backend:
+        return None
+    if backend not in _FALLBACK_BACKENDS:
+        raise KeyError(
+            f"llm.tier0_fallback must be one of {sorted(_FALLBACK_BACKENDS)} (got {backend!r})"
+        )
+    return UnderstudyEndpoint(
+        base_url=_require_str(llm, "tier0_fallback_base_url"),
+        model=_require_str(llm, "tier0_fallback_model"),
+    )
+
+
+def build_tier_providers(
+    config: Mapping[str, object],
+    *,
+    health: HealthObserver | None = None,
+) -> dict[int, LLMProvider]:
+    """Build ``{0: tier0_provider, 1: tier1_provider}`` from ``config['llm']``.
+
+    ``health`` reaches the providers every caller shares. Tier 1 is wrapped to report itself
+    (``tier1``): the router calls it, and so does the tool loop on every owner turn, past the
+    router (BOB-116 F1). The understudy wrapper reports its cloud and its stand-in. A plain
+    Tier 0 stays bare — only the router calls it, and the router reports it. The router
+    leaves a self-reporting provider alone, so each HTTP call is one record. Without
+    ``health`` every provider is bare, exactly as before BOB-116.
+    """
     llm = config.get("llm")
     if not isinstance(llm, Mapping):
         raise KeyError("config is missing the 'llm' section")
@@ -73,7 +127,7 @@ def build_tier_providers(config: Mapping[str, object]) -> dict[int, LLMProvider]
         disable_thinking=disable_thinking,
         temperature=_optional_float_or_none(llm, "tier0_temperature"),
     )
-    tier1 = OpenAICompatProvider(
+    tier1: LLMProvider = OpenAICompatProvider(
         base_url=_require_str(llm, "tier1_base_url"),
         model=_require_str(llm, "tier1_model"),
         api_key=_optional_str(llm, "tier1_api_key"),
@@ -81,7 +135,10 @@ def build_tier_providers(config: Mapping[str, object]) -> dict[int, LLMProvider]
         disable_thinking=disable_thinking,
         temperature=_optional_float_or_none(llm, "tier1_temperature"),
     )
+    if health is not None:
+        tier1 = build_reporting_provider(inner=tier1, health=health, provider_id=TIER1)
     local_fallback = _build_tier0_fallback(
+        understudy_endpoint(config),
         llm,
         timeout_seconds=timeout_seconds,
         disable_thinking=disable_thinking,
@@ -89,12 +146,15 @@ def build_tier_providers(config: Mapping[str, object]) -> dict[int, LLMProvider]
     if local_fallback is None:
         return {_TIER_LOCAL: tier0, _TIER_API: tier1}
     return {
-        _TIER_LOCAL: build_fallback_provider(primary=tier0, fallback=local_fallback),
+        _TIER_LOCAL: build_fallback_provider(
+            primary=tier0, fallback=local_fallback, health=health
+        ),
         _TIER_API: tier1,
     }
 
 
 def _build_tier0_fallback(
+    endpoint: UnderstudyEndpoint | None,
     llm: Mapping[str, object],
     *,
     timeout_seconds: float,
@@ -108,16 +168,11 @@ def _build_tier0_fallback(
     policy, sampling temperature) so the degraded mode answers like Tier 0 rather
     than like a third, differently-tuned tier, and stays keyless — it is local.
     """
-    backend = (_optional_str(llm, "tier0_fallback") or "").strip().lower()
-    if not backend:
+    if endpoint is None:
         return None
-    if backend not in _FALLBACK_BACKENDS:
-        raise KeyError(
-            f"llm.tier0_fallback must be one of {sorted(_FALLBACK_BACKENDS)} (got {backend!r})"
-        )
     return OpenAICompatProvider(
-        base_url=_require_str(llm, "tier0_fallback_base_url"),
-        model=_require_str(llm, "tier0_fallback_model"),
+        base_url=endpoint.base_url,
+        model=endpoint.model,
         api_key=None,
         timeout_seconds=timeout_seconds,
         disable_thinking=disable_thinking,

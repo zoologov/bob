@@ -14,6 +14,7 @@ Composition root (`src/bob/runtime/` package + the thin `app.py` shim) — the o
 ## Public symbols
 
 - `Application`
+- `LlmHealth`
 - `RhythmWiring`
 - `RosterConfig`
 - `SystemClock`
@@ -23,6 +24,10 @@ Composition root (`src/bob/runtime/` package + the thin `app.py` shim) — the o
 - `build_disclosure_consent_gate`
 - `build_disclosure_guard`
 - `build_endorsement_seeder`
+- `build_health_policy`
+- `build_llm_health`
+- `build_outage_episode_writer`
+- `build_owner_alert_sink`
 - `build_register_resolver`
 - `build_rhythm_wiring`
 - `build_room_mood_modulator`
@@ -31,11 +36,15 @@ Composition root (`src/bob/runtime/` package + the thin `app.py` shim) — the o
 - `build_self_action_recorder`
 - `build_send_to_chat`
 - `build_staleness_reassessor`
+- `build_understudy_stand_down`
 - `build_work_journal_recorder`
 - `collect_requirements`
+- `configured_understudy`
+- `health_owner_name`
 - `known_destinations`
 - `main`
 - `report_tool_health`
+- `report_understudy`
 - `staleness_enabled`
 
 ## Relationships

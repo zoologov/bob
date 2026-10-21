@@ -31,6 +31,7 @@ Memory module («Bob remembers») — the full vertical capability in one place:
 - `NoOpSelfActionRecorder`
 - `OllamaEmbedder`
 - `OllamaReranker`
+- `OutageSpan`
 - `Register`
 - `RegisterResolver`
 - `RenderedSelfAction`

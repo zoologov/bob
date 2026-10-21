@@ -25,14 +25,32 @@ coding-сессии два разных поступка, и путать их �
 конфабуляцией с провенансом «я это помню, я сам так сделал» — ровно тем классом, против
 которого BOB-090.C строил анти-конфабуляционный провенанс. Выбор поступка по факту делает
 :func:`coding_terminal_kind`.
+
+Простой провайдера (BOB-116, bob-i83.3): :attr:`SelfActionKind.OUTAGE_RECOVERED` — эпизод
+«я молчал с … по …: <причина по-человечески>, думать было нечем. Теперь снова могу.»
+Факты простоя несёт типизированный :class:`OutageSpan`, а не строка ``detail``: ``detail``
+остальных видов выводится в текст как есть, а здесь нужны даты, класс отказа и провайдер,
+которые рендер раскладывает сам. Время выводится так, как его несёт ``datetime`` — пояс
+выбирает вызывающий адаптер (сборка переводит в пояс процесса), ядро часов не читает, — и
+подписывается смещением («по 06:42 +03:00»): тот же пояс и та же подпись, что в сообщении
+владельцу и в GUPPI ``/status`` (:mod:`bob.kernel.local_time`, bob-i83.15). Период,
+длительность, говорящий и причина — те же слова, что у владельца и в ``/status``, из одного
+дома :mod:`bob.kernel.ru_text` (ревью M3, bob-i83.20): «со 2 октября» здесь и там одинаково.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import TYPE_CHECKING
+
+from bob.kernel.ru_text import duration, failure_then, period, provider_speaker
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 __all__ = [
+    "OutageSpan",
     "RenderedSelfAction",
     "SelfAction",
     "SelfActionKind",
@@ -45,6 +63,7 @@ _TAG_SELF = "self"
 _TAG_CODING = "coding"
 _TAG_TOOLS = "tools"
 _TAG_ANOMALY = "anomaly"
+_TAG_OUTAGE = "outage"
 
 
 class SelfActionKind(StrEnum):
@@ -53,7 +72,7 @@ class SelfActionKind(StrEnum):
     Прецедент строкового enum — :class:`bob.coding.state.CodingSessionState`. Coding
     покрывает жизненный цикл сессии (старт, два разных успешных финала, прерывание,
     провал, runaway-флуд); tool — коалесцированный итог tool-loop за ход и падение
-    инструмента.
+    инструмента; outage — возвращение Боба после простоя провайдера (BOB-116).
     """
 
     CODING_STARTED = "coding_started"
@@ -67,6 +86,31 @@ class SelfActionKind(StrEnum):
     CODING_RUNAWAY = "coding_runaway"
     TOOL_USE = "tool_use"
     TOOL_FAILURE = "tool_failure"
+    # BOB-116: провайдер снова отвечает после DEGRADED — Боб помнит, что молчал и почему.
+    # Не аномалия: молчание — не промах Боба, причину он называет честно (INV-4).
+    OUTAGE_RECOVERED = "outage_recovered"
+
+
+@dataclass(frozen=True, slots=True)
+class OutageSpan:
+    """Факты простоя провайдера для эпизода :attr:`SelfActionKind.OUTAGE_RECOVERED`.
+
+    ``since``/``until`` — начало отказов и первый успех (оба в поясе, в котором Боб
+    рассказывает о времени; выбирает вызывающий). ``failure_class`` — класс отказа
+    вызывающего слоя (``auth``/``rate``/``server``/``timeout``/``connection``/``shape``,
+    незнакомый класс называется как есть, ``None`` — общая формулировка). ``provider`` — id
+    провайдера монитора (:data:`bob.kernel.provider_health.TIER0_PRIMARY` и соседи).
+    """
+
+    since: datetime
+    until: datetime
+    failure_class: str | None
+    provider: str
+
+    def __post_init__(self) -> None:
+        if self.until < self.since:
+            msg = f"OutageSpan: until {self.until} is before since {self.since}"
+            raise ValueError(msg)
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,12 +118,14 @@ class SelfAction:
     """Структурированная запись поступка Боба (вход рендера).
 
     ``target`` — задача/файлы/инструменты (коротко), ``detail`` — причина сбоя и т.п.
-    Оба опциональны: рендер деградирует к формулировке без «…»-кавычек.
+    Оба опциональны: рендер деградирует к формулировке без «…»-кавычек. ``outage`` —
+    факты простоя, читает только :attr:`SelfActionKind.OUTAGE_RECOVERED`.
     """
 
     kind: SelfActionKind
     target: str | None = None
     detail: str | None = None
+    outage: OutageSpan | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,9 +162,18 @@ def _detail_suffix(detail: str | None) -> str:
     return f": {detail}" if detail else ""
 
 
+def _area_tag(kind: SelfActionKind) -> str:
+    """Область поступка: coding, outage или tools."""
+    if kind in _CODING_KINDS:
+        return _TAG_CODING
+    if kind is SelfActionKind.OUTAGE_RECOVERED:
+        return _TAG_OUTAGE
+    return _TAG_TOOLS
+
+
 def _tags_for(kind: SelfActionKind) -> tuple[str, ...]:
-    """``self`` + область (coding/tools) + ``anomaly`` для сбоя/runaway."""
-    area = _TAG_CODING if kind in _CODING_KINDS else _TAG_TOOLS
+    """``self`` + область (coding/outage/tools) + ``anomaly`` для сбоя/runaway."""
+    area = _area_tag(kind)
     tags = [_TAG_SELF, area]
     if kind in _ANOMALY_KINDS:
         tags.append(_TAG_ANOMALY)
@@ -165,7 +220,24 @@ def _content_for(action: SelfAction) -> str:
                 else "я попробовал воспользоваться инструментом"
             )
             content = f"{head} — не вышло{_detail_suffix(detail)}"
+        case SelfActionKind.OUTAGE_RECOVERED:
+            content = _outage_story(action.outage)
     return content
+
+
+# --- Простой провайдера от первого лица (BOB-116) ------------------------------------
+
+_OUTAGE_TAIL = "думать было нечем. Теперь снова могу."
+
+
+def _outage_story(span: OutageSpan | None) -> str:
+    """«я молчал …: причина, думать было нечем. Теперь снова могу.»; без фактов — коротко."""
+    if span is None:
+        return f"я молчал — {_OUTAGE_TAIL}"
+    when = period(span.since, span.until)
+    lasted = duration((span.until - span.since).total_seconds())
+    cause = failure_then(span.failure_class, provider_speaker(span.provider))
+    return f"я молчал {when} ({lasted}): {cause}, {_OUTAGE_TAIL}"
 
 
 def coding_terminal_kind(*, opened_pr: bool) -> SelfActionKind:

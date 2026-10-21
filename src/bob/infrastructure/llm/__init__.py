@@ -22,12 +22,20 @@ from bob.infrastructure.llm.fallback_provider import (
     build_fallback_provider,
 )
 from bob.infrastructure.llm.openai_compat import OpenAICompatProvider
+from bob.infrastructure.llm.reporting_provider import (
+    ReportingLLMProvider,
+    ToolCallingReportingLLMProvider,
+    build_reporting_provider,
+)
 
 __all__ = [
     "FallbackLLMProvider",
     "OpenAICompatProvider",
+    "ReportingLLMProvider",
     "ToolCallingFallbackLLMProvider",
+    "ToolCallingReportingLLMProvider",
     "build_fallback_provider",
+    "build_reporting_provider",
     "build_tier_providers",
     "build_web_search_provider",
 ]

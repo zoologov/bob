@@ -8,8 +8,13 @@
 уходим на дублёра только на ТРАНСПОРТНОМ отказе, а 4xx, битая форма ответа и программные
 ошибки идут наружу — иначе фолбэк маскирует наш собственный дефект тихо деградировавшим
 ответом. ВЕРХНИЙ фолбэк роутера ловил любое исключение Tier-1 и потому масккировал ровно то
-же самое этажом выше: протухший ключ или несуществующая модель в конфиге Tier-1 жили бы
+же самое этажом выше: несуществующая модель или кривой base_url в конфиге Tier-1 жили бы
 незамеченными неделями, пока Боб тихо отвечает слабым тиром.
+
+🔴 BOB-116: 401/403 (протухший ключ, исчерпанный аккаунт) переехали из «дефекта» в отказ
+облака ``auth`` — облако отказывает НАМ, как на 429, и для маршрутизации это недоступность.
+Боб десять дней молчал на 403, пока политика звала это «нашим дефектом». Что ключ протух,
+владелец узнаёт из сигнала здоровья провайдера (BOB-116), а не из хода, который падает нарочно.
 
 Здесь пришпилена новая строгость. Вердикт — то же самое чистое ядро
 :func:`bob.application.router.fallback_policy.should_fall_back`, что судит нижний фолбэк
@@ -83,7 +88,6 @@ def _reply_to_user() -> LLMRequest:
     "error",
     [
         pytest.param(_response_error(400), id="400 — кривой запрос"),
-        pytest.param(_response_error(401), id="401 — протухший ключ"),
         pytest.param(_response_error(404), id="404 — несуществующая модель"),
         pytest.param(ValueError("completion response has no choices"), id="битая форма"),
         pytest.param(aiohttp.InvalidURL("http://[bad"), id="кривой base_url в конфиге"),
@@ -107,15 +111,15 @@ async def test_a_tier1_defect_surfaces_and_tier0_is_never_asked(error: BaseExcep
 
 async def test_the_surfaced_tier1_failure_keeps_its_own_diagnosis() -> None:
     # Наружу должна дойти ПРИЧИНА, по которой конфигурация сломана, а не безликий сбой:
-    # оператор чинит 401, только если видит 401.
+    # оператор чинит 404 (имя модели в конфиге), только если видит 404.
     tier0 = ScriptedProvider(reply="слабый тир")
-    tier1 = ScriptedProvider(error=_response_error(401))
+    tier1 = ScriptedProvider(error=_response_error(404))
     router = LLMRouter(providers={0: tier0, 1: tier1})
 
     with pytest.raises(aiohttp.ClientResponseError) as surfaced:
         await router.run(_reply_to_user())
 
-    assert surfaced.value.status == 401
+    assert surfaced.value.status == 404
 
 
 # --- авария связи Tier-1: фолбэк вниз работает ровно как работал --------------------
@@ -131,6 +135,8 @@ async def test_the_surfaced_tier1_failure_keeps_its_own_diagnosis() -> None:
         pytest.param(_response_error(503), id="503 — упал апстрим"),
         pytest.param(_response_error(408), id="408 — эндпоинт устал ждать"),
         pytest.param(_response_error(429), id="429 — нас не обслуживают сейчас"),
+        pytest.param(_response_error(401), id="401 — протухший ключ (BOB-116)"),
+        pytest.param(_response_error(403), id="403 — аккаунт исчерпан или закрыт (BOB-116)"),
     ],
 )
 async def test_a_tier1_outage_still_falls_back_to_tier0(error: BaseException) -> None:

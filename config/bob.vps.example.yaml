@@ -1,32 +1,12 @@
-# config/bob.vps.example.yaml — ОТЛИЧИЯ конфига Боба на VPS от config/bob.example.yaml (BOB-094).
+# Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+# SPDX-License-Identifier: BUSL-1.1
 #
-# Это НЕ полный конфиг, а перечень дельт: на VPS живёт свой config/bob.yaml (gitignored),
-# собранный из bob.example.yaml + правки ниже. Файл — документация и якорь против дрейфа,
-# не второй источник правды. Реальный конфиг — на сервере в /opt/bob/config/bob.yaml.
-
-runtime:
-  # BOB-103: приложение владеет логом (ротация), лаунчер/systemd не дублируют запись.
-  log_file: logs/bob.log
-  log_max_bytes: 33554432      # 32 MiB
-  log_backup_count: 5
-  # BOB-094: Боб человечно объявляет обновление/возвращение при рестарте (деплой по тегу).
-  restart_notice: true
-
-llm:
-  # 🔴 BOB-094: на VPS БЕЗ GPU локального Ollama-дублёра для ГЕНЕРАЦИИ НЕТ.
-  # Строки tier0_fallback ОТКЛЮЧЕНЫ (закомментированы) — при отвале Tier-1 Боб честно
-  # молчит, а не галлюцинирует слабой моделью. Эмбеддер (bge-m3) — ОТДЕЛЬНАЯ история,
-  # он на VPS ЕСТЬ (Ollama ставится только под него, embeddings лёгкие на CPU).
-  # tier0_fallback: ollama            # <- убрать/закомментировать на VPS
-  # tier0_fallback_base_url: ...      # <- убрать/закомментировать на VPS
-  # tier0_fallback_model: ...         # <- убрать/закомментировать на VPS
-
-telegram:
-  # BOB-094: сколько подряд неудачных поллингов считаем «оглох» (диагноз в лог). Порог > 1.
-  outage_threshold: 5
-
-embeddings:
-  # Остаётся как в base: локальный Ollama на VPS (bge-m3, 1024-dim). Ollama ставится
-  # бутстрапом ТОЛЬКО ради эмбеддера — семантическая память без него не работает.
-  base_url: http://localhost:11434
-  model: bge-m3
+# config/bob.vps.example.yaml — указатель (BOB-116).
+#
+# Раньше здесь лежал перечень отличий конфига VPS от config/bob.example.yaml (BOB-094), а
+# сам конфиг жил только на сервере. С BOB-116 полный конфиг прода трекается в
+# config/bob.vps.yaml: деплой копирует его в /opt/bob/config/bob.yaml и сверяет sha256.
+# Идентификаторы и секреты — только в /opt/bob/.env; их список — в шапке config/bob.vps.yaml.
+#
+# Этот файл не читается ни Бобом, ни деплоем и оставлен, чтобы прежняя ссылка вела к
+# действующему источнику.

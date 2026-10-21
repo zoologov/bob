@@ -55,7 +55,7 @@
     "debt_score": 4.5,
     "layer_populations": [],
     "severity": "low",
-    "test_population": "not counted: 510 of 562 test file(s) are unplaced (not under tests/integration/ or tests/unit/, nor inside a node's source) and bind to no node, so a node with no bound test may still be tested; a test file is read when its path matches a pattern of go_test (*_test.go), jest (*.test.*, *.spec.*, __tests__/**/*.[jt]s, __tests__/**/*.[jt]sx), junit (*Test.java, *Tests.java, *TestCase.java, *IT.java, *ITCase.java, *Test.kt, *Tests.kt, src/test/**/*.java, src/test/**/*.kt), pytest (test_*.py, *_test.py) or xctest (*Tests.swift, *Tests/**/*.swift) under the root tests or beside a node's code",
+    "test_population": "not counted: 536 of 589 test file(s) are unplaced (not under tests/integration/ or tests/unit/, nor inside a node's source) and bind to no node, so a node with no bound test may still be tested; a test file is read when its path matches a pattern of go_test (*_test.go), jest (*.test.*, *.spec.*, __tests__/**/*.[jt]s, __tests__/**/*.[jt]sx), junit (*Test.java, *Tests.java, *TestCase.java, *IT.java, *ITCase.java, *Test.kt, *Tests.kt, src/test/**/*.java, src/test/**/*.kt), pytest (test_*.py, *_test.py) or xctest (*Tests.swift, *Tests/**/*.swift) under the root tests or beside a node's code",
     "top_offenders": [
       {
         "reasons": [
@@ -91,21 +91,21 @@
   "docs": {
     "coverage_pct": 100.0,
     "documented": 23,
-    "fresh": 726,
+    "fresh": 746,
     "freshness_pct": 100.0,
     "nodes": 23,
     "stale": 0,
-    "tracked_pairs": 726
+    "tracked_pairs": 746
   },
   "doctor": {
     "by_severity": {
       "ok": 12,
-      "warning": 249
+      "warning": 256
     },
     "errors": 0,
     "passed": true,
-    "total": 261,
-    "warnings": 249
+    "total": 268,
+    "warnings": 256
   },
   "federated": null,
   "lint": {
@@ -125,252 +125,252 @@
       {
         "file": "",
         "line": null,
-        "message": "Rule 'capabilities-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'capabilities-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "capabilities-no-composition-root",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'coding-internals-no-adapters-untrusted_repo' cannot fire: its `from` glob 'src/bob/coding/untrusted_repo.py' matches 0 of 385 indexed source files. It is counted as evaluated but checks nothing",
+        "message": "Rule 'coding-internals-no-adapters-untrusted_repo' cannot fire: its `from` glob 'src/bob/coding/untrusted_repo.py' matches 0 of 396 indexed source files. It is counted as evaluated but checks nothing",
         "rule": "coding-internals-no-adapters-untrusted_repo",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'coding-internals-no-usecases-untrusted_repo' cannot fire: its `from` glob 'src/bob/coding/untrusted_repo.py' matches 0 of 385 indexed source files. It is counted as evaluated but checks nothing",
+        "message": "Rule 'coding-internals-no-usecases-untrusted_repo' cannot fire: its `from` glob 'src/bob/coding/untrusted_repo.py' matches 0 of 396 indexed source files. It is counted as evaluated but checks nothing",
         "rule": "coding-internals-no-usecases-untrusted_repo",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'coding-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'coding-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "coding-no-composition-root",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'conversation-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'conversation-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "conversation-no-composition-root",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-boundary-no-capabilities-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-boundary-no-capabilities-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "identity-boundary-no-capabilities-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-boundary-no-coding-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-boundary-no-coding-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "identity-boundary-no-coding-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-boundary-no-conversation-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-boundary-no-conversation-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "identity-boundary-no-conversation-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-boundary-no-interactive-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-boundary-no-interactive-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "identity-boundary-no-interactive-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-boundary-no-memory-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-boundary-no-memory-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "identity-boundary-no-memory-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-boundary-no-personality-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-boundary-no-personality-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "identity-boundary-no-personality-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-boundary-no-presence-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-boundary-no-presence-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "identity-boundary-no-presence-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-boundary-no-proactivity-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-boundary-no-proactivity-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "identity-boundary-no-proactivity-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-boundary-no-social-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-boundary-no-social-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "identity-boundary-no-social-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-internals-no-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-internals-no-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "identity-internals-no-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "identity-no-composition-root",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-usecases-no-adapters' cannot fire: its `from` glob 'src/bob/identity/usecases/*' matches 0 of 385 indexed source files. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-usecases-no-adapters' cannot fire: its `from` glob 'src/bob/identity/usecases/*' matches 0 of 396 indexed source files. It is counted as evaluated but checks nothing",
         "rule": "identity-usecases-no-adapters",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'identity-usecases-no-infra' cannot fire: its `from` glob 'src/bob/identity/usecases/*' matches 0 of 385 indexed source files. It is counted as evaluated but checks nothing",
+        "message": "Rule 'identity-usecases-no-infra' cannot fire: its `from` glob 'src/bob/identity/usecases/*' matches 0 of 396 indexed source files. It is counted as evaluated but checks nothing",
         "rule": "identity-usecases-no-infra",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'interactive-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'interactive-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "interactive-no-composition-root",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'memory-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'memory-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "memory-no-composition-root",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'personality-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'personality-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "personality-no-composition-root",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-boundary-no-capabilities-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-boundary-no-capabilities-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "presence-boundary-no-capabilities-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-boundary-no-coding-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-boundary-no-coding-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "presence-boundary-no-coding-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-boundary-no-conversation-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-boundary-no-conversation-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "presence-boundary-no-conversation-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-boundary-no-identity-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-boundary-no-identity-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "presence-boundary-no-identity-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-boundary-no-interactive-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-boundary-no-interactive-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "presence-boundary-no-interactive-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-boundary-no-memory-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-boundary-no-memory-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "presence-boundary-no-memory-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-boundary-no-personality-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-boundary-no-personality-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "presence-boundary-no-personality-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-boundary-no-proactivity-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-boundary-no-proactivity-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "presence-boundary-no-proactivity-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-boundary-no-social-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-boundary-no-social-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "presence-boundary-no-social-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-internals-no-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-internals-no-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "presence-internals-no-usecases",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "presence-no-composition-root",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-usecases-no-adapters' cannot fire: its `from` glob 'src/bob/presence/usecases/*' matches 0 of 385 indexed source files. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-usecases-no-adapters' cannot fire: its `from` glob 'src/bob/presence/usecases/*' matches 0 of 396 indexed source files. It is counted as evaluated but checks nothing",
         "rule": "presence-usecases-no-adapters",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'presence-usecases-no-infra' cannot fire: its `from` glob 'src/bob/presence/usecases/*' matches 0 of 385 indexed source files. It is counted as evaluated but checks nothing",
+        "message": "Rule 'presence-usecases-no-infra' cannot fire: its `from` glob 'src/bob/presence/usecases/*' matches 0 of 396 indexed source files. It is counted as evaluated but checks nothing",
         "rule": "presence-usecases-no-infra",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'proactivity-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'proactivity-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "proactivity-no-composition-root",
         "severity": "warn"
       },
       {
         "file": "",
         "line": null,
-        "message": "Rule 'social-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing",
+        "message": "Rule 'social-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing",
         "rule": "social-no-composition-root",
         "severity": "warn"
       }
@@ -519,252 +519,252 @@
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'capabilities-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'capabilities-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "capabilities-no-composition-root"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'coding-internals-no-adapters-untrusted_repo' cannot fire: its `from` glob 'src/bob/coding/untrusted_repo.py' matches 0 of 385 indexed source files. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'coding-internals-no-adapters-untrusted_repo' cannot fire: its `from` glob 'src/bob/coding/untrusted_repo.py' matches 0 of 396 indexed source files. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "coding-internals-no-adapters-untrusted_repo"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'coding-internals-no-usecases-untrusted_repo' cannot fire: its `from` glob 'src/bob/coding/untrusted_repo.py' matches 0 of 385 indexed source files. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'coding-internals-no-usecases-untrusted_repo' cannot fire: its `from` glob 'src/bob/coding/untrusted_repo.py' matches 0 of 396 indexed source files. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "coding-internals-no-usecases-untrusted_repo"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'coding-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'coding-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "coding-no-composition-root"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'conversation-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'conversation-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "conversation-no-composition-root"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'identity-boundary-no-capabilities-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'identity-boundary-no-capabilities-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "identity-boundary-no-capabilities-usecases"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'identity-boundary-no-coding-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'identity-boundary-no-coding-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "identity-boundary-no-coding-usecases"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'identity-boundary-no-conversation-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'identity-boundary-no-conversation-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "identity-boundary-no-conversation-usecases"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'identity-boundary-no-interactive-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'identity-boundary-no-interactive-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "identity-boundary-no-interactive-usecases"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'identity-boundary-no-memory-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'identity-boundary-no-memory-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "identity-boundary-no-memory-usecases"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'identity-boundary-no-personality-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'identity-boundary-no-personality-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "identity-boundary-no-personality-usecases"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'identity-boundary-no-presence-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'identity-boundary-no-presence-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "identity-boundary-no-presence-usecases"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'identity-boundary-no-proactivity-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'identity-boundary-no-proactivity-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "identity-boundary-no-proactivity-usecases"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'identity-boundary-no-social-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'identity-boundary-no-social-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "identity-boundary-no-social-usecases"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'identity-internals-no-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'identity-internals-no-usecases' cannot fire: its `to` glob 'bob/identity/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "identity-internals-no-usecases"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'identity-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'identity-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "identity-no-composition-root"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'identity-usecases-no-adapters' cannot fire: its `from` glob 'src/bob/identity/usecases/*' matches 0 of 385 indexed source files. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'identity-usecases-no-adapters' cannot fire: its `from` glob 'src/bob/identity/usecases/*' matches 0 of 396 indexed source files. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "identity-usecases-no-adapters"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'identity-usecases-no-infra' cannot fire: its `from` glob 'src/bob/identity/usecases/*' matches 0 of 385 indexed source files. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'identity-usecases-no-infra' cannot fire: its `from` glob 'src/bob/identity/usecases/*' matches 0 of 396 indexed source files. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "identity-usecases-no-infra"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'interactive-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'interactive-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "interactive-no-composition-root"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'memory-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'memory-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "memory-no-composition-root"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'personality-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'personality-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "personality-no-composition-root"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'presence-boundary-no-capabilities-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'presence-boundary-no-capabilities-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "presence-boundary-no-capabilities-usecases"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'presence-boundary-no-coding-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'presence-boundary-no-coding-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "presence-boundary-no-coding-usecases"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'presence-boundary-no-conversation-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'presence-boundary-no-conversation-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "presence-boundary-no-conversation-usecases"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'presence-boundary-no-identity-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'presence-boundary-no-identity-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "presence-boundary-no-identity-usecases"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'presence-boundary-no-interactive-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'presence-boundary-no-interactive-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "presence-boundary-no-interactive-usecases"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'presence-boundary-no-memory-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'presence-boundary-no-memory-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "presence-boundary-no-memory-usecases"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'presence-boundary-no-personality-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'presence-boundary-no-personality-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "presence-boundary-no-personality-usecases"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'presence-boundary-no-proactivity-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'presence-boundary-no-proactivity-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "presence-boundary-no-proactivity-usecases"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'presence-boundary-no-social-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'presence-boundary-no-social-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "presence-boundary-no-social-usecases"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'presence-internals-no-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'presence-internals-no-usecases' cannot fire: its `to` glob 'bob/presence/usecases*' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "presence-internals-no-usecases"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'presence-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'presence-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "presence-no-composition-root"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'presence-usecases-no-adapters' cannot fire: its `from` glob 'src/bob/presence/usecases/*' matches 0 of 385 indexed source files. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'presence-usecases-no-adapters' cannot fire: its `from` glob 'src/bob/presence/usecases/*' matches 0 of 396 indexed source files. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "presence-usecases-no-adapters"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'presence-usecases-no-infra' cannot fire: its `from` glob 'src/bob/presence/usecases/*' matches 0 of 385 indexed source files. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'presence-usecases-no-infra' cannot fire: its `from` glob 'src/bob/presence/usecases/*' matches 0 of 396 indexed source files. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "presence-usecases-no-infra"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'proactivity-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'proactivity-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "proactivity-no-composition-root"
     },
     {
       "kind": "lint",
       "link": "/dashboard",
-      "message": "Rule 'social-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
+      "message": "Rule 'social-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 430 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "social-no-composition-root"
     }
@@ -785,14 +785,14 @@
       "value": "4.5 / 100"
     },
     {
-      "detail": "0 stale of 726 tracked pair(s)",
+      "detail": "0 stale of 746 tracked pair(s)",
       "group": "docs",
       "label": "Docs",
       "status": "ok",
       "value": "100.0% covered"
     },
     {
-      "detail": "0 errors, 249 warnings",
+      "detail": "0 errors, 256 warnings",
       "group": "doctor",
       "label": "Doctor",
       "status": "warn",
@@ -859,6 +859,26 @@
       "symbols": 1635,
       "sync_pct": 100.0,
       "ts": "2026-10-21T08:51:35.594070+00:00"
+    },
+    {
+      "coverage_pct": 100.0,
+      "debt_score": 4.5,
+      "edges": 122,
+      "lint_violations": 37,
+      "nodes": 23,
+      "symbols": 1729,
+      "sync_pct": 100.0,
+      "ts": "2026-10-21T21:04:49.036916+00:00"
+    },
+    {
+      "coverage_pct": 100.0,
+      "debt_score": 4.5,
+      "edges": 122,
+      "lint_violations": 37,
+      "nodes": 23,
+      "symbols": 1729,
+      "sync_pct": 100.0,
+      "ts": "2026-10-21T21:12:17.361992+00:00"
     }
   ]
 }

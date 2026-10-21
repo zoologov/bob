@@ -39,6 +39,11 @@ from bob.runtime.wiring.disclosure import (
 )
 from bob.runtime.wiring.endorsement import build_endorsement_seeder
 from bob.runtime.wiring.goals import _build_goal_engine, _build_pursue_goals_tick
+from bob.runtime.wiring.health import (
+    LlmHealth,
+    build_llm_health,
+    build_understudy_stand_down,
+)
 from bob.runtime.wiring.memory import (
     _build_consolidate_memory,
     _build_dedup_facts,
@@ -102,6 +107,7 @@ from bob.runtime.wiring.telegram import _build_multibot
 from bob.runtime.wiring.work_journal import build_work_journal_recorder
 
 __all__ = [
+    "LlmHealth",
     "RhythmWiring",
     "RosterConfig",
     "_SelfImprovement",
@@ -160,6 +166,7 @@ __all__ = [
     "build_disclosure_consent_gate",
     "build_disclosure_guard",
     "build_endorsement_seeder",
+    "build_llm_health",
     "build_register_resolver",
     "build_rhythm_wiring",
     "build_room_mood_modulator",
@@ -168,6 +175,7 @@ __all__ = [
     "build_self_action_recorder",
     "build_send_to_chat",
     "build_staleness_reassessor",
+    "build_understudy_stand_down",
     "build_work_journal_recorder",
     "known_destinations",
     "staleness_enabled",

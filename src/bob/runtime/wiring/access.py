@@ -56,7 +56,10 @@ def _as_tool_provider(
 
     The Tier 1 reply provider (:class:`OpenAICompatProvider`) realises
     :class:`ToolCallingProvider`; a fake or a tool-less endpoint may not, in which
-    case the tool-loop stays dormant and HandleMessage keeps the plain path.
+    case the tool-loop stays dormant and HandleMessage keeps the plain path. With provider
+    health wired (BOB-116 F1) the factory hands Tier 1 over inside the health-reporting
+    wrapper, which mirrors ``complete_with_tools`` — so the tool loop's calls are reported
+    too, under ``tier1``, while the loop itself calls past the router.
     """
     provider = providers.get(_REPLY_TIER)
     if provider is not None and hasattr(provider, "complete_with_tools"):
