@@ -271,7 +271,9 @@ def test_compare_keys_lists_paths_and_never_values(tmp_path: Path) -> None:
 def test_compare_keys_routes_ids_to_env_and_settings_to_the_tracked_file(tmp_path: Path) -> None:
     old = yaml.safe_load(VPS_CONFIG.read_text(encoding="utf-8"))
     old["telegram"]["owner_id"] = 555000222
-    old["diagrams"] = {"mmdc_bin": "/usr/local/bin/mmdc"}
+    # A key the tracked file is known not to carry: a setting, not an identifier
+    # (diagrams.mmdc_bin IS in the tracked file since 2026-10-22, ported from prod).
+    old["diagrams"] = {"renderer_timeout": 30}
     old_path = tmp_path / "old.yaml"
     old_path.write_text(yaml.safe_dump(old, allow_unicode=True), encoding="utf-8")
 
@@ -279,6 +281,6 @@ def test_compare_keys_routes_ids_to_env_and_settings_to_the_tracked_file(tmp_pat
     lines = result.stdout.splitlines()
 
     owner = next(line for line in lines if "telegram.owner_id" in line)
-    mmdc = next(line for line in lines if "diagrams.mmdc_bin" in line)
+    setting = next(line for line in lines if "diagrams.renderer_timeout" in line)
     assert ".env" in owner
-    assert "bob.vps.yaml" in mmdc
+    assert "bob.vps.yaml" in setting

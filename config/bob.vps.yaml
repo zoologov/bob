@@ -83,3 +83,78 @@ memory:
   # простоя LLM. Q5 RFC BOB-116 решён: на VPS 2026-10-21 прочитано true, и трекаемый файл
   # его сохраняет — без этой строки выкатка выключила бы автобиографию на проде.
   autobiography: true
+  origin_provenance: true     # BOB-087.C: провенанс против конфабуляции
+  register_recall: true       # BOB-087.C: register-aware recall
+  work_journal: true          # BOB-087.B
+  consolidation:
+    enabled: true
+    batch_size: 50
+    max_age_days: 14
+  dedup:
+    enabled: true
+    batch_size: 200
+    threshold: 0.92
+  surface_old:
+    freq: 0.15
+
+# ---------------------------------------------------------------------------------------------
+# Ниже — настройки, которые рукописный конфиг прода задавал до BOB-116 (compare-keys при миграции
+# 2026-10-22: 41 ключ). Значения перенесены как есть; без них выкатка молча вернула бы дефолты
+# и выключила бы способности (RUNBOOK §9.2 п.3). Секретов и идентификаторов здесь нет.
+# ---------------------------------------------------------------------------------------------
+
+persistence:
+  db_path: data/bob.db
+  soul_dir: data/soul
+
+genesis:
+  templates_dir: bob-soul
+
+dialogue:
+  intake_debounce_ms: 600
+
+diagrams:
+  mmdc_bin: /usr/local/bin/mmdc
+
+coder:
+  enabled: true
+  dev_dm: true                # BOB-082: dev-канал в личке
+  interactive: true           # BOB-083: интерактивный терминал
+  isolated_clone: true
+  permission_mode: acceptEdits
+  stream_via_guppi: true      # BOB-087: стрим через GUPPI
+  timeout: 600
+
+introspection:
+  enabled: true
+  dev_tools: true             # BOB-081
+  architecture_tools: true    # BOB-091
+
+presence:
+  reflective: true
+  stream_read: true           # BOB-072
+  catchup:
+    enabled: true
+  endorsement:
+    enabled: true
+  rhythm:
+    enabled: true
+  room_mood:
+    enabled: true
+  series_budget:
+    enabled: true
+  staleness:
+    enabled: true
+  tact:
+    enabled: true
+
+social:
+  delivery: true
+  roster: true                # BOB-080
+
+self_improvement:
+  enabled: true
+  detect_cadence: 20          # мёртвый ключ до BOB-120 (Issues #67) — значение прода сохранено
+  detector_tier: 1
+  max_active_rules: 5
+  max_magnitude: 0.3
