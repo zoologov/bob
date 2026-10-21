@@ -15,13 +15,7 @@
       "runs": 0
     }
   },
-  "alerts": [
-    {
-      "kind": "stale_doc",
-      "message": "1 stale pair(s) — refresh and re-run `beadloom sync-check`",
-      "severity": "warn"
-    }
-  ],
+  "alerts": [],
   "debt": {
     "categories": [
       {
@@ -34,12 +28,12 @@
       },
       {
         "details": {
-          "stale": 1,
+          "stale": 0,
           "undocumented": 0,
           "untracked": 0
         },
         "name": "doc_gaps",
-        "score": 1.0
+        "score": 0.0
       },
       {
         "details": {
@@ -58,7 +52,7 @@
         "score": 0.0
       }
     ],
-    "debt_score": 5.5,
+    "debt_score": 4.5,
     "layer_populations": [],
     "severity": "low",
     "test_population": "not counted: 510 of 562 test file(s) are unplaced (not under tests/integration/ or tests/unit/, nor inside a node's source) and bind to no node, so a node with no bound test may still be tested; a test file is read when its path matches a pattern of go_test (*_test.go), jest (*.test.*, *.spec.*, __tests__/**/*.[jt]s, __tests__/**/*.[jt]sx), junit (*Test.java, *Tests.java, *TestCase.java, *IT.java, *ITCase.java, *Test.kt, *Tests.kt, src/test/**/*.java, src/test/**/*.kt), pytest (test_*.py, *_test.py) or xctest (*Tests.swift, *Tests/**/*.swift) under the root tests or beside a node's code",
@@ -69,13 +63,6 @@
         ],
         "ref_id": "capabilities",
         "score": 2.0
-      },
-      {
-        "reasons": [
-          "stale_doc"
-        ],
-        "ref_id": "coding",
-        "score": 1.0
       },
       {
         "reasons": [
@@ -104,21 +91,21 @@
   "docs": {
     "coverage_pct": 100.0,
     "documented": 23,
-    "fresh": 725,
-    "freshness_pct": 99.9,
+    "fresh": 726,
+    "freshness_pct": 100.0,
     "nodes": 23,
-    "stale": 1,
+    "stale": 0,
     "tracked_pairs": 726
   },
   "doctor": {
     "by_severity": {
-      "ok": 11,
-      "warning": 250
+      "ok": 12,
+      "warning": 249
     },
     "errors": 0,
     "passed": true,
     "total": 261,
-    "warnings": 250
+    "warnings": 249
   },
   "federated": null,
   "lint": {
@@ -503,13 +490,6 @@
     },
     {
       "kind": "debt",
-      "link": "/dashboard#coding",
-      "message": "debt score 1.0: stale_doc",
-      "severity": "warn",
-      "target": "coding"
-    },
-    {
-      "kind": "debt",
       "link": "/dashboard#kernel",
       "message": "debt score 0.5: dormant",
       "severity": "warn",
@@ -787,13 +767,6 @@
       "message": "Rule 'social-no-composition-root' cannot fire: its `to` glob 'bob/app' matches 0 of 419 indexed import paths. It is counted as evaluated but checks nothing — `from:` is matched against the repo-relative source file path as indexed (e.g. `src/pkg/tui/app.py`); `to:` against the dotted import path with dots replaced by slashes (e.g. `pkg/infrastructure/db`) — no `src/` prefix, no file extension. Drop the source root from `to:`, or widen it to `**/infrastructure/**`",
       "severity": "warn",
       "target": "social-no-composition-root"
-    },
-    {
-      "kind": "stale_doc",
-      "link": "/dashboard#coding",
-      "message": "doc is stale vs its code — refresh and re-run sync-check",
-      "severity": "warn",
-      "target": "coding"
     }
   ],
   "status_cards": [
@@ -809,17 +782,17 @@
       "group": "debt",
       "label": "Debt",
       "status": "ok",
-      "value": "5.5 / 100"
+      "value": "4.5 / 100"
     },
     {
-      "detail": "1 stale of 726 tracked pair(s)",
+      "detail": "0 stale of 726 tracked pair(s)",
       "group": "docs",
       "label": "Docs",
-      "status": "warn",
+      "status": "ok",
       "value": "100.0% covered"
     },
     {
-      "detail": "0 errors, 250 warnings",
+      "detail": "0 errors, 249 warnings",
       "group": "doctor",
       "label": "Doctor",
       "status": "warn",
@@ -876,6 +849,16 @@
       "symbols": 1635,
       "sync_pct": 99.9,
       "ts": "2026-10-21T08:49:43.161600+00:00"
+    },
+    {
+      "coverage_pct": 100.0,
+      "debt_score": 4.5,
+      "edges": 121,
+      "lint_violations": 37,
+      "nodes": 23,
+      "symbols": 1635,
+      "sync_pct": 100.0,
+      "ts": "2026-10-21T08:51:35.594070+00:00"
     }
   ]
 }

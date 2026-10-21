@@ -291,7 +291,7 @@ Qwen). Канона им по правилу эпика не нужно — вы
   5 КБ настоящего mermaid, грамотно разобрал схему словами и картинки не прислал (второго
   вызова не сделал). Ни результат вызова, ни цикл инструментов к рендеру не толкали.
   Теперь рендер — часть рисования: общий
-  [`DiagramAttachment`](https://github.com/zoologov/bob/blob/features%2FBOB-112/src/bob/capabilities/usecases/diagram_attachment.py)
+  [`DiagramAttachment`](https://github.com/zoologov/bob/blob/29b589ffd6be7a24190106b3480d62aca4fb98a2/src/bob/capabilities/usecases/diagram_attachment.py)
   (тот же локальный рендерер + тот же синк) рендерит ОДИН раз, дедуплицирует по источнику
   (два инструмента на одну схему = одна фотография) и НЕ бросает наружу — сбой рендера
   возвращается как честная строка `picture`, а не как исключение хода. Слова гарантированы,

@@ -1,5 +1,5 @@
 <!-- beadloom:badge-start -->
-> ⚠️ **stale** — hash_changed
+> ✅ **fresh**
 > 
 > last synced 2026-10-21T08:49:35.850635+00:00 · coverage 100% (`coding`)
 > 
