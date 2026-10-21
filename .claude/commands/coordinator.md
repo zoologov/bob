@@ -501,8 +501,9 @@ Then notify the user (do not change the DAG silently):
   волна ещё не закоммичена.
 - **Текст через shell — только через файл** (п.11): `bd comments add <id> "$(cat f)"`,
   `git commit -F f`; обратные кавычки в двойных кавычках исполняются.
-- **Git (П.6):** `main` не защищён правами (403 на этом плане) и CI по PR информативный —
-  мёрж после перепроверки гейтов на финальном дереве и обновлённых доков; pre-push хук
+- **Git (П.6):** `main` защищён (с BOB-114: PR обязателен, required check `ci`, enforce_admins —
+  прямой push отклоняется и владельцу); мёрж — после зелёного `ci` **и** перепроверки гейтов на
+  финальном дереве и обновлённых доков (CI не гоняет bd, mutation, живые смоуки); pre-push хук
   в основном репозитории работает, на ветке Боба-кодера — нет. Push с `--no-verify` —
   только с записанной причиной в PR/беаде.
 - **Отчёты владельцу — по-русски, с числами** (собрано/пройдено, рёбра/пары/находки,
@@ -514,5 +515,4 @@ Then notify the user (do not change the DAG silently):
 
 The core rules below are stood down **in this project only**. The core text above is unchanged — a suppression is a declaration, never a deletion — and each one names its reason and its exit condition.
 
-- Git — Trunk-based development: в CLAUDE.md §6 ядро утверждает «main is branch-protected», «beadloom ci is a REQUIRED status check» и что setup-branch-protection настраивает защиту — в этом репозитории всё три не действуют: репозиторий приватный на плане GitHub Free, API защиты ветки и rulesets отвечают «403 Upgrade to GitHub Pro or make this repository public»; main держится дисциплиной PR, перепроверкой гейтов координатором на финальном дереве и видимым (не required) CI по PR — раздел П.6 проектного слоя; беада на снятие — bob-933 (until репозиторий станет публичным или план — GitHub Pro: тогда выполняется beadloom setup-branch-protection и эта запись снимается)
 - Template rules: в /task-init ядро 9.0.0 пишет «ALL documents MUST be in English» и «(in English)» в чеклисте, хотя язык документов задан здесь как language: ru и auto-блок doc-language в CLAUDE.md уже печатает Russian — ядро task-init тег языка не читает, расхождение внутри самого beadloom (запись для лога BDL-UX подготовлена в features/BOB-112/BDL-UX-draft.md, номер появится при переносе); в этом проекте все документы по-русски, остальные пункты раздела (статусы, формат метаданных) действуют; беада на снятие — bob-yjv (until ядро /task-init в beadloom читает language из flow.yml и печатает тот же язык, что auto-блок doc-language)

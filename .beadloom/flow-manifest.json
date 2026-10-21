@@ -1,15 +1,15 @@
 {
   "version": 1,
   "written": {
-    ".claude/CLAUDE.md": "40a7b84c19739cbe1ae41308c666bb230d2159814fdc687ae5de9a195bf4d8d8",
-    ".claude/agents/dev.md": "aa95fc244fbd1e7013abc907d820df06294ccd7bb9c6c1ac133984de417e144b",
-    ".claude/agents/explore.md": "1a51ac4a9e21330bae43c273b7c028f61d9ff7d48dc44cdd59dbde8168a47604",
-    ".claude/agents/review.md": "f62c34874055c68ec5edb28a291085b6ff30a366b2678aae16b123e56ff3c476",
-    ".claude/agents/tech-writer.md": "1097e631df85562554e3021a19dc678f282d51d056a7204dbae45dd2c9a7c8aa",
-    ".claude/agents/test.md": "5d0e2b46531eeee523c7974a42b5632ad84c35b450d72a909df283eb66e2a1cb",
-    ".claude/commands/checkpoint.md": "0e536fa2b9fe12e56f751d2625e90d9b9ad16550733c81ba0201f3743b9a8245",
-    ".claude/commands/coordinator.md": "91cb0e150589d07c7d62bfd0b7ee1d83f5524b93928489355a19a46f9dbe748f",
-    ".claude/commands/task-init.md": "de0b41176103c2368194c60f7e6a96f35a2819180197e9b28bb3068583cc690f",
-    ".claude/commands/templates.md": "f8f4d31930295afd24a7b8c376d837f4825f8c085ecc3b371bc0606a8c4d225c"
+    ".claude/CLAUDE.md": "d45e8c860373eca508e6bf10013ce835f00ce0b0087a572326d6da56415cdbf4",
+    ".claude/agents/dev.md": "4c17e8667a4c2e5c93c4b2d007ba41e6852b767f85ca8df2b604b83da138fabd",
+    ".claude/agents/explore.md": "750a072c609388f82b3f2b211d1bacaa03ef577b5f8f7cab6c43e40d27685533",
+    ".claude/agents/review.md": "c0a0e7ce89e7f373bf39cdcaf1159ae96c51e263033b938958bc364c597e608c",
+    ".claude/agents/tech-writer.md": "603c7878aabe2958df6875359c6ffbc6c83f2f8079ac21f25f12e6949cee417e",
+    ".claude/agents/test.md": "d1268071ee66139e13f466c5a92442b8f92ecfff076f53bc8f5b1876a2824138",
+    ".claude/commands/checkpoint.md": "4c21d2fe29e7f18e1455867cbf3f544363a776dcfc1d4818bb864f1486b47684",
+    ".claude/commands/coordinator.md": "35e21686304722a2d685bddd7052b4d6109aa0080537c6d14754e9dbb28bc817",
+    ".claude/commands/task-init.md": "e82dcb19c0a300fd99c468789b7bc1bd03643679ea3fe587ba7ea0b4603aa2ef",
+    ".claude/commands/templates.md": "93cebc43c60d562d6d415795ef0440c5a2e9875f4d8f2bb52495865404949579"
   }
 }
