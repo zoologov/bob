@@ -19,7 +19,6 @@ from bob.application.router.health_messages import (
     HealthNotice,
     Situation,
     degraded_text,
-    format_duration,
     recovered_text,
     reminder_text,
     understudy_missing_text,
@@ -54,35 +53,9 @@ def _notice(
     )
 
 
-# --- длительность -----------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("seconds", "expected"),
-    [
-        (0.2, "меньше секунды"),
-        (1, "секунду"),
-        (40, "40 секунд"),
-        (60, "минуту"),
-        (180, "3 минуты"),
-        (600, "10 минут"),
-        (21 * 60, "21 минуту"),
-        (3600, "час"),
-        (3600 + 10 * 60, "1 час 10 минут"),
-        (6 * 3600, "6 часов"),
-        (86400, "день"),
-        (9 * 86400 + 23 * 3600 + 32 * 60, "9 дней 23 часа"),
-        (2 * 86400 + 5 * 60, "2 дня"),
-        (11 * 86400, "11 дней"),
-        (22 * 3600, "22 часа"),
-    ],
-)
-def test_duration_reads_as_russian_accusative(seconds: float, expected: str) -> None:
-    assert format_duration(seconds) == expected
-
-
-def test_negative_duration_is_not_shown_as_negative() -> None:
-    assert format_duration(-5) == "меньше секунды"
+# Длительность, период, склонение и причина отказа — общие слова из ``bob.kernel.ru_text``
+# (ревью M3, bob-i83.20); их полные таблицы — в tests/domain/kernel/test_ru_text.py. Здесь —
+# что эти слова доходят до текста владельцу на своих местах.
 
 
 # --- сигнал о деградации ----------------------------------------------------------
@@ -158,11 +131,11 @@ def test_voice_tier_down_names_the_main_model() -> None:
         ("rate", "просит подождать (429 — лимит запросов)"),
         ("server", "отвечает ошибкой сервера (5xx)"),
         ("timeout", "не отвечает вовремя (таймаут)"),
-        ("connection", "до облака не достучаться"),
+        ("connection", "до облака не достучаться (соединение)"),
         ("shape", "обрывает ответ на полуслове"),
         ("contract", "отвергает мой запрос"),
         (None, "облако не работает"),
-        ("unheard-of", "облако не работает"),
+        ("unheard-of", "облако не работает (unheard-of)"),
     ],
 )
 def test_every_failure_class_has_a_human_cause(failure_class: str | None, fragment: str) -> None:
@@ -222,9 +195,29 @@ def test_recovered_after_muteness_matches_the_approved_wording() -> None:
     )
 
 
-def test_recovered_within_one_day_shows_only_clock_times() -> None:
+def test_recovered_within_one_day_names_the_day_once() -> None:
     text = recovered_text(_notice(elapsed=timedelta(minutes=32)), tz=UTC)
-    assert text.endswith("Молчал 32 минуты (с 06:10 по 06:42 +00:00).")
+    assert text.endswith("Молчал 32 минуты (1 октября с 06:10 по 06:42 +00:00).")
+
+
+def test_recovered_period_from_the_second_takes_so() -> None:
+    # Тот же предлог, что в эпизоде «я молчал»: «со 2 октября» (ревью M3 — копии расходились).
+    since = datetime(2026, 10, 2, 6, 10, tzinfo=UTC)
+    notice = HealthNotice(
+        provider_id="tier0-primary",
+        situation=Situation.MUTE,
+        failure_class="auth",
+        failures=5,
+        since=since,
+        now=since + timedelta(days=1),
+        next_reminder_s=600.0,
+        probe_s=60.0,
+        has_understudy=False,
+        owner_name=None,
+    )
+    assert recovered_text(notice, tz=UTC).endswith(
+        "Молчал день (со 2 октября 06:10 по 3 октября 06:10 +00:00)."
+    )
 
 
 # Время владельцу — в поясе процесса с явным смещением, без «UTC» (решение координатора,
@@ -233,8 +226,8 @@ def test_recovered_within_one_day_shows_only_clock_times() -> None:
 @pytest.mark.parametrize(
     ("tz", "period"),
     [
-        (timezone(timedelta(hours=3)), "(с 09:10 по 09:42 +03:00)"),
-        (timezone(-timedelta(hours=9, minutes=30)), "(с 20:40 по 21:12 -09:30)"),
+        (timezone(timedelta(hours=3)), "(1 октября с 09:10 по 09:42 +03:00)"),
+        (timezone(-timedelta(hours=9, minutes=30)), "(30 сентября с 20:40 по 21:12 -09:30)"),
     ],
 )
 def test_recovered_period_is_told_in_the_given_zone_with_its_offset(
@@ -315,7 +308,7 @@ def test_naive_times_carry_no_zone_label() -> None:
         owner_name=None,
     )
     assert recovered_text(notice, tz=timezone(timedelta(hours=3))).endswith(
-        "(с 06:10 по 06:15)."
+        "(1 октября с 06:10 по 06:15)."
     )
 
 

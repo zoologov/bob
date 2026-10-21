@@ -309,6 +309,23 @@ class HealthObserver(Protocol):
 
 
 @runtime_checkable
+class SelfReportingProvider(Protocol):
+    """A provider that reports the outcome of each of its own calls (BOB-116 F1).
+
+    The optional companion of :class:`LLMProvider` the health-reporting wrapper advertises.
+    The factory puts the wrapper on a tier so that EVERY caller's call is reported — the
+    router's and the tool loop's alike, which calls Tier 1 past the router. A caller that
+    also reports (the router) asks this protocol whether the call is already accounted for:
+    reporting it again would count one HTTP call twice.
+    """
+
+    @property
+    def reported_id(self) -> str:
+        """The ``provider_id`` this provider's outcomes are reported under."""
+        ...
+
+
+@runtime_checkable
 class HealthReader(Protocol):
     """Read side of provider health: the ``/status`` snapshot and the heartbeat lane gate."""
 

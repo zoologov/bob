@@ -35,13 +35,16 @@ GUPPI's policy layer over the provider-agnostic :class:`LLMProvider` ports
    STAYS» (BOB-096.4 — the door both speaks AS BOB and is kept) keeps the stand-in out and
    escalates **UP** to Tier 1 (one hop, same redaction), or fails honestly.
 5. **Reports every provider outcome to the health monitor** (BOB-116). Each attempt on a
-   tier is reported to the injected :class:`~bob.kernel.ports.HealthObserver` — ``tier1``
-   always, Tier 0 as ``tier0-primary`` ONLY when the provider actually called is not the
-   understudy wrapper (:class:`~bob.kernel.ports.UnderstudyBackedProvider`): the wrapper
-   reports its primary and its stand-in itself, so one HTTP call is one record, never two.
-   Bob's own voice on Tier 0 goes to the BARE primary (``without_understudy``), past the
-   wrapper — that call the router reports. 🔴 A failure is recorded BEFORE it propagates:
-   the heartbeat lane gate reads the snapshot right after the tick (BOB-116 D5).
+   tier is reported to the injected :class:`~bob.kernel.ports.HealthObserver` — as ``tier1``
+   or ``tier0-primary`` — ONLY when the provider actually called does not report itself.
+   Two kinds do: the understudy wrapper
+   (:class:`~bob.kernel.ports.UnderstudyBackedProvider`) reports its primary and its
+   stand-in, and a :class:`~bob.kernel.ports.SelfReportingProvider` reports its own calls —
+   the factory wraps Tier 1 so, because the tool loop calls Tier 1 past this router (F1). One
+   HTTP call is one record, never two. Bob's own voice on Tier 0 goes to the BARE primary
+   (``without_understudy``), past the understudy wrapper — that call the router reports.
+   🔴 A failure is recorded BEFORE it propagates: the heartbeat lane gate reads the snapshot
+   right after the tick (BOB-116 D5).
 6. **Carries the VOICE canon to every door** (BOB-096.3). The ban on role-playing GUPPI
    stood on ONE door out of sixteen — the conversational turn — while the reflection,
    its reappraisal, the consolidation digest, the proactive line, the work journal and
@@ -81,7 +84,7 @@ from bob.application.router.generation_door import TaskType, door_for
 from bob.application.router.health_monitor import TIER0_PRIMARY, TIER1, NoopHealthObserver
 from bob.application.router.voice_canon import fold_voice_canon
 from bob.application.router.voice_integrity import OutageVoice, who_may_answer_for_bob
-from bob.kernel.ports import HealthReader, UnderstudyBackedProvider
+from bob.kernel.ports import HealthReader, SelfReportingProvider, UnderstudyBackedProvider
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -545,11 +548,12 @@ class LLMRouter:
     def _reported_id(tier: int, provider: LLMProvider) -> str | None:
         """Under which id the router reports a call to ``provider`` — ``None``: not its to report.
 
-        The understudy wrapper reports ``tier0-primary`` and ``tier0-understudy`` itself, so
-        a call that goes THROUGH it is left to it; reporting it here as well would count one
-        HTTP call twice. The decision is made on the provider actually called, so the bare
-        primary behind Bob's own voice (``without_understudy``) is reported here.
+        The understudy wrapper reports ``tier0-primary`` and ``tier0-understudy`` itself, and
+        a self-reporting provider (Tier 1 from the factory, BOB-116 F1) reports its own calls,
+        so a call that goes THROUGH either is left to it; reporting it here as well would
+        count one HTTP call twice. The decision is made on the provider actually called, so
+        the bare primary behind Bob's own voice (``without_understudy``) is reported here.
         """
-        if isinstance(provider, UnderstudyBackedProvider):
+        if isinstance(provider, (UnderstudyBackedProvider, SelfReportingProvider)):
             return None
         return TIER0_PRIMARY if tier == _TIER_LOCAL else TIER1

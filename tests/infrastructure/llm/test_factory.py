@@ -11,7 +11,12 @@ import pytest
 from bob.infrastructure.llm.factory import build_tier_providers
 from bob.infrastructure.llm.fallback_provider import FallbackLLMProvider
 from bob.infrastructure.llm.openai_compat import OpenAICompatProvider
+from bob.infrastructure.llm.reporting_provider import (
+    ReportingLLMProvider,
+    ToolCallingReportingLLMProvider,
+)
 from bob.kernel.ports import LLMProvider, ToolCallingProvider
+from bob.kernel.provider_health import TIER1
 
 
 def test_builds_both_tiers_from_config() -> None:
@@ -393,3 +398,57 @@ def test_fallback_on_without_model_raises() -> None:
     # Act / Assert
     with pytest.raises(KeyError, match="tier0_fallback_model"):
         build_tier_providers({"llm": llm})
+
+
+# --- Доклад здоровья Tier-1 (BOB-116 F1, ревью M1) --------------------------------------
+
+
+class _Health:
+    async def record_success(self, provider_id: str) -> None:
+        del provider_id
+
+    async def record_failure(self, provider_id: str, failure_class: str) -> None:
+        del provider_id, failure_class
+
+
+def test_with_health_tier1_reports_itself_for_every_caller() -> None:
+    # ToolLoop берёт Tier-1 из этого словаря и зовёт провайдера мимо роутера: доклад обязан жить
+    # на самом провайдере, иначе 403 на ответе человеку монитор не увидит.
+    providers = build_tier_providers({"llm": _full_llm()}, health=_Health())
+
+    tier1 = providers[1]
+    assert isinstance(tier1, ToolCallingReportingLLMProvider)
+    assert tier1.reported_id == TIER1
+    assert isinstance(tier1, ToolCallingProvider)  # ToolLoop не засыпает молча
+
+
+def test_with_health_tier1_wraps_exactly_the_provider_built_without_it() -> None:
+    llm = _full_llm()
+    bare = build_tier_providers({"llm": llm})[1]
+
+    wrapped = build_tier_providers({"llm": llm}, health=_Health())[1]
+
+    assert isinstance(wrapped, ToolCallingReportingLLMProvider)
+    assert type(wrapped._inner) is OpenAICompatProvider
+    assert wrapped._inner.__dict__ == bare.__dict__
+
+
+def test_with_health_a_plain_tier0_stays_bare_for_the_router_to_report() -> None:
+    providers = build_tier_providers({"llm": _full_llm()}, health=_Health())
+
+    assert type(providers[0]) is OpenAICompatProvider
+
+
+def test_with_health_the_understudy_composite_is_not_wrapped_again() -> None:
+    # Дублёр-обёртка докладывает облако и дублёра сама: вторая обёртка удвоила бы учёт.
+    providers = build_tier_providers({"llm": _fallback_llm()}, health=_Health())
+
+    assert isinstance(providers[0], FallbackLLMProvider)
+    assert not isinstance(providers[0], ReportingLLMProvider)
+    assert isinstance(providers[1], ToolCallingReportingLLMProvider)
+
+
+def test_without_health_tier1_is_the_bare_provider() -> None:
+    providers = build_tier_providers({"llm": _full_llm()})
+
+    assert type(providers[1]) is OpenAICompatProvider

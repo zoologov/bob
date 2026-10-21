@@ -34,8 +34,12 @@
 | D12 fix: лог монитора в локальном поясе | bob-i83.16 | ✓ done (30/30; слепая зона «тот же день» закрыта тестом) |
 | T тесты | bob-i83.12 | ✓ done (12 сценариев, 11 зелёных + S5 xfail → D13; mutation 144/144 · 41/41 · 19/19) |
 | D13 fix: сервисная дверь не роняет ход (S5) | bob-i83.17 | ✓ done (шов LLMRouter.run_optional; настроение + пересмотр черновика; S5 зелёный, xfail снят; 8656 passed / 17 skipped; 5 саботажей) |
-| R ревью | bob-i83.13 | blocked (D13) |
-| TW доки | bob-i83.14 | blocked (R) |
+| R ревью | bob-i83.13 | ✓ ISSUES: 0 critical, 6 Major (M1 Tier-1 в ToolLoop без доклада; M2 гейт глушит дорожки при живом дублёре; M3 дубли русского рендера; M4 гард деплоя обманывается; M5 оси personality/presence; M6 43 устаревшие пары → TW), 9 minor, 8 notes |
+| F1 (M1) Tier-1 обёрнут репортёром | bob-i83.18 | ✓ done (SelfReportingProvider; 31 тест; S13) |
+| F2 (M2) гейт по эффективному Tier-0 | bob-i83.19 | ✓ done (20/20 reflect при живом дублёре; TIER0_EFFECTIVE «tier0», правило одно — _tier0_mute) |
+| F3 (M3) kernel/ru_text — один дом рендера | bob-i83.20 | ✓ done (131 тест; mutation 149/149; три потребителя краснеют от одной поломки) |
+| F4 (M4+m3+RUNBOOK+Q5) гарды деплоя/id, RUNBOOK §10.2, autobiography в конфиге | bob-i83.21 | ✓ done (245/245; обман TRACKED→LIVE даёт 3 FAILED) |
+| TW доки | bob-i83.14 | blocked (F1–F4) |
 
 ## Progress
 
@@ -43,7 +47,9 @@
 - [x] W1 + W2 (без D8b) — коммит 02071bf; гейты координатора: 8492 passed / 17 skipped, ruff/mypy чисты, lint 0 + sync 0 на чистом индексе 9.0.0; mutation D1 перемеряется в T (серийно)
 - [x] D8b + D11 — коммит 29b6ca3; гейты координатора: 8590 passed / 17 skipped, ruff/mypy чисты, lint 0 + sync 0 на чистом индексе 9.0.0
 - [x] W3 (D10) — находки: старт без дублёра не пересобирал провайдеров, пояса UTC vs локальный → fix-беада D11 (bob-i83.15) блокирует T
-- [ ] T (+ D12 параллельно) → R → TW → PR
+- [x] T + D12 + D13 — коммиты a0c4ba3, 5218e81
+- [x] R — ISSUES (6 Major) → F1–F4; M5 закрыт правкой осей RFC (personality/presence → yes, датировано); долг `bob-qnl` (11 сайтов except Exception)
+- [ ] F1–F4 (параллельно) → повторное ревью Majors → TW → PR
 
 ## Вне этой работы (зафиксировано)
 

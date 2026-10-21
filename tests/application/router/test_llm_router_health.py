@@ -74,6 +74,37 @@ class _UnderstudyBacked(_Provider):
         return self.primary
 
 
+class _SelfReporting(_Provider):
+    """Провайдер с докладчиком на себе (BOB-116 F1): исход своего вызова записывает сам."""
+
+    def __init__(
+        self,
+        *,
+        recorder: _Recorder,
+        provider_id: str,
+        reply: str = "ok",
+        error: BaseException | None = None,
+    ) -> None:
+        super().__init__(reply=reply, error=error)
+        self._recorder = recorder
+        self._provider_id = provider_id
+
+    @property
+    def reported_id(self) -> str:
+        return self._provider_id
+
+    async def complete(
+        self, messages: Sequence[LLMMessage], *, stream: bool = False
+    ) -> str | AsyncIterator[str]:
+        try:
+            result = await super().complete(messages, stream=stream)
+        except aiohttp.ClientResponseError:
+            await self._recorder.record_failure(self._provider_id, "reported-by-provider")
+            raise
+        await self._recorder.record_success(self._provider_id)
+        return result
+
+
 class _Recorder:
     def __init__(self) -> None:
         self.records: list[tuple[str, str, str | None]] = []
@@ -167,6 +198,55 @@ async def test_bobs_voice_on_tier0_goes_to_the_bare_primary_and_the_router_repor
     assert primary.calls == 1
     assert wrapper.calls == 0
     assert recorder.records == [("failure", TIER0_PRIMARY, "auth"), ("success", TIER1, None)]
+
+
+# --- Tier-1 докладывает сам (BOB-116 F1, ревью M1) ------------------------------------
+# Фабрика надевает докладчика на Tier-1, потому что ToolLoop зовёт Tier-1 мимо роутера. Тогда
+# роутер свой вызов Tier-1 не докладывает: одна запись — от провайдера, вторая была бы двойной.
+
+
+async def test_self_reporting_tier1_is_left_to_the_provider() -> None:
+    recorder = _Recorder()
+    tier1 = _SelfReporting(recorder=recorder, provider_id=TIER1)
+    router = LLMRouter(providers={0: _Provider(), 1: tier1}, health=recorder)
+
+    await router.run(_request(TaskType.ROOM_READ))
+
+    assert tier1.calls == 1
+    assert recorder.records == [("success", TIER1, None)]
+
+
+async def test_self_reporting_tier1_outage_is_one_record_and_the_rescue_is_reported() -> None:
+    recorder = _Recorder()
+    tier1 = _SelfReporting(recorder=recorder, provider_id=TIER1, error=_http_error(403))
+    router = LLMRouter(providers={0: _Provider(reply="t0"), 1: tier1}, health=recorder)
+
+    assert await router.run(_request(TaskType.ROOM_READ)) == "t0"
+
+    assert recorder.records == [
+        ("failure", TIER1, "reported-by-provider"),
+        ("success", TIER0_PRIMARY, None),
+    ]
+
+
+async def test_bobs_voice_on_a_self_reporting_tier1_is_one_record() -> None:
+    recorder = _Recorder()
+    tier1 = _SelfReporting(recorder=recorder, provider_id=TIER1, reply="t1")
+    router = LLMRouter(providers={0: _Provider(), 1: tier1}, health=recorder)
+
+    assert await router.run(_request(TaskType.REPLY_TO_USER)) == "t1"
+
+    assert recorder.records == [("success", TIER1, None)]
+
+
+async def test_a_self_reporting_plain_tier0_is_left_to_the_provider() -> None:
+    recorder = _Recorder()
+    tier0 = _SelfReporting(recorder=recorder, provider_id=TIER0_PRIMARY, reply="t0")
+    router = LLMRouter(providers={0: tier0, 1: _Provider()}, health=recorder)
+
+    assert await router.run(_request()) == "t0"
+
+    assert recorder.records == [("success", TIER0_PRIMARY, None)]
 
 
 # --- дублёр снят при старте (BOB-116 D11, bob-i83.15) ---------------------------------

@@ -59,6 +59,8 @@ _FEATURE = "../features/llm_health.feature"
 _TURN_WAIT_SECONDS = 6.0
 _TURN_WAIT_STEP_SECONDS = 0.05
 _GUPPI_OUTAGE_MARK = "Боб временно недоступен"
+# Ответ облака, который судья хода разбирает как «ответить» (parse_response_choice).
+_JUDGE_SAYS_REPLY = "intent: reply"
 
 
 @scenario(
@@ -147,6 +149,18 @@ def understudy_model_missing(story: _Story) -> None:
 def cloud_forbidden(story: _Story) -> None:
     # Настоящий 403 с loopback — форма десяти дней немоты на VPS (2026-10-01…10).
     story.setup = replace(story.setup, cloud=FORBIDDEN)
+
+
+@given("облачный Tier-0 отвечает и решает, что на сообщение владельца стоит ответить")
+def cloud_judges_reply(story: _Story) -> None:
+    # Судья хода — служебная дверь Tier-0; ответ в его формате пропускает ход к основной модели.
+    story.setup = replace(story.setup, cloud=ANSWERS, cloud_reply=_JUDGE_SAYS_REPLY)
+
+
+@given("Tier-1 отвечает 403")
+def tier1_forbidden(story: _Story) -> None:
+    # Ключ основной модели не пускают — облако Tier-0 при этом отвечает.
+    story.setup = replace(story.setup, tier1=FORBIDDEN)
 
 
 @given("облачный Tier-0 один раз отвечает 503, а потом отвечает нормально")
@@ -246,12 +260,34 @@ def guest_writes_to_bob(story: _Story) -> None:
     story.act.append(action)
 
 
-async def _wait_for_a_line_in_the_room(world: HealthWorld) -> None:
-    """Ход гостя идёт фоновым обработчиком: ждём, пока в комнату что-то придёт, или предела."""
+@when(parsers.parse("владелец {times:d} раза пишет Бобу в его топик"))
+def owner_writes_to_bob(story: _Story, times: int) -> None:
+    async def action(world: HealthWorld) -> None:
+        for index in range(times):
+            before = len(_room_lines(world))
+            await world.app.event_bus.publish(
+                MessageReceived(
+                    update_id=100 + index,
+                    chat_id=GROUP_CHAT_ID,
+                    message_id=100 + index,
+                    text=f"Боб, что нового? ({index + 1})",
+                    sender_id=OWNER_ID,
+                    sender_name="Владелец",
+                    is_group=True,
+                    topic_id=BOB_TOPIC_ID,
+                )
+            )
+            await _wait_for_a_line_in_the_room(world, after=before)
+
+    story.act.append(action)
+
+
+async def _wait_for_a_line_in_the_room(world: HealthWorld, *, after: int = 0) -> None:
+    """Ход идёт фоновым обработчиком: ждём, пока в комнату придёт строка сверх ``after``."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + _TURN_WAIT_SECONDS
     while loop.time() < deadline:
-        if _room_lines(world):
+        if len(_room_lines(world)) > after:
             return
         await asyncio.sleep(_TURN_WAIT_STEP_SECONDS)
 
@@ -358,14 +394,19 @@ def later_messages_are_reminders(story: _Story) -> None:
 # --- Тогда: голос без дублёра --------------------------------------------------------
 
 
-@then("в топике Боба появилось честное уведомление GUPPI, что Боб временно недоступен")
-def honest_outage_notice(story: _Story) -> None:
-    world = story.outcome()
-    topic = [
+def _topic_lines(world: HealthWorld) -> list[str]:
+    """Что бот Боба отправил в топик Боба."""
+    return [
         line.text
         for line in world.bob_bot.sent
         if line.chat_id == GROUP_CHAT_ID and line.topic_id == BOB_TOPIC_ID
     ]
+
+
+@then("в топике Боба появилось честное уведомление GUPPI, что Боб временно недоступен")
+def honest_outage_notice(story: _Story) -> None:
+    world = story.outcome()
+    topic = _topic_lines(world)
     assert any(_GUPPI_OUTAGE_MARK in text for text in topic), _room_lines(world)
 
 
@@ -506,6 +547,56 @@ def status_names_reason(story: _Story) -> None:
 def status_other_providers(story: _Story) -> None:
     assert _status_line(story, "tier1") == "tier1 — ок"
     assert _status_line(story, "дублёр") == "дублёр — нет"
+
+
+@then("каждый ход владельца шёл к Tier-1 через инструменты")
+def owner_turns_went_through_tools(story: _Story) -> None:
+    world = story.outcome()
+    # Ход владельца — ToolLoop: в теле запроса к Tier-1 лежит манифест инструментов.
+    tool_turns = [body for body in world.tier1.bodies if '"tools"' in body]
+    assert len(tool_turns) >= 2, world.tier1.bodies
+    # Каждый ход владельца закончился в его топике честным уведомлением, а не тишиной.
+    topic = _topic_lines(world)
+    assert len(topic) == 2, topic
+    assert all(_GUPPI_OUTAGE_MARK in text for text in topic), topic
+
+
+def _owner_dms(world: HealthWorld) -> list[str]:
+    """Личка владельца, как он её видит: бот Боба, ``chat_id == owner_id``, без треда."""
+    return [
+        line.text
+        for line in world.bob_bot.sent
+        if line.chat_id == OWNER_ID and line.topic_id is None
+    ]
+
+
+@then("бот Боба написал владельцу в личку ровно одно сообщение")
+def one_dm_to_the_owner(story: _Story) -> None:
+    world = story.outcome()
+    assert len(_owner_dms(world)) == 1, _owner_dms(world)
+    assert not [line for line in world.guppi_bot.sent if line.chat_id == OWNER_ID]
+
+
+@then("в нём Боб говорит, что основная модель отказывает в доступе, и называет код 403")
+def message_names_the_main_model(story: _Story) -> None:
+    text = _owner_dms(story.outcome())[0]
+    assert "основная модель отказывает мне в доступе" in text, text
+    assert "403" in text, text
+
+
+@then(
+    "Tier-1 в /status деградирован по ключу/квоте, "
+    "и отказов подряд столько, сколько раз его позвали"
+)
+def status_tier1_degraded(story: _Story) -> None:
+    world = story.outcome()
+    line = _status_line(story, "tier1")
+    # Один HTTP-вызов — одна запись: ни потерянной (ToolLoop мимо роутера), ни двойной.
+    assert line.startswith("tier1 — деградирован с "), line
+    assert line.endswith(f"(не пускало по ключу/квоте, {world.tier1.calls} подряд)"), (
+        line,
+        world.tier1.calls,
+    )
 
 
 @then("в памяти Боба ровно один эпизод о простое")

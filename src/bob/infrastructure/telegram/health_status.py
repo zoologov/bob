@@ -21,7 +21,9 @@
   нет, идут следом по алфавиту под своим id — данные снимка не прячутся;
 * id из списка, которого нет в снимке, — «нет данных», а отсутствующий дублёр — «нет»
   (дублёр не настроен — монитор о нём не знает);
-* класс отказа говорится фразой (:data:`_FAILURE_PHRASES`); незнакомый класс — как есть;
+* класс отказа говорится безличной фразой из :func:`bob.kernel.ru_text.failure_report` — та
+  же таблица причин, что в сообщении владельцу и в эпизоде «я молчал» (ревью M3,
+  bob-i83.20); незнакомый класс называется как есть в скобках;
 * ``HEALTHY`` с допороговыми отказами не прячется за «ок»: «ок, сбоев подряд: N (…)»;
 * провайдер, снятый при старте (``stood_down_reason``: дублёр включён, но не готов), —
   «выключен при старте: <причина> (до перезапуска)»: сам он не вернётся.
@@ -31,7 +33,9 @@
 процесса**, то есть в том, что настроен на машине Боба: у владельца на VPS это пояс сервера.
 Смещение пишется явно — тот же пояс и та же подпись, что в сообщениях владельцу и в эпизоде
 «я молчал» (:mod:`bob.kernel.local_time`, решение координатора bob-i83.15). Наивное время
-печатается как есть и без смещения — пересчитывать его не из чего.
+печатается как есть и без смещения — пересчитывать его не из чего. Предлог перед ним всегда
+«с»: время здесь начинается с года, а правило «со 2 октября» из :mod:`bob.kernel.ru_text`
+относится ко дню месяца в русской дате.
 
 Чистая функция: ни сети, ни часов, ни монитора — только снимок на входе и текст на выходе.
 """
@@ -41,7 +45,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from bob.kernel.local_time import in_local_zone, utc_offset_label
-from bob.kernel.provider_health import HealthState
+from bob.kernel.provider_health import TIER0_PRIMARY, TIER0_UNDERSTUDY, TIER1, HealthState
+from bob.kernel.ru_text import failure_report
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -53,30 +58,18 @@ __all__ = ["render_health_status"]
 
 _HEADER = "LLM:"
 _TIME_FORMAT = "%Y-%m-%d %H:%M"
-_UNDERSTUDY_ID = "tier0-understudy"
 
 # Известные провайдеры в порядке показа и их человеческие имена.
 _PROVIDER_LABELS: tuple[tuple[str, str], ...] = (
-    ("tier0-primary", "tier0 облако"),
-    (_UNDERSTUDY_ID, "дублёр"),
-    ("tier1", "tier1"),
+    (TIER0_PRIMARY, "tier0 облако"),
+    (TIER0_UNDERSTUDY, "дублёр"),
+    (TIER1, "tier1"),
 )
 
 _NO_DATA = "нет данных"
 _STOOD_DOWN = "выключен при старте: {reason} (до перезапуска)"
 _UNDERSTUDY_ABSENT = "нет"
 _OK = "ок"
-
-# Класс отказа (``fallback_policy.classify_failure``) → что это значит для человека.
-_FAILURE_PHRASES: dict[str, str] = {
-    "auth": "не пускало по ключу/квоте",
-    "rate": "просило подождать",
-    "server": "ошибка на стороне облака",
-    "timeout": "не отвечало",
-    "connection": "не достучаться",
-    "shape": "обрывало ответ на полпути",
-    "contract": "дефект запроса или ответа",
-}
 
 
 def render_health_status(
@@ -100,7 +93,7 @@ def render_health_status(
 def _describe(provider_id: str, view: HealthView | None, tz: tzinfo | None) -> str:
     """Состояние одного провайдера словами."""
     if view is None:
-        return _UNDERSTUDY_ABSENT if provider_id == _UNDERSTUDY_ID else _NO_DATA
+        return _UNDERSTUDY_ABSENT if provider_id == TIER0_UNDERSTUDY else _NO_DATA
     if view.stood_down_reason is not None:
         return _STOOD_DOWN.format(reason=view.stood_down_reason)
     if view.state is HealthState.DEGRADED:
@@ -122,18 +115,13 @@ def _describe_degraded(view: HealthView, tz: tzinfo | None) -> str:
     )
     details = [f"{view.consecutive_failures} подряд"]
     if view.failure_class is not None:
-        details.insert(0, _phrase(view.failure_class))
+        details.insert(0, failure_report(view.failure_class))
     return f"деградирован{since} ({', '.join(details)})"
 
 
 def _reason_suffix(failure_class: str | None) -> str:
     """`` (<причина>)`` или пусто, если класс не сообщён."""
-    return "" if failure_class is None else f" ({_phrase(failure_class)})"
-
-
-def _phrase(failure_class: str) -> str:
-    """Класс отказа фразой; незнакомый класс — как есть."""
-    return _FAILURE_PHRASES.get(failure_class, failure_class)
+    return "" if failure_class is None else f" ({failure_report(failure_class)})"
 
 
 def _format_time(moment: datetime, tz: tzinfo | None) -> str:

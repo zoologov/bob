@@ -26,7 +26,10 @@ The result maps tier index -> provider, ready for the
 :class:`bob.application.router.LLMRouter`.
 
 Provider health (BOB-116): an optional :class:`~bob.kernel.ports.HealthObserver` is
-threaded into the understudy wrapper, which reports the cloud and the stand-in separately.
+threaded into the understudy wrapper, which reports the cloud and the stand-in separately,
+and Tier 1 is handed over wrapped by
+:func:`~bob.infrastructure.llm.reporting_provider.build_reporting_provider` (F1): the tool
+loop calls Tier 1 past the router, so the report has to live on the provider itself.
 :func:`understudy_endpoint` is the one reading of «is a stand-in configured, and where» —
 the composition root learns ``has_understudy`` from it for the monitor and hands it to
 :func:`bob.infrastructure.llm.understudy_probe.probe_understudy` at startup.
@@ -41,6 +44,8 @@ from typing import TYPE_CHECKING
 from bob.capabilities.adapters.web_search_qwen import QwenWebSearchProvider
 from bob.infrastructure.llm.fallback_provider import build_fallback_provider
 from bob.infrastructure.llm.openai_compat import OpenAICompatProvider
+from bob.infrastructure.llm.reporting_provider import build_reporting_provider
+from bob.kernel.provider_health import TIER1
 
 if TYPE_CHECKING:
     from bob.capabilities.ports import WebSearchProvider
@@ -100,8 +105,12 @@ def build_tier_providers(
 ) -> dict[int, LLMProvider]:
     """Build ``{0: tier0_provider, 1: tier1_provider}`` from ``config['llm']``.
 
-    ``health`` reaches the understudy wrapper only: the router reports Tier 1 and a plain
-    Tier 0 itself, so threading it into the bare providers would count each call twice.
+    ``health`` reaches the providers every caller shares. Tier 1 is wrapped to report itself
+    (``tier1``): the router calls it, and so does the tool loop on every owner turn, past the
+    router (BOB-116 F1). The understudy wrapper reports its cloud and its stand-in. A plain
+    Tier 0 stays bare — only the router calls it, and the router reports it. The router
+    leaves a self-reporting provider alone, so each HTTP call is one record. Without
+    ``health`` every provider is bare, exactly as before BOB-116.
     """
     llm = config.get("llm")
     if not isinstance(llm, Mapping):
@@ -118,7 +127,7 @@ def build_tier_providers(
         disable_thinking=disable_thinking,
         temperature=_optional_float_or_none(llm, "tier0_temperature"),
     )
-    tier1 = OpenAICompatProvider(
+    tier1: LLMProvider = OpenAICompatProvider(
         base_url=_require_str(llm, "tier1_base_url"),
         model=_require_str(llm, "tier1_model"),
         api_key=_optional_str(llm, "tier1_api_key"),
@@ -126,6 +135,8 @@ def build_tier_providers(
         disable_thinking=disable_thinking,
         temperature=_optional_float_or_none(llm, "tier1_temperature"),
     )
+    if health is not None:
+        tier1 = build_reporting_provider(inner=tier1, health=health, provider_id=TIER1)
     local_fallback = _build_tier0_fallback(
         understudy_endpoint(config),
         llm,

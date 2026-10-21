@@ -43,6 +43,9 @@ from dataclasses import dataclass
 from enum import Enum
 
 __all__ = [
+    "TIER0_PRIMARY",
+    "TIER0_UNDERSTUDY",
+    "TIER1",
     "HealthPolicy",
     "HealthState",
     "ProviderHealth",
@@ -53,6 +56,13 @@ __all__ = [
     "outage_duration",
     "probe_due",
 ]
+
+
+# Идентификаторы провайдеров, под которыми роутер и дублёр-обёртка докладывают исходы
+# (BOB-116, ревью M3: один дом вместо литералов в трёх модулях).
+TIER0_PRIMARY = "tier0-primary"
+TIER0_UNDERSTUDY = "tier0-understudy"
+TIER1 = "tier1"
 
 
 class HealthState(Enum):

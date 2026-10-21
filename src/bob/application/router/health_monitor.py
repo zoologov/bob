@@ -29,6 +29,8 @@
 либо лежал ``tier1`` (голос). Облако мертво при живом дублёре — владельцу сигнал есть,
 эпизода нет: ложная память хуже дыры. Когда лежали оба этажа Tier-0, молчание началось с
 падения ПОЗДНЕГО из них, и эпизод пишет тот, кто первым вернулся, — ровно один раз.
+Это же правило монитор отдаёт гейту дорожек heartbeat как «Tier-0 целиком»
+(:data:`TIER0_EFFECTIVE`, BOB-116 F2): пока дублёр держит, рефлексия и проактивность идут.
 
 🔴 Порядок важен для гейта дорожек heartbeat (D5): состояние обновляется ДО любого
 ``await`` — к моменту, когда исключение доходит до вызывающего, ``snapshot()`` уже видит
@@ -59,6 +61,9 @@ from bob.application.router.health_messages import (
 from bob.kernel.local_time import in_local_zone, utc_offset_label
 from bob.kernel.ports import HealthView
 from bob.kernel.provider_health import (
+    TIER0_PRIMARY,
+    TIER0_UNDERSTUDY,
+    TIER1,
     HealthState,
     ProviderHealth,
     Transition,
@@ -75,6 +80,7 @@ if TYPE_CHECKING:
     from bob.kernel.provider_health import HealthPolicy
 
 __all__ = [
+    "TIER0_EFFECTIVE",
     "TIER0_PRIMARY",
     "TIER0_UNDERSTUDY",
     "TIER1",
@@ -85,10 +91,11 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-# Идентификаторы провайдеров — одни на роутер, обёртку и монитор (RFC BOB-116).
-TIER0_PRIMARY = "tier0-primary"
-TIER0_UNDERSTUDY = "tier0-understudy"
-TIER1 = "tier1"
+# Tier-0 целиком — облако вместе с дублёром (BOB-116 F2, ревью M2). Не провайдер: исходов
+# под этим id никто не докладывает и в снимке его нет. Его спрашивают у
+# :meth:`ProviderHealthMonitor.is_degraded` дорожки heartbeat — «думать есть чем?».
+# Идентификаторы самих провайдеров живут в ядре и реэкспортируются отсюда.
+TIER0_EFFECTIVE = "tier0"
 
 # Восстановление после молчания: (provider_id, since, until, failure_class).
 type OutageRecovered = Callable[[str, datetime, datetime, str | None], Awaitable[None]]
@@ -187,7 +194,14 @@ class ProviderHealthMonitor:
         return views
 
     def is_degraded(self, provider_id: str) -> bool:
-        """Признан ли провайдер неработающим (снятый при старте — тоже); незнакомый — здоров."""
+        """Признан ли провайдер неработающим (снятый при старте — тоже); незнакомый — здоров.
+
+        :data:`TIER0_EFFECTIVE` — вопрос о Tier-0 целиком: лежит, только когда думать нечем
+        (:meth:`_tier0_mute`). Зонд и снимок остаются за этажами: ``probe_due`` и
+        ``snapshot`` под этим id ничего особого не говорят.
+        """
+        if provider_id == TIER0_EFFECTIVE:
+            return self._tier0_mute()
         if provider_id in self._stood_down:
             return True
         return self._get(provider_id).state is HealthState.DEGRADED
@@ -208,18 +222,28 @@ class ProviderHealthMonitor:
     def _get(self, provider_id: str) -> ProviderHealth:
         return self._health.get(provider_id, ProviderHealth())
 
+    def _tier0_mute(self) -> bool:
+        """Думать нечем: облако лежит, а дублёра нет, он снят при старте или лежит тоже.
+
+        Одно правило на троих (BOB-116 F2): гейт дорожек heartbeat, ситуация MUTE в
+        сообщении владельцу и эпизод «я молчал». Снятый при старте дублёр сюда приходит
+        дважды — ``has_understudy`` сброшен и сам он читается лежащим.
+        """
+        understudy_out = not self._has_understudy or self.is_degraded(TIER0_UNDERSTUDY)
+        return understudy_out and self.is_degraded(TIER0_PRIMARY)
+
     def _situation(self, provider_id: str) -> Situation:
-        """Что значит деградация ``provider_id`` при текущем состоянии ДРУГИХ провайдеров."""
+        """Что значит деградация ``provider_id`` при текущем состоянии ДРУГИХ провайдеров.
+
+        Спрашивают о лежащем провайдере (переход, напоминание, восстановление — до сброса),
+        поэтому для этажа Tier-0 «думать нечем» решает состояние другого этажа.
+        """
         if provider_id == TIER1:
             return Situation.VOICE_DOWN
         if provider_id == TIER0_PRIMARY:
-            if not self._has_understudy or self.is_degraded(TIER0_UNDERSTUDY):
-                return Situation.MUTE
-            return Situation.UNDERSTUDY_HOLDS
+            return Situation.MUTE if self._tier0_mute() else Situation.UNDERSTUDY_HOLDS
         if provider_id == TIER0_UNDERSTUDY:
-            if self.is_degraded(TIER0_PRIMARY):
-                return Situation.MUTE
-            return Situation.UNDERSTUDY_DOWN
+            return Situation.MUTE if self._tier0_mute() else Situation.UNDERSTUDY_DOWN
         return Situation.OTHER
 
     async def _recovered(

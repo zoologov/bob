@@ -238,6 +238,9 @@ class WorldSetup:
 
     cloud: str = ANSWERS
     cloud_script: Sequence[str] = ()
+    #: Что облако отвечает, когда отвечает. По умолчанию — фраза, которую не разберёт ни один
+    #: судья хода: ход в комнате кончается на суждении, до основной модели не доходя.
+    cloud_reply: str = CLOUD_REPLY
     tier1: str = ANSWERS
     understudy: str = UNDERSTUDY_OFF
     autobiography: bool = False
@@ -247,7 +250,9 @@ class WorldSetup:
 async def health_world(tmp_path: Path, setup: WorldSetup) -> AsyncIterator[HealthWorld]:
     """Поднять эндпоинты, собрать и запустить Боба; на выходе — гарантированный shutdown."""
     models = _listed_models(setup.understudy)
-    cloud = LoopbackEndpoint(behaviour=setup.cloud, reply=CLOUD_REPLY, script=setup.cloud_script)
+    cloud = LoopbackEndpoint(
+        behaviour=setup.cloud, reply=setup.cloud_reply, script=setup.cloud_script
+    )
     local = LoopbackEndpoint(behaviour=ANSWERS, reply=LOCAL_REPLY, models=models)
     tier1 = LoopbackEndpoint(behaviour=setup.tier1, reply=TIER1_REPLY)
     endpoints = (cloud, local, tier1)

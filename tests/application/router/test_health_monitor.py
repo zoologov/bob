@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta, timezone
 import pytest
 
 from bob.application.router.health_monitor import (
+    TIER0_EFFECTIVE,
     TIER0_PRIMARY,
     TIER0_UNDERSTUDY,
     TIER1,
@@ -473,3 +474,63 @@ async def test_the_record_is_visible_before_the_owner_is_messaged() -> None:
     for _ in range(5):
         await monitor.record_failure(TIER0_PRIMARY, "auth")
     assert seen == [5]
+
+
+# --- Tier-0 целиком: «думать есть чем?» (BOB-116 F2, ревью M2) --------------------------
+# Дорожки heartbeat спрашивают не «лежит ли облако», а «лежит ли Tier-0 целиком»: облако
+# лежит И дублёра нет, он снят при старте или лежит тоже. Это то же правило, что ситуация MUTE
+# в сообщении владельцу и эпизод «я молчал», — одна реализация на троих.
+
+
+async def test_tier0_is_up_while_the_understudy_holds_a_dead_cloud() -> None:
+    monitor, clock, sink, _ = _monitor(has_understudy=True)
+    await _fail(monitor, clock, TIER0_PRIMARY, 5)
+    assert monitor.is_degraded(TIER0_PRIMARY)
+    assert not monitor.is_degraded(TIER0_EFFECTIVE)
+    assert "держусь на дублёре" in sink.texts[0]
+
+
+async def test_tier0_is_down_when_both_floors_are_down() -> None:
+    monitor, clock, sink, _ = _monitor(has_understudy=True)
+    await _fail(monitor, clock, TIER0_PRIMARY, 5)
+    await _fail(monitor, clock, TIER0_UNDERSTUDY, 5)
+    assert monitor.is_degraded(TIER0_EFFECTIVE)
+    assert sink.texts[-1].startswith("Я не могу думать")
+
+
+async def test_tier0_is_down_with_a_dead_cloud_and_no_understudy() -> None:
+    monitor, clock, *_ = _monitor(has_understudy=False)
+    assert not monitor.is_degraded(TIER0_EFFECTIVE)
+    await _fail(monitor, clock, TIER0_PRIMARY, 5)
+    assert monitor.is_degraded(TIER0_EFFECTIVE)
+
+
+async def test_tier0_is_down_with_a_dead_cloud_after_the_understudy_was_stood_down() -> None:
+    monitor, clock, sink, _ = _monitor(has_understudy=True)
+    monitor.stand_down_understudy(_STOOD_DOWN_REASON)
+    assert not monitor.is_degraded(TIER0_EFFECTIVE)
+    await _fail(monitor, clock, TIER0_PRIMARY, 5)
+    assert monitor.is_degraded(TIER0_EFFECTIVE)
+    assert sink.texts[0].startswith("Я не могу думать")
+
+
+async def test_a_dead_understudy_alone_leaves_tier0_up() -> None:
+    monitor, clock, *_ = _monitor(has_understudy=True)
+    await _fail(monitor, clock, TIER0_UNDERSTUDY, 5)
+    assert monitor.is_degraded(TIER0_UNDERSTUDY)
+    assert not monitor.is_degraded(TIER0_EFFECTIVE)
+
+
+async def test_tier0_comes_back_with_whichever_floor_returns_first() -> None:
+    monitor, clock, *_ = _monitor(has_understudy=True)
+    await _fail(monitor, clock, TIER0_PRIMARY, 5)
+    await _fail(monitor, clock, TIER0_UNDERSTUDY, 5)
+    await monitor.record_success(TIER0_UNDERSTUDY)
+    assert not monitor.is_degraded(TIER0_EFFECTIVE)
+
+
+def test_the_whole_tier0_view_is_not_a_provider_in_the_snapshot() -> None:
+    """/status перечисляет провайдеров; «Tier-0 целиком» — вопрос гейта, а не строка статуса."""
+    monitor, *_ = _monitor(has_understudy=True)
+    assert TIER0_EFFECTIVE not in monitor.snapshot()
+    assert TIER0_EFFECTIVE not in {TIER0_PRIMARY, TIER0_UNDERSTUDY, TIER1}

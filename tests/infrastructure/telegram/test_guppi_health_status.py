@@ -125,16 +125,18 @@ def test_naive_start_time_is_rendered_as_is() -> None:
     assert "деградирован с 2026-10-02 23:05 (" in render_health_status(snapshot, tz=_MSK)
 
 
+# Причина — безличная фраза из общей таблицы bob.kernel.ru_text (ревью M3, bob-i83.20): та же
+# причина, что в сообщении владельцу и в эпизоде «я молчал», в регистре строки /status.
 @pytest.mark.parametrize(
     ("failure_class", "phrase"),
     [
         ("auth", "не пускало по ключу/квоте"),
         ("rate", "просило подождать"),
-        ("server", "ошибка на стороне облака"),
+        ("server", "падало на своей стороне"),
         ("timeout", "не отвечало"),
-        ("connection", "не достучаться"),
-        ("shape", "обрывало ответ на полпути"),
-        ("contract", "дефект запроса или ответа"),
+        ("connection", "до него было не достучаться"),
+        ("shape", "обрывало ответ на полуслове"),
+        ("contract", "отвергало запрос"),
     ],
 )
 def test_failure_class_is_said_in_words(failure_class: str, phrase: str) -> None:
@@ -148,7 +150,7 @@ def test_failure_class_is_said_in_words(failure_class: str, phrase: str) -> None
 def test_unknown_failure_class_is_shown_verbatim() -> None:
     snapshot = {"tier1": _degraded(failure_class="teapot", failures=2)}
 
-    assert "(teapot, 2 подряд)" in render_health_status(snapshot, tz=UTC)
+    assert "(не работало (teapot), 2 подряд)" in render_health_status(snapshot, tz=UTC)
 
 
 def test_degraded_without_class_or_start_keeps_the_count() -> None:

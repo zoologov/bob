@@ -14,15 +14,19 @@ The guard reads the file three ways, because each catches what the others cannot
 
 1. **Parsed keys.** Every key whose name carries a sensitive marker has no value.
 2. **Digit runs.** No run of six or more digits anywhere in the text — comments
-   included, and with horizontal separators between digits removed first (``_``,
-   spaces, a tab, a non-breaking space, any number of them), so ``-100_123_456`` and
-   ``-100 4372 9473 07`` are still one run each. A Telegram user id has at least six
+   included, and with separators between digits removed first (``_``, ``-``, ``.``,
+   spaces, a tab, a non-breaking space, any number and mix of them), so
+   ``-100_123_456``, ``-100 4372 9473 07``, ``-100-4372-9473-07`` and
+   ``-100.4372.9473.07`` are still one run each; a calendar date ``20YY-MM-DD`` breaks a
+   run instead of joining it (the rule and its named cost are in the helper's docstring).
+   A Telegram user id has at least six
    digits and a group id thirteen; no legitimate setting needs that many except the log
    rotation size, and that one exemption is narrow: only the VALUE of
    ``runtime.log_max_bytes`` on its own line is skipped, so an id in a trailing comment
    on that same line is still a finding. The scan is the same one the example-config
    guard runs (:mod:`tests.support.id_like_numbers`): BOB-116 D8b found an id split by
-   spaces that this guard, then joining ``_`` only, let through.
+   spaces that this guard, then joining ``_`` only, let through, and the BOB-116 review
+   (m3) found one split by hyphens or dots that the next version let through.
 3. **The real loader.** The tracked file loaded with the ``.env`` names the header
    lists yields typed ids — the header is not prose but a working contract.
 """

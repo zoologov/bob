@@ -16,7 +16,10 @@ What it holds is BEHAVIOUR (CLAUDE.md П.0.3 п.12): Bob is restarted only after
 equals the tracked file byte for byte, the understudy model is pulled exactly when the
 effective config turns the understudy on, and no value from ``.env`` reaches the log. A
 step that is present in the text but not in the run — or present but after the restart —
-fails here.
+fails here. So does a check pointed at the wrong FILE: a tracked file that is broken by
+itself (with the live file and ``.env`` valid) must stop the deploy, and a broken live
+file must not stop a valid tracked one (review M4: before those two cases, validating the
+live file instead of the tracked one kept every test here green).
 
 What it does NOT hold: the real ssh hop, the real systemd and Ollama, and the server's
 paths — the remote script reads ``BOB_HOME``/``UV_BIN``/``UV_TOOLS``/``UV_TOOL_BINS``
@@ -86,7 +89,7 @@ def _deploy_script() -> str:
     return script
 
 
-def _server(tmp_path: Path, tracked: str) -> Path:
+def _server(tmp_path: Path, tracked: str, live: str) -> Path:
     """A fake /opt/bob: the checked-out code's check script, configs, venv python, .env."""
     home = tmp_path / "opt-bob"
     (home / "deploy").mkdir(parents=True)
@@ -94,7 +97,7 @@ def _server(tmp_path: Path, tracked: str) -> Path:
     (home / ".venv" / "bin").mkdir(parents=True)
     shutil.copyfile(CHECK_SCRIPT, home / "deploy" / "check_config.py")
     (home / "config" / "bob.vps.yaml").write_text(tracked, encoding="utf-8")
-    (home / "config" / "bob.yaml").write_text(_OLD_LIVE_CONFIG, encoding="utf-8")
+    (home / "config" / "bob.yaml").write_text(live, encoding="utf-8")
     write_executable(home / ".venv" / "bin" / "python", f'exec "{sys.executable}" "$@"\n')
     return home
 
@@ -104,9 +107,10 @@ def _deploy(
     *,
     env: dict[str, str] | None = None,
     tracked: str | None = None,
+    live: str = _OLD_LIVE_CONFIG,
     stub_env: dict[str, str] | None = None,
 ) -> DeployRun:
-    home = _server(tmp_path, tracked or VPS_CONFIG.read_text(encoding="utf-8"))
+    home = _server(tmp_path, tracked or VPS_CONFIG.read_text(encoding="utf-8"), live)
     env_values = PRODUCTION_ENV if env is None else env
     env_file = write_env_file(home / ".env", env_values)
     env_before = env_file.read_bytes()
@@ -160,10 +164,15 @@ def _host_bash() -> str:
     return bash
 
 
-def _tracked_with_understudy(model: str) -> str:
+def _tracked_variant(**llm: str) -> str:
+    """The tracked config with ``llm`` settings replaced."""
     config = yaml.safe_load(VPS_CONFIG.read_text(encoding="utf-8"))
-    config["llm"].update(tier0_fallback="ollama", tier0_fallback_model=model)
+    config["llm"].update(llm)
     return yaml.safe_dump(config, allow_unicode=True)
+
+
+def _tracked_with_understudy(model: str) -> str:
+    return _tracked_variant(tier0_fallback="ollama", tier0_fallback_model=model)
 
 
 def _restarted(run: DeployRun) -> bool:
@@ -223,6 +232,64 @@ def test_a_config_that_does_not_load_with_the_real_env_never_reaches_a_restart(
     assert not _restarted(run), run.calls
     assert run.live_config.decode() == _OLD_LIVE_CONFIG
     assert leaked_values(run.output, env) == []
+
+
+# Configs that the loader cannot build even with a valid .env — the file ITSELF is broken.
+_BROKEN_CONFIGS: dict[str, Callable[[], str]] = {
+    "yaml-syntax": lambda: VPS_CONFIG.read_text(encoding="utf-8") + "\nbroken: [unclosed\n",
+    "unknown-understudy": lambda: _tracked_variant(tier0_fallback="olama"),
+}
+
+
+def _validates(config_text: str, workdir: Path) -> bool:
+    """Does ``check_config.py validate`` accept ``config_text`` with the production .env?"""
+    workdir.mkdir()
+    config = workdir / "config.yaml"
+    config.write_text(config_text, encoding="utf-8")
+    env_file = write_env_file(workdir / ".env", PRODUCTION_ENV)
+    result = subprocess.run(  # noqa: S603 — the repository's own check script
+        [sys.executable, str(CHECK_SCRIPT), "validate", "--config", str(config),
+         "--env-file", str(env_file)],
+        capture_output=True,
+        text=True,
+        timeout=_TIMEOUT_S,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+@pytest.mark.parametrize("broken", sorted(_BROKEN_CONFIGS))
+def test_a_broken_tracked_file_stops_the_deploy_while_the_live_one_and_env_are_valid(
+    tmp_path: Path, broken: str
+) -> None:
+    # Review M4: every other failing case breaks .env, which fails BOTH files, so a check
+    # pointed at the wrong file passed them all. Here only the tracked file is broken: the
+    # live one and .env are valid, so only a check of the TRACKED file can stop the deploy.
+    tracked = _BROKEN_CONFIGS[broken]()
+    assert _validates(_OLD_LIVE_CONFIG, tmp_path / "live-check"), "live+env must be valid"
+    assert not _validates(tracked, tmp_path / "tracked-check"), "the tracked file must fail"
+
+    run = _deploy(tmp_path / "deploy", tracked=tracked)
+
+    assert run.returncode != 0
+    assert not _restarted(run), run.calls
+    assert run.index(lambda call: call.startswith("install ")) == -1, run.calls
+    assert run.live_config.decode() == _OLD_LIVE_CONFIG
+    assert leaked_values(run.output, PRODUCTION_ENV) == []
+
+
+def test_a_broken_live_file_does_not_stop_a_deploy_of_a_valid_tracked_file(
+    tmp_path: Path,
+) -> None:
+    # The inverse: the live file is what the deploy REPLACES, so its state must not decide.
+    broken_live = _BROKEN_CONFIGS["yaml-syntax"]()
+    assert not _validates(broken_live, tmp_path / "live-check"), "the live file must fail"
+
+    run = _deploy(tmp_path / "deploy", live=broken_live)
+
+    assert run.returncode == 0, run.output
+    assert _restarted(run), run.calls
+    assert run.live_config == run.tracked_config
 
 
 def test_a_copy_that_differs_from_the_tracked_file_stops_the_restart(tmp_path: Path) -> None:

@@ -338,7 +338,7 @@ def test_outage_recovered_full_first_person_story() -> None:
     assert rendered == RenderedSelfAction(
         content=(
             "я молчал с 1 октября 06:10 по 10 октября 05:42 +03:00 (8 дней 23 часа): "
-            "облако не пускало меня по ключу, думать было нечем. Теперь снова могу."
+            "облако не пускало меня по ключу/квоте, думать было нечем. Теперь снова могу."
         ),
         tags=("self", "outage"),
         is_anomaly=False,
@@ -348,14 +348,15 @@ def test_outage_recovered_full_first_person_story() -> None:
 @pytest.mark.parametrize(
     ("failure_class", "phrase"),
     [
-        ("auth", "облако не пускало меня по ключу"),
-        ("rate", "облако просило подождать"),
-        ("server", "облако падало у себя"),
+        ("auth", "облако не пускало меня по ключу/квоте"),
+        ("rate", "облако просило меня подождать"),
+        ("server", "облако падало на своей стороне"),
         ("timeout", "облако не отвечало"),
         ("connection", "до облака было не достучаться"),
-        ("shape", "облако отвечало бессвязно"),
-        ("contract", "облако не работало"),
+        ("shape", "облако обрывало ответ на полуслове"),
+        ("contract", "облако отвергало мой запрос"),
         (None, "облако не работало"),
+        ("teapot", "облако не работало (teapot)"),
     ],
 )
 def test_outage_cause_is_told_in_human_words(failure_class: str | None, phrase: str) -> None:
@@ -369,12 +370,13 @@ def test_outage_cause_is_told_in_human_words(failure_class: str | None, phrase: 
 @pytest.mark.parametrize(
     ("failure_class", "phrase"),
     [
-        ("auth", "дублёр не пускал меня по ключу"),
-        ("rate", "дублёр просил подождать"),
-        ("server", "дублёр падал у себя"),
+        ("auth", "дублёр не пускал меня по ключу/квоте"),
+        ("rate", "дублёр просил меня подождать"),
+        ("server", "дублёр падал на своей стороне"),
         ("timeout", "дублёр не отвечал"),
         ("connection", "до дублёра было не достучаться"),
-        ("shape", "дублёр отвечал бессвязно"),
+        ("shape", "дублёр обрывал ответ на полуслове"),
+        ("contract", "дублёр отвергал мой запрос"),
         (None, "дублёр не работал"),
     ],
 )
@@ -389,16 +391,27 @@ def test_outage_of_the_local_understudy_is_not_blamed_on_the_cloud(
     assert "облак" not in content
 
 
-@pytest.mark.parametrize("provider", ["tier0-primary", "tier1"])
-def test_cloud_providers_are_the_cloud(provider: str) -> None:
+# Говорящий — тот же, что в сообщении владельцу о том же простое (ревью M3, bob-i83.20):
+# владельцу Tier-1 — «основная модель», и память Боба называет его так же, а не «облаком».
+@pytest.mark.parametrize(
+    ("provider", "phrase"),
+    [
+        ("tier0-primary", ": облако не пускало меня по ключу/квоте,"),
+        ("tier1", ": основная модель не пускала меня по ключу/квоте,"),
+        ("tier9", ": провайдер tier9 не пускал меня по ключу/квоте,"),
+    ],
+)
+def test_provider_is_named_as_in_the_owner_message(provider: str, phrase: str) -> None:
     content = describe_self_action(_outage(provider=provider)).content
-    assert ": облако не пускало меня по ключу," in content
+    assert phrase in content
 
 
-@pytest.mark.parametrize("failure_class", ["auth", "rate", "server", "timeout", "connection"])
+@pytest.mark.parametrize(
+    "failure_class", ["auth", "rate", "server", "timeout", "connection", "shape", "contract"]
+)
 def test_outage_story_carries_no_http_jargon(failure_class: str) -> None:
     content = describe_self_action(_outage(failure_class=failure_class)).content
-    for jargon in ("401", "403", "429", "5xx", "HTTP", "timeout", "auth", "rate"):
+    for jargon in ("401", "403", "429", "4xx", "5xx", "HTTP", failure_class):
         assert jargon not in content
 
 
@@ -482,32 +495,35 @@ def test_outage_month_is_in_russian_genitive(month: int, genitive: str) -> None:
     assert content.startswith(f"я молчал со 2 {genitive} 09:05 по 3 {genitive} 09:05 +03:00 (")
 
 
+# Длительность — та же, что в сообщении владельцу («Молчал 2 часа 15 минут»), из
+# bob.kernel.ru_text: винительный падеж, единица с числом 1 — без числа (ревью M3,
+# bob-i83.20). Полная таблица форм — в tests/domain/kernel/test_ru_text.py.
 @pytest.mark.parametrize(
     ("seconds", "duration"),
     [
-        (0, "меньше минуты"),
-        (59, "меньше минуты"),
-        (60, "1 минута"),
-        (119, "1 минута"),
+        (0, "меньше секунды"),
+        (59, "59 секунд"),
+        (60, "минуту"),
+        (119, "минуту"),
         (120, "2 минуты"),
         (4 * 60, "4 минуты"),
         (5 * 60, "5 минут"),
         (11 * 60, "11 минут"),
         (12 * 60, "12 минут"),
         (14 * 60, "14 минут"),
-        (21 * 60, "21 минута"),
+        (21 * 60, "21 минуту"),
         (22 * 60, "22 минуты"),
         (25 * 60, "25 минут"),
-        (3600, "1 час"),
-        (3600 + 60, "1 час 1 минута"),
+        (3600, "час"),
+        (3600 + 60, "1 час 1 минуту"),
         (2 * 3600 + 5 * 60, "2 часа 5 минут"),
         (5 * 3600, "5 часов"),
         (11 * 3600, "11 часов"),
         (21 * 3600, "21 час"),
         (23 * 3600 + 59 * 60, "23 часа 59 минут"),
-        (86400, "1 день"),
+        (86400, "день"),
         (86400 + 3600, "1 день 1 час"),
-        (86400 + 5 * 60, "1 день"),
+        (86400 + 5 * 60, "день"),
         (2 * 86400 + 4 * 3600, "2 дня 4 часа"),
         (5 * 86400, "5 дней"),
         (11 * 86400, "11 дней"),

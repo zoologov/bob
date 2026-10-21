@@ -80,12 +80,12 @@ log-only); конфиг прода не трекается и не едет де
 | callers (2) | `telegram` | 1 — `infrastructure/telegram/guppi.py:446` | none | **yes** | `/status` GUPPI, адаптер сигнала владельцу (по образцу `restart_notifier.py`), `MultiBotGateway._build_guppi` |
 | callers (2) | `memory` | 4 — `memory/adapters/ollama_reranker.py:137` | none | **yes** | роль в изменении — не реранкер, а автобиография: `SelfActionKind` + `_content_for` для эпизода о простое (`memory/self_action.py:50,128-169`) |
 | callers (2) | `llm` | 1 — `infrastructure/llm/fallback_provider.py:158` | none | **yes** | см. выше |
-| callers (2) | `personality` | 8 — `personality/adapters/reaction_judge.py:50` | none | no | получает поведение через роутер, правок нет |
+| callers (2) | `personality` | 8 — `personality/adapters/reaction_judge.py:50` | none | **yes** (с 2026-10-21, D13) | изначально «no — через роутер»; T (S5) показала, что `UpdateMoodFromText._classify_sentiment` роняет ход при мёртвом Tier-0 — узел получает шов `run_optional` (решение координатора по находке теста; расширение осей объявлено владельцу в отчёте ревью) |
 | callers (2) | `conversation` | 6 — `conversation/adapters/interim_line.py:46` | none | no | то же |
 | callers (2) | `proactivity` | 4 — `proactivity/usecases/detect_patterns.py:173` | none | no | то же; порт `RestartNotifier` (`announce_restart.py:55-64`) не переиспользуется — он про рестарт, своя семантика |
 | callers (2) | `coding` | 4 — `coding/usecases/classify_coding_intent.py:55` | none | no | через роутер |
-| callers (2) | `capabilities` | 1 — `capabilities/adapters/web/http_url_reader.py:323` | none | no | `ToolLoop.complete_with_tools` мимо роутера (`tool_loop.py:177`) — докладывает дублёр-обёртка на уровне провайдера, правок в узле нет |
-| callers (2) | `presence` | 1 — `presence/adapters/staleness_judge.py:47` | none | no | через роутер |
+| callers (2) | `capabilities` | 1 — `capabilities/adapters/web/http_url_reader.py:323` | none | no | `ToolLoop.complete_with_tools` мимо роутера (`tool_loop.py:177`) — докладывает обёртка на уровне провайдера (ревью M1: Tier-1 в ToolLoop шёл голым — F1 оборачивает Tier-1 той же обёрткой в `factory`/`wiring/access`, узел `capabilities` не правится) |
+| callers (2) | `presence` | 1 — `presence/adapters/staleness_judge.py:47` | none | **yes** (с 2026-10-21, D13) | изначально «no»; при мёртвом Tier-0 `LlmStalenessJudge` терял уже составленный ответ — `StalenessJudge.assess` → `None`, узел на шве `run_optional` (та же находка) |
 | callers (2) | `social` | 3 — `social/adapters/disclosure_consent_judge.py:48` | none | no | через роутер |
 | branches (2) | `router` | `run` 1/3, `_rescue_tier` 0/3, `_provider_for` 0/2, `_complete` 1/2 | none | **yes** | инструментирование исходов |
 | branches (2) | `usecases` | `_reflect` 1/1, `_reappraised` 1/2, `_evolve` 1/1, `run` ×11 | none | **yes** | тики под гейтом; логика тиков не меняется |
@@ -291,9 +291,9 @@ RSS Ollama + Боб ≤ 6.5 ГБ. Проходит → `tier0_fallback: ollama` 
 
 | # | Question | Decision |
 |---|---|---|
-| Q1 | Дублёр на VPS — домен отказа (PRD Р1) | Decided: C как минимум + spike A по критериям выше; B — отдельное решение (владелец, 2026-10-21 «утверждаю» PRD с рекомендациями) |
+| Q1 | Дублёр на VPS — домен отказа (PRD Р1) | Decided: C как минимум + spike A по критериям выше; B — отдельное решение (владелец, 2026-10-21 «утверждаю» PRD с рекомендациями). **Spike A (D9, 2026-10-21): отклонён** — REFLECT 116 с холодный / 76 тёплый (порог 90), классификатор 39 / 4 (порог 15), `qwen3:8b` 5,9 ГБ + `bge-m3` 1,2 ГБ > 5,8 ГБ доступных → взаимное вытеснение; `tier0_fallback` на VPS выключен, модель снята. Дальше: B или замер `qwen3:4b` — решение владельца |
 | Q2 | Канал сигнала (PRD Р2) | Decided: бот Боба, личка `owner_id`, шаблон от первого лица без LLM; GUPPI — `/status` |
 | Q3 | Пороги (PRD Р3) | Decided по порядку величин, дефолты: 5 отказов / 180 с; напоминания 600/3600/21600/86400 с; зонд 60/120/300 с — конфиг `llm.health` |
 | Q4 | Нужен ли сигнал при `DEGRADED tier0-primary`, когда дублёр держит | Decided: да, с текстом «дублёр держит» — ключ облака надо чинить, пока дублёр жив |
-| Q5 | `memory.autobiography` на VPS — включён ли (эпизод о простое пишется только при нём) | Pending: проверяется на VPS при миграции конфига (значение попадёт в трекаемый `config/bob.vps.yaml`) |
+| Q5 | `memory.autobiography` на VPS — включён ли (эпизод о простое пишется только при нём) | Decided 2026-10-21: на VPS `true` (прочитано при spike D9); значение в трекаемом `config/bob.vps.yaml` (F4) |
 | Q6 | Живой смоук (порча ключа Tier-0 на VPS) — кто и когда | Pending: после тега BOB-118, выполняет владелец/координатор по шагу RUNBOOK; результат — в ACTIVE BOB-116 |

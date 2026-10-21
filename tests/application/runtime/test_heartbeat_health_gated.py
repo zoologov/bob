@@ -317,6 +317,111 @@ async def test_failed_probe_waits_for_the_next_due_probe() -> None:
     assert tick.calls == 1
 
 
+# --- gate_id: the lane closes on a composite, the probe goes to the provider -----------
+# BOB-116 F2 (review M2): a Tier-0 lane is closed only when Tier-0 as a whole cannot think
+# (the cloud is down and the understudy cannot hold), while the probe, its schedule, its
+# failure count and its log line stay the cloud's — the wrapper tries the cloud first.
+
+_GATE = "tier0"
+
+
+class CompositeReader(FakeHealthReader):
+    """A reader that also answers a composite gate id, as the monitor does for Tier-0."""
+
+    def __init__(self, *, provider_degraded: bool, gate_degraded: bool, probe_due: bool) -> None:
+        super().__init__(degraded=provider_degraded, probe_due=probe_due)
+        self.gate_degraded = gate_degraded
+
+    def is_degraded(self, provider_id: str) -> bool:
+        if provider_id == _GATE:
+            return self.gate_degraded
+        return super().is_degraded(provider_id)
+
+    def probe_due(self, provider_id: str) -> bool:
+        assert provider_id != _GATE, "the probe is asked of the provider, not of the gate"
+        return super().probe_due(provider_id)
+
+
+def _composite_lane(tick: Tick, reader: CompositeReader, *, probe: bool) -> heartbeat.Tick:
+    return health_gated(tick, reader=reader, provider_id=_PROVIDER, probe=probe, gate_id=_GATE)
+
+
+async def test_open_gate_runs_a_quiet_lane_while_its_provider_is_degraded() -> None:
+    tick = Tick()
+    reader = CompositeReader(provider_degraded=True, gate_degraded=False, probe_due=False)
+
+    for _ in range(3):
+        await _composite_lane(tick, reader, probe=False)()
+
+    assert tick.calls == 3
+
+
+async def test_open_gate_runs_the_probe_lane_every_time_not_on_the_probe_schedule() -> None:
+    tick = Tick()
+    reader = CompositeReader(provider_degraded=True, gate_degraded=False, probe_due=False)
+
+    for _ in range(3):
+        await _composite_lane(tick, reader, probe=True)()
+
+    assert tick.calls == 3
+
+
+async def test_open_gate_lets_a_tick_failure_through_unchanged() -> None:
+    reader = CompositeReader(provider_degraded=True, gate_degraded=False, probe_due=True)
+    gated = _composite_lane(Tick(lambda: _fail_as_provider(reader)), reader, probe=True)
+
+    with pytest.raises(RuntimeError, match="502 Bad Gateway"):
+        await gated()
+
+
+async def test_closed_gate_silences_a_quiet_lane(caplog: pytest.LogCaptureFixture) -> None:
+    tick = Tick()
+    reader = CompositeReader(provider_degraded=True, gate_degraded=True, probe_due=True)
+
+    with caplog.at_level(logging.DEBUG, logger=_LOGGER):
+        await _composite_lane(tick, reader, probe=False)()
+
+    assert tick.calls == 0
+    assert caplog.records == []
+
+
+async def test_closed_gate_probes_on_the_providers_schedule() -> None:
+    reader = CompositeReader(provider_degraded=True, gate_degraded=True, probe_due=True)
+    tick = Tick(lambda: _fail_as_provider(reader))
+    gated = _composite_lane(tick, reader, probe=True)
+
+    await gated()  # the probe is due: it goes and the provider fails it
+    await gated()  # the provider pushed its next probe out
+    reader.due = True
+    await gated()  # due again
+
+    assert tick.calls == 2
+
+
+async def test_closed_gate_failed_probe_is_one_info_line_naming_the_provider(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    reader = CompositeReader(provider_degraded=True, gate_degraded=True, probe_due=True)
+    gated = _composite_lane(Tick(lambda: _fail_as_provider(reader)), reader, probe=True)
+
+    with caplog.at_level(logging.DEBUG, logger=_LOGGER):
+        await gated()
+
+    assert [r.levelno for r in caplog.records] == [logging.INFO]
+    message = caplog.records[0].getMessage()
+    assert f"heartbeat probe of {_PROVIDER} failed (server, RuntimeError)" in message
+
+
+async def test_closed_gate_db_error_before_the_call_is_raised() -> None:
+    reader = CompositeReader(provider_degraded=True, gate_degraded=True, probe_due=True)
+
+    def db_breaks() -> None:
+        raise OSError("database is locked")
+
+    with pytest.raises(OSError, match="database is locked"):
+        await _composite_lane(Tick(db_breaks), reader, probe=True)()
+
+
 # --- helpers ---------------------------------------------------------------------------
 
 

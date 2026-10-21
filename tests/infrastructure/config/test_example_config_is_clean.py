@@ -6,9 +6,10 @@
 
 ``config/bob.example.yaml`` is tracked in a PUBLIC repository and teaches by example, so
 its id examples were once real-looking group ids. Every run of six or more digits in its
-text — comments included, horizontal separators between digits removed (the scan the
+text — comments included, separators between digits removed (the scan the
 tracked-VPS-config guard shares, :mod:`tests.support.id_like_numbers`), so
-``-100 4372 9473 07`` is still one run — must be one of the placeholders
+``-100 4372 9473 07``, ``-100-4372-9473-07`` and ``-100.4372.9473.07`` are each still
+one run — must be one of the placeholders
 below; the one other long number allowed is the VALUE of ``runtime.log_max_bytes``. A new
 example id that looks real is a finding, whatever key or comment it hides in.
 """
