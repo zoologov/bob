@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: BUSL-1.1
 # See the LICENSE file in the project root for full license information.
 
-"""Architecture guard: beadloom INDEXES every import Bob's source makes (bob-7fo.7).
+"""Architecture guard: beadloom INDEXES every import Bob's source makes (bob-7fo.7, .10).
 
 Every ``forbid_import`` rule in ``.beadloom/_graph/rules.yml`` judges the rows beadloom
 writes to ``code_imports`` — and an import beadloom does not index is judged by no rule at
@@ -16,23 +16,23 @@ by sabotage in ``coding/naming.py`` against ``memory-boundary-no-coding-adapters
 * ``from bob.memory import adapters`` — row ``bob.memory`` (the package, not the
   sub-module it binds), lint green.
 
-So each of those forms walks through every boundary rule. Bob's own cycle/order guard
+The last form is just as blind INSIDE a node (review .9 Major-A, bob-7fo.10):
+``from bob.coding import usecases`` in ``coding/naming.py`` is the row ``bob.coding``, so
+``coding-internals-no-usecases`` cannot see a domain module reaching into its own use-cases —
+lint rc 0. Every ``*-internals-no-usecases``, ``*-internals-no-adapters`` and
+``*-usecases-no-adapters`` rule is walked around that way: 38 of the 262 ``forbid_import``
+rules on 2026-10-21.
+
+So each of those forms walks through boundary rules. Bob's own cycle/order guard
 (``tests/test_no_runtime_import_cycles.py``) reads them all, but it judges only cycles and
 the vertical order — not the ~270 boundary rules. This test judges the TOOL, not the form of
 the code (``CLAUDE.md`` §0.3 п.12): it rebuilds a fresh index with the beadloom on PATH in a
 copy of ``src`` + ``.beadloom`` and requires that every first-party binding the ast reads is
-a row there. A new blind form — today's or one a future beadloom grows — goes red here.
-
-What it requires of a binding:
-
-* one that crosses into another node — the FULL module it binds (``bob.memory.adapters``,
-  not ``bob.memory``), because that is the path the boundary rules' globs judge;
-* one inside its own node — the statement's own absolute module (an ``import`` name or a
-  ``from`` base). 🔴 Named gap: ``from bob.coding import session_voice`` inside ``coding`` is
-  indexed as ``bob.coding``, so an INTERNALS rule on ``bob/coding/<sub>*`` cannot see it.
-  Two such statements exist today (``coding/usecases/coding_assistant.py``,
-  ``interactive/usecases/session.py``, three bindings, ~45 call sites); closing the gap means
-  rewriting them, which is the coordinator's decision, not this bead's.
+a row there as the FULL module it binds (``bob.memory.adapters``, not ``bob.memory``) —
+across nodes and inside its own node alike, because that is the path the rules' globs
+judge. A new blind form — today's or one a future beadloom grows — goes red here. The two
+statements that used the in-node form (``coding/usecases/coding_assistant.py``,
+``interactive/usecases/session.py``) were rewritten to name the module in bob-7fo.10.
 
 Without beadloom on PATH the test SKIPs with the reason "NOT CHECKED" — never a silent
 green. Locally PATH may hold an editable build whose ``--version`` reads like the release
@@ -49,7 +49,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
 
-from tests.test_no_runtime_import_cycles import _SRC_ROOT, _node_of, _package_of, _resolve
+from tests.test_no_runtime_import_cycles import _SRC_ROOT, _package_of, _resolve
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -66,36 +66,17 @@ class _Binding(NamedTuple):
     statement: str
 
 
-def _file_node(path: Path) -> str | None:
-    rel = path.relative_to(_SRC_ROOT).with_suffix("").parts
-    return _node_of(tuple(p for p in rel if p != "__init__"))
-
-
-def _statement_module(node: ast.Import | ast.ImportFrom, package: str, module: str) -> str:
-    """The absolute module the statement itself names: the ``import`` name, the ``from`` base."""
-    if isinstance(node, ast.Import):
-        return module
-    if node.level == 0:
-        return node.module or ""
-    anchor = package.split(".")
-    anchor = anchor[: len(anchor) - (node.level - 1)]
-    return ".".join([*anchor, *([node.module] if node.module else [])])
-
-
 def _required_rows(path: Path, source: str) -> list[_Binding]:
-    """Every first-party binding in ``source`` and the row beadloom must hold for it."""
+    """Every first-party binding in ``source`` and the row beadloom must hold for it: the FULL
+    module it binds, inside its own node as much as across nodes."""
     file = str(path.relative_to(_REPO_ROOT))
     package = _package_of(path)
-    src_node = _file_node(path)
-    rows: list[_Binding] = []
-    for node in ast.walk(ast.parse(source, filename=file)):
-        if not isinstance(node, ast.Import | ast.ImportFrom):
-            continue
-        for module in _resolve(node, package):
-            crosses = _node_of(tuple(module.split(".")[1:])) != src_node
-            required = module if crosses else _statement_module(node, package, module)
-            rows.append(_Binding(file, node.lineno, required, ast.unparse(node)))
-    return rows
+    return [
+        _Binding(file, node.lineno, module, ast.unparse(node))
+        for node in ast.walk(ast.parse(source, filename=file))
+        if isinstance(node, ast.Import | ast.ImportFrom)
+        for module in _resolve(node, package)
+    ]
 
 
 def _fresh_index(binary: str, root: Path) -> set[tuple[str, int, str]]:
@@ -127,6 +108,7 @@ def _blind(rows: list[_Binding], index: set[tuple[str, int, str]]) -> list[str]:
     ]
 
 
+@pytest.mark.real_beadloom
 def test_beadloom_indexes_every_import_bob_makes(tmp_path: Path) -> None:
     binary = shutil.which("beadloom")
     if binary is None:
@@ -145,7 +127,7 @@ def test_beadloom_indexes_every_import_bob_makes(tmp_path: Path) -> None:
     assert blind == [], (
         "import(s) beadloom does not index — no forbid_import rule judges them; write them "
         "as `from bob.x.y import name` or a plain `import bob.x.y` (no alias, not relative, "
-        f"not `from bob import x`, not `from bob.x import <sub-module>` across nodes): {blind}"
+        f"not `from bob import x`, not `from bob.x import <sub-module>` anywhere): {blind}"
     )
 
 
@@ -160,15 +142,17 @@ _COMMON = "src/bob/coding/naming.py"
         ("from bob import memory", ["bob.memory"]),
         ("from ..memory.adapters import fts_recall", ["bob.memory.adapters.fts_recall"]),
         ("from bob.memory.ports import X as Y", ["bob.memory.ports"]),
-        ("from bob.coding import entities", ["bob.coding"]),
-        ("from . import entities", ["bob.coding"]),
+        ("from bob.coding import entities", ["bob.coding.entities"]),
+        ("from . import entities", ["bob.coding.entities"]),
+        ("from bob.coding import usecases", ["bob.coding.usecases"]),
+        ("from bob.coding.entities import CodingSession", ["bob.coding.entities"]),
         ("import bob.coding.entities as e", ["bob.coding.entities"]),
         ("import os", []),
     ],
     ids=lambda v: v if isinstance(v, str) else None,
 )
 def test_required_row_per_binding(source: str, required: list[str]) -> None:
-    """Crossing a node needs the full module; inside the node, the statement's own module."""
+    """Every binding needs the full module it binds — across nodes and inside its own."""
     path = _REPO_ROOT / _COMMON
     assert [r.required for r in _required_rows(path, source)] == required
     assert all(r.file == _COMMON and r.line == 1 for r in _required_rows(path, source))

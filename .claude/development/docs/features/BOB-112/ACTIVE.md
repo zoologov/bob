@@ -139,6 +139,55 @@
       это не умеет), BDL-UX-draft (дубль #328 снят; добавлены алиас HIGH, `--version` editable,
       «документ вне графа», уточнена запись про формы импорта). `metrics_history.json` — коммитится
       (beadloom свой тоже отслеживает). Перекомпозиция релизом: config-check 0.
+- [x] `.9` повторное ревью (2026-10-21): все 6 Major первого ревью закрыты и перемерены (в т.ч.
+      `import bob.app` → lint rc 1 naming.py:86; паритетный тест честен — индекс в temp, порог ≥1000,
+      SKIP с причиной), гейты на a0e556a зелёные. **Два новых Major:** A — моё решение «не
+      переписывать `from bob.<узел> import …` внутри узла, ждать beadloom» = полумера (обходит
+      38 из 262 `forbid_import`-правил; решение не владельца, без `until` и беады) → структурный
+      фикс в `.10`; B — гард `.6` проверяет предусловия, а не исход (обман: обёртка с падающим
+      `why` → гард PASSED, тест реального бинаря SKIP) → `.11`. Minor: П.0.3 «три формы» (на деле
+      четыре); черновик BDL-UX не обезличен; нет беады на перенос; `(BDL-UX)` в reason читается
+      как «заведено». Nit: pre-push хук гоняет `ci` на несвежем индексе; строка про узлы вне
+      порядка вертикалей.
+- [x] `.10` (2026-10-21, dev): паритетный тест требует полный модуль и внутри своего узла —
+      красный до правки ровно на трёх связываниях (`coding/usecases/coding_assistant.py:60`
+      `from bob.coding import session_voice`; `interactive/usecases/session.py:97`
+      `from bob.interactive import denial_voice, voice`); переписаны в `from bob.<узел>.<модуль>
+      import <имена>` — единственную форму, которую резолвер 9.0.0 индексирует полным модулем.
+      На чистом индексе импортов стало 2281 (было 2280), lint rc 0 / 0 err / 37 warn — форма
+      скрытого нарушения не прятала. Саботаж в копии: `from bob.coding import usecases` в
+      `coding/naming.py` и `from bob.memory import adapters` в `memory/self_action.py` — lint rc 0,
+      новый `test_beadloom_indexes_every_import_bob_makes` красный, версия из HEAD зелёная
+      (двойной прогон); после обратной правки 24/24. pytest 8102 passed / 17 skipped (третий
+      прогон; первые два — 1–2 падения `test_no_read_form_but_sync_check_touches_the_index_bytes`:
+      тест меряет байты общего `.beadloom/beadloom.db`, и его ломали ПАРАЛЛЕЛЬНЫЕ процессы beadloom
+      соседа по `.11` — хрупкость под параллельными агентами, не CI; координатор перемеряет на
+      тихом дереве). `docs/architecture.md`: 38/262, зона закрыта; координатор добавил абзац про
+      охват гарда направления (узлы вне `_VERTICAL_ORDER` держат только `forbid_import` и
+      `architecture-layers` 15/81). `sync-check` rc 2 до коммита (две README `hash_changed_since_head`
+      из-за незакоммиченных src) — после коммита fresh.
+- [x] `.11` (2026-10-21, dev): маркер `real_beadloom` (зарегистрирован в `pyproject.toml`) на 27
+      тестах реального бинаря (+1 — `diff --since` в `.12`), хук `tests/support/real_beadloom_requirement.py`
+      (`tests/conftest.py`): при `BOB_REQUIRE_REAL_BEADLOOM=1` SKIP помеченного → **FAILED** с
+      исходной причиной; флаг стоит в `ci.yml` на шаге Pytest; гард `.6` держит только предусловия
+      (+ флаг = 1) и так и говорит в докстринге. 7 тестов хука гоняют настоящий вложенный pytest.
+      Двойной прогон с обманом (4 файла, 59 тестов): (а) обёртка с падающим `why` + флаг — 1 failed
+      (`test_impact_of_a_real_node_is_condensed_not_a_screenshot`, «beadloom why unavailable»),
+      старый гард PASSED; без флага — SKIP; (б) бинаря нет + флаг — 27 failed, ровно помеченные;
+      (в) чужой `pytest.skip` в помеченном — FAILED, `skipif` — ERROR на setup. Первая версия
+      харнесса читала исход из JUnit и пропустила саботаж «xfail = skipped» — переписана на
+      финальный отчёт pytest, S1–S6 красные. Полный прогон: 8102 passed / 17 skipped с флагом и
+      без. Найдено: `test_a_graph_changing_diff_exits_nonzero_and_still_answers` в CI всегда SKIP
+      (мелкий checkout, нет `66aa620~1`, лог run 32232968676) → `.12`: `fetch-depth: 0` + маркер.
+      Граница: тест без маркера пропустится молча — маркер не выводится; сеть «настоящий vs
+      падающий beadloom → маркер обязателен на разнице» — беада `bob-xwf`.
+- [x] `.12` (2026-10-21, координатор): П.0.3 — четыре невидимые формы и 38/262; П.6 — хук на
+      несвежем индексе (не «тот же гейт»), флаг + маркер + `fetch-depth: 0`; `flow.yml` — беады
+      снятия в обоих `reason`, без «(BDL-UX)»; беада переноса черновика `bob-v25`; BDL-UX-draft
+      обезличен (13 записей, + «хук на несвежем индексе», объединённая HIGH про четыре формы);
+      `architecture.md` — абзац про охват гарда направления (узлы вне порядка); `ci.yml` —
+      `fetch-depth: 0` и маркер на `test_a_graph_changing_diff_exits_nonzero_and_still_answers`.
+      Перекомпозиция релизом: config-check 0.
 
 ## Триаж lint 9.0.0 (заполняется в `.2`)
 

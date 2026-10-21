@@ -2581,6 +2581,7 @@ addopts = [
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks integration tests",
+    "real_beadloom: drives the real beadloom binary; with BOB_REQUIRE_REAL_BEADLOOM=1 its skip is a failure (tests/support/real_beadloom_requirement.py)",
 ]
 
 [dependency-groups]

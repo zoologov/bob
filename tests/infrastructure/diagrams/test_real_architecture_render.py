@@ -19,6 +19,11 @@ The assertions are the owner's two halves: PNG bytes in the sink (a decodable im
 inside Telegram's photo limits) and the mermaid source back to the model. Guarded against
 environment flakiness: no ``beadloom`` / no ``mmdc`` → an explicit skip, so a stripped
 checkout stays green. In THIS repo both are present, so the tests really run and must pass.
+
+🔴 BOB-112.11: only the test that needs nothing but ``beadloom`` carries
+``@pytest.mark.real_beadloom`` (where ``BOB_REQUIRE_REAL_BEADLOOM=1``, as in CI, its skip is
+a failure — ``tests/support/real_beadloom_requirement.py``). The three that also need
+``mmdc`` are not marked: CI installs no mermaid-cli, so there they skip for that reason.
 """
 
 from __future__ import annotations
@@ -167,6 +172,7 @@ async def test_a_node_request_renders_the_real_node_view_too() -> None:
     assert queued[0].png.startswith(_PNG_MAGIC)
 
 
+@pytest.mark.real_beadloom
 @pytest.mark.asyncio
 async def test_a_missing_renderer_binary_keeps_the_turn_alive_on_real_output() -> None:
     """🔴 The honest degradation on REAL mermaid: no ``mmdc`` → words, no crash.

@@ -15,6 +15,13 @@ Each test is guarded against environment flakiness: if ``beadloom`` / ``bd`` are
 on PATH or the repo is not initialised for them, the test ``pytest.skip``s with a
 clear reason, so CI on a stripped checkout stays green. In THIS repo both tools are
 present and initialised, so the tests actually run and must PASS.
+
+🔴 BOB-112.11: the tests that drive ONLY the real ``beadloom`` carry
+``@pytest.mark.real_beadloom``. CI installs the pinned beadloom and sets
+``BOB_REQUIRE_REAL_BEADLOOM=1``, so there their skip is a FAILURE with the original reason
+(``tests/support/real_beadloom_requirement.py``) — a ``why``/``diff`` that changed on a
+version bump can no longer pass as a quiet skip. Not marked, on purpose: the ``bd`` tests
+(CI has no tracker) and the ``diff`` test that needs an old commit (CI checks out one).
 """
 
 from __future__ import annotations
@@ -72,6 +79,7 @@ def _real_introspector() -> SubprocessRepoIntrospector:
 # --- 🔴 the whole point of this bead: free text actually GROUNDS ----------------
 
 
+@pytest.mark.real_beadloom
 @pytest.mark.asyncio
 async def test_architecture_context_free_text_grounds_against_real_beadloom() -> None:
     """🔴 BOB-031: a natural free-text question returns a NON-empty grounded result.
@@ -92,6 +100,7 @@ async def test_architecture_context_free_text_grounds_against_real_beadloom() ->
     assert "bob" in out.lower()
 
 
+@pytest.mark.real_beadloom
 @pytest.mark.asyncio
 async def test_architecture_context_ref_id_grounds_against_real_beadloom() -> None:
     """An exact ref-id question grounds via ``beadloom ctx`` (its native input)."""
@@ -271,6 +280,7 @@ async def test_real_run_is_sanitised_and_bounded() -> None:
 # (the fallback fires), and the real 197-line ``why`` panel really does condense.
 
 
+@pytest.mark.real_beadloom
 @pytest.mark.asyncio
 async def test_overview_diagram_is_real_mermaid_of_this_repo() -> None:
     if not _binary_ready("beadloom", "graph"):
@@ -286,6 +296,7 @@ async def test_overview_diagram_is_real_mermaid_of_this_repo() -> None:
     assert "capabilities" in diagram.mermaid
 
 
+@pytest.mark.real_beadloom
 @pytest.mark.asyncio
 async def test_node_diagram_with_depth_is_real_and_bounded() -> None:
     if not _binary_ready("beadloom", "graph", "memory", "--depth", "1"):
@@ -301,6 +312,7 @@ async def test_node_diagram_with_depth_is_real_and_bounded() -> None:
     assert len(diagram.mermaid) < len(overview.mermaid)
 
 
+@pytest.mark.real_beadloom
 @pytest.mark.asyncio
 async def test_components_diagram_of_a_container_is_real_c4() -> None:
     if not _binary_ready(
@@ -317,6 +329,7 @@ async def test_components_diagram_of_a_container_is_real_c4() -> None:
     assert "Component(" in diagram.mermaid
 
 
+@pytest.mark.real_beadloom
 @pytest.mark.asyncio
 async def test_components_of_a_leaf_really_falls_back_on_the_live_cli() -> None:
     """🔴 The fact only the REAL CLI reveals: a leaf has no internals to draw.
@@ -336,6 +349,7 @@ async def test_components_of_a_leaf_really_falls_back_on_the_live_cli() -> None:
     assert "memory" in diagram.mermaid
 
 
+@pytest.mark.real_beadloom
 @pytest.mark.asyncio
 async def test_impact_of_a_real_node_is_condensed_not_a_screenshot() -> None:
     if not _binary_ready("beadloom", "why", "memory"):
@@ -353,6 +367,7 @@ async def test_impact_of_a_real_node_is_condensed_not_a_screenshot() -> None:
         assert glyph not in out
 
 
+@pytest.mark.real_beadloom
 @pytest.mark.asyncio
 async def test_impact_of_an_unknown_ref_stays_empty_on_the_live_cli() -> None:
     if not _binary_ready("beadloom", "graph"):
@@ -415,6 +430,7 @@ def _git_has(ref: str) -> bool:
     return proc.returncode == 0
 
 
+@pytest.mark.real_beadloom
 @pytest.mark.asyncio
 async def test_status_of_this_repo_is_real_numbers_without_the_rich_frames() -> None:
     if not _report_ready("status"):
@@ -430,6 +446,7 @@ async def test_status_of_this_repo_is_real_numbers_without_the_rich_frames() -> 
         assert glyph not in health.report
 
 
+@pytest.mark.real_beadloom
 @pytest.mark.asyncio
 async def test_prime_of_this_repo_collapses_the_224_rule_list() -> None:
     """🔴 Live ``prime`` is ~39 KB, of which ~224 lines are the rule list."""
@@ -448,6 +465,7 @@ async def test_prime_of_this_repo_collapses_the_224_rule_list() -> None:
     assert len(health.report) < 6000, "39 KB must not reach a chat message"
 
 
+@pytest.mark.real_beadloom
 @pytest.mark.asyncio
 async def test_doctor_of_this_repo_counts_its_checks() -> None:
     if not _report_ready("doctor"):
@@ -460,6 +478,7 @@ async def test_doctor_of_this_repo_counts_its_checks() -> None:
     assert "[ok]" not in health.report
 
 
+@pytest.mark.real_beadloom
 @pytest.mark.asyncio
 async def test_sync_check_of_this_repo_condenses_585_pair_lines() -> None:
     """🔴 Live ``sync-check`` prints 48 KB / 585 pair lines; the answer is a few lines."""
@@ -474,6 +493,7 @@ async def test_sync_check_of_this_repo_condenses_585_pair_lines() -> None:
     assert len(health.report.splitlines()) <= 55
 
 
+@pytest.mark.real_beadloom
 @pytest.mark.asyncio
 async def test_sync_check_counts_every_pair_the_live_cli_printed() -> None:
     """🔴 The count must be the TRUE count — the defect only a live run exposed.
@@ -507,6 +527,7 @@ async def test_sync_check_counts_every_pair_the_live_cli_printed() -> None:
     assert f"Пар док↔код: {expected}" in health.report
 
 
+@pytest.mark.real_beadloom
 @pytest.mark.asyncio
 async def test_prime_keeps_its_tail_sections_on_the_live_cli() -> None:
     """🔴 The same cap silently ate ``prime``'s MOST useful part.
@@ -526,6 +547,7 @@ async def test_prime_keeps_its_tail_sections_on_the_live_cli() -> None:
     assert "Lint Violations:" in health.report
 
 
+@pytest.mark.real_beadloom
 @pytest.mark.asyncio
 async def test_sync_check_verdict_is_stable_across_two_live_runs() -> None:
     """🔴 The read must not ERASE the signal a human gate later depends on.
@@ -545,6 +567,7 @@ async def test_sync_check_verdict_is_stable_across_two_live_runs() -> None:
     assert first.report.splitlines()[0] == second.report.splitlines()[0]
 
 
+@pytest.mark.real_beadloom
 @pytest.mark.asyncio
 async def test_lint_of_this_repo_answers_with_a_verdict_and_the_caveat() -> None:
     if not _report_ready("lint", "--no-reindex", "--strict"):
@@ -559,6 +582,7 @@ async def test_lint_of_this_repo_answers_with_a_verdict_and_the_caveat() -> None
     assert "сохранённому индексу" in health.report
 
 
+@pytest.mark.real_beadloom
 @pytest.mark.asyncio
 async def test_lint_read_does_not_write_the_index_on_the_live_cli() -> None:
     """🔴 The find of this slice: a PLAIN ``beadloom lint`` reindexes, i.e. WRITES.
@@ -589,6 +613,7 @@ async def test_lint_read_does_not_write_the_index_on_the_live_cli() -> None:
 _INDEX_WRITING_FORMS = frozenset({"sync-check"})
 
 
+@pytest.mark.real_beadloom
 @pytest.mark.parametrize(
     "check", ["status", "prime", "doctor", "lint", "diff", "sync-check"]
 )
@@ -707,6 +732,7 @@ def _write_probe_project(root: Path) -> Path:
     return root
 
 
+@pytest.mark.real_beadloom
 @pytest.mark.asyncio
 async def test_a_planted_node_and_edge_violation_reaches_the_verdict(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -744,6 +770,7 @@ async def test_a_planted_node_and_edge_violation_reaches_the_verdict(
         assert line not in health.report, "сырой porcelain не выходит наружу"
 
 
+@pytest.mark.real_beadloom
 @pytest.mark.asyncio
 async def test_diff_without_graph_changes_answers_honestly() -> None:
     if not _report_ready("diff", "--since", "HEAD"):
@@ -756,6 +783,12 @@ async def test_diff_without_graph_changes_answers_honestly() -> None:
     assert health.report.strip(), "diff must always say something"
 
 
+# ``real_beadloom`` since BOB-112.12: besides the binary it needs ``66aa620~1`` in the checkout.
+# On a shallow CI checkout (depth 1) it skipped silently on every run (measured on the runner:
+# "not in this checkout"), so ci.yml now checks out the full history (``fetch-depth: 0``) and
+# the SKIP on the runner is a FAILED — a missing commit there is a broken checkout, not a
+# legitimate reason to not run the one test that proves the exit-code trap on the real CLI.
+@pytest.mark.real_beadloom
 @pytest.mark.asyncio
 async def test_a_graph_changing_diff_exits_nonzero_and_still_answers() -> None:
     """🔴 The exit-code trap, proven on the REAL CLI: ``diff`` exits 1 on a change.
