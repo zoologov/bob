@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta, timezone, tzinfo
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -23,6 +24,9 @@ from bob.application.router.health_messages import (
     reminder_text,
     understudy_missing_text,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _SINCE = datetime(2026, 10, 1, 6, 10, tzinfo=UTC)
 
@@ -116,12 +120,44 @@ def test_understudy_down_alone_is_not_alarmist() -> None:
     assert "не могу думать" not in text
 
 
-def test_voice_tier_down_names_the_main_model() -> None:
+# Отказ основной модели — это не «говорю слабее»: ход владельца и любого не-гостя идёт через
+# инструменты (ToolLoop) без отступления на Tier-0 и кончается уведомлением GUPPI «Боб временно
+# недоступен» (S13). Слабее, облаком Tier-0, отвечают только гости — пока оно живо (ревью N2,
+# bob-i83.24; путь гостя проверен на собранной программе, S14).
+def test_voice_down_matches_the_approved_wording() -> None:
+    text = degraded_text(
+        _notice(
+            provider_id="tier1",
+            situation=Situation.VOICE_DOWN,
+            elapsed=timedelta(minutes=4),
+            failures=6,
+            next_reminder_s=3600,
+        )
+    )
+    assert text == (
+        "Вова, основная модель отказывает мне в доступе (401/403 — ключ или квота) уже "
+        "4 минуты, 6 запросов подряд. Тебе и команде я сейчас ответить не могу — вместо меня "
+        "GUPPI пишет, что я недоступен. Гостям отвечаю облаком попроще, пока оно живо. "
+        "Основную модель надо чинить. Напомню через час, если не пройдёт."
+    )
+
+
+def test_voice_tier_down_names_the_main_model_and_does_not_promise_a_weaker_voice() -> None:
     text = degraded_text(
         _notice(provider_id="tier1", situation=Situation.VOICE_DOWN, failure_class="rate")
     )
     assert text.startswith("Вова, основная модель просит подождать (429")
-    assert "в полную силу" in text
+    assert "Тебе и команде я сейчас ответить не могу" in text
+    assert "в полную силу" not in text
+
+
+@pytest.mark.parametrize("make", [degraded_text, reminder_text], ids=["degraded", "reminder"])
+def test_voice_down_names_the_main_model_once_per_sentence(
+    make: Callable[[HealthNotice], str],
+) -> None:
+    text = make(_notice(provider_id="tier1", situation=Situation.VOICE_DOWN))
+    sentences = [sentence for sentence in text.split(". ") if sentence]
+    assert all(sentence.lower().count("основн") <= 1 for sentence in sentences), sentences
 
 
 @pytest.mark.parametrize(
@@ -171,7 +207,11 @@ def test_reminder_states_how_long_and_when_next() -> None:
     [
         (Situation.UNDERSTUDY_HOLDS, "tier0-primary", "Вова, я всё ещё держусь на дублёре: "),
         (Situation.UNDERSTUDY_DOWN, "tier0-understudy", "Вова, дублёр всё ещё не работает: "),
-        (Situation.VOICE_DOWN, "tier1", "Вова, я всё ещё без основной модели: "),
+        (
+            Situation.VOICE_DOWN,
+            "tier1",
+            "Вова, я всё ещё не могу ответить ни тебе, ни команде: основная модель ",
+        ),
         (Situation.OTHER, "tier9", "Вова, провайдер tier9 всё ещё не работает: "),
     ],
 )
@@ -197,7 +237,7 @@ def test_recovered_after_muteness_matches_the_approved_wording() -> None:
 
 def test_recovered_within_one_day_names_the_day_once() -> None:
     text = recovered_text(_notice(elapsed=timedelta(minutes=32)), tz=UTC)
-    assert text.endswith("Молчал 32 минуты (1 октября с 06:10 по 06:42 +00:00).")
+    assert text.endswith("Молчал 32 минуты (1 октября с 06:10 до 06:42 +00:00).")
 
 
 def test_recovered_period_from_the_second_takes_so() -> None:
@@ -216,7 +256,7 @@ def test_recovered_period_from_the_second_takes_so() -> None:
         owner_name=None,
     )
     assert recovered_text(notice, tz=UTC).endswith(
-        "Молчал день (со 2 октября 06:10 по 3 октября 06:10 +00:00)."
+        "Молчал сутки (со 2 октября 06:10 по 3 октября 06:10 +00:00)."
     )
 
 
@@ -226,8 +266,8 @@ def test_recovered_period_from_the_second_takes_so() -> None:
 @pytest.mark.parametrize(
     ("tz", "period"),
     [
-        (timezone(timedelta(hours=3)), "(1 октября с 09:10 по 09:42 +03:00)"),
-        (timezone(-timedelta(hours=9, minutes=30)), "(30 сентября с 20:40 по 21:12 -09:30)"),
+        (timezone(timedelta(hours=3)), "(1 октября с 09:10 до 09:42 +03:00)"),
+        (timezone(-timedelta(hours=9, minutes=30)), "(30 сентября с 20:40 до 21:12 -09:30)"),
     ],
 )
 def test_recovered_period_is_told_in_the_given_zone_with_its_offset(
@@ -242,7 +282,7 @@ def test_recovered_period_defaults_to_the_process_zone() -> None:
     text = recovered_text(_notice(elapsed=timedelta(minutes=32)))
     local_until = (_SINCE + timedelta(minutes=32)).astimezone()
     zone = local_until.strftime("%z")  # «+0300» — пояс процесса, посчитанный мимо модуля
-    assert text.endswith(f"по {local_until:%H:%M} {zone[:3]}:{zone[3:]}).")
+    assert text.endswith(f"до {local_until:%H:%M} {zone[:3]}:{zone[3:]}).")
     assert "UTC" not in text
 
 
@@ -308,7 +348,7 @@ def test_naive_times_carry_no_zone_label() -> None:
         owner_name=None,
     )
     assert recovered_text(notice, tz=timezone(timedelta(hours=3))).endswith(
-        "(1 октября с 06:10 по 06:15)."
+        "(1 октября с 06:10 до 06:15)."
     )
 
 

@@ -61,6 +61,8 @@ _TURN_WAIT_STEP_SECONDS = 0.05
 _GUPPI_OUTAGE_MARK = "Боб временно недоступен"
 # Ответ облака, который судья хода разбирает как «ответить» (parse_response_choice).
 _JUDGE_SAYS_REPLY = "intent: reply"
+# Отправитель, которого Боб не знает, — гость (Trust.GUEST).
+_GUEST_ID = 777
 
 
 @scenario(
@@ -152,6 +154,7 @@ def cloud_forbidden(story: _Story) -> None:
 
 
 @given("облачный Tier-0 отвечает и решает, что на сообщение владельца стоит ответить")
+@given("облачный Tier-0 отвечает и решает, что на сообщение гостя стоит ответить")
 def cloud_judges_reply(story: _Story) -> None:
     # Судья хода — служебная дверь Tier-0; ответ в его формате пропускает ход к основной модели.
     story.setup = replace(story.setup, cloud=ANSWERS, cloud_reply=_JUDGE_SAYS_REPLY)
@@ -242,14 +245,31 @@ def owner_asks_status(story: _Story) -> None:
 
 @when("гость пишет Бобу в его топик «Боб, привет!»")
 def guest_writes_to_bob(story: _Story) -> None:
+    story.act.append(_guest_writes("Боб, привет!"))
+
+
+# Длинный вопрос: выбор яруса ответа (BOB-006) шлёт его к Tier-1, а короткое «привет» пошло бы
+# прямо на облако Tier-0 и спуска с Tier-1 не проверило бы.
+_GUEST_LONG_QUESTION = "Боб, " + (
+    "объясни подробно, почему вертикали с общим ядром лучше монолита, сравни варианты "
+    "и приведи доводы за и против. "
+) * 4
+
+
+@when("гость задаёт Бобу в его топике длинный вопрос")
+def guest_asks_a_long_question(story: _Story) -> None:
+    story.act.append(_guest_writes(_GUEST_LONG_QUESTION))
+
+
+def _guest_writes(text: str) -> _Action:
     async def action(world: HealthWorld) -> None:
         await world.app.event_bus.publish(
             MessageReceived(
                 update_id=1,
                 chat_id=GROUP_CHAT_ID,
                 message_id=11,
-                text="Боб, привет!",
-                sender_id=777,
+                text=text,
+                sender_id=_GUEST_ID,
                 sender_name="Гость",
                 is_group=True,
                 topic_id=BOB_TOPIC_ID,
@@ -257,7 +277,7 @@ def guest_writes_to_bob(story: _Story) -> None:
         )
         await _wait_for_a_line_in_the_room(world)
 
-    story.act.append(action)
+    return action
 
 
 @when(parsers.parse("владелец {times:d} раза пишет Бобу в его топик"))
@@ -582,6 +602,41 @@ def message_names_the_main_model(story: _Story) -> None:
     text = _owner_dms(story.outcome())[0]
     assert "основная модель отказывает мне в доступе" in text, text
     assert "403" in text, text
+
+
+@then(
+    "в нём Боб честно говорит, что ответить владельцу и команде не может "
+    "и что вместо него пишет GUPPI"
+)
+def message_says_owner_is_not_answered(story: _Story) -> None:
+    # Ревью N2: ход владельца кончается уведомлением GUPPI, а не ответом слабее (шаг выше,
+    # «каждый ход владельца шёл к Tier-1 через инструменты»), — текст обязан это сказать.
+    text = _owner_dms(story.outcome())[0]
+    assert "Тебе и команде я сейчас ответить не могу" in text, text
+    assert "вместо меня GUPPI пишет, что я недоступен" in text, text
+    assert "в полную силу" not in text, text
+
+
+@then("вопрос гостя сначала ушёл к Tier-1, и без инструментов")
+def guest_question_went_to_tier1(story: _Story) -> None:
+    world = story.outcome()
+    assert world.tier1.calls >= 1, world.tier1.bodies
+    # Гость не получает инструментов: его ход идёт через роутер, а не через ToolLoop.
+    assert all('"tools"' not in body for body in world.tier1.bodies), world.tier1.bodies
+
+
+@then("в топике гостю ответил бот Боба, а уведомления GUPPI нет")
+def guest_answered_by_bob(story: _Story) -> None:
+    world = story.outcome()
+    room = _room_lines(world)
+    # Уведомление GUPPI тоже уходит ботом Боба, поэтому ответ Боба — строка без его метки.
+    replies = [
+        line.text
+        for line in world.bob_bot.sent
+        if line.chat_id == GROUP_CHAT_ID and _GUPPI_OUTAGE_MARK not in line.text
+    ]
+    assert replies, room
+    assert not [text for text in room if _GUPPI_OUTAGE_MARK in text], room
 
 
 @then(

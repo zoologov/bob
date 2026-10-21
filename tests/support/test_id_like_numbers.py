@@ -63,6 +63,42 @@ def test_a_split_group_id_is_found_as_one_run(line: str) -> None:
     assert runs == [DigitRun(line=2, digits=_GROUP_ID)]
 
 
+# Типографские тире и апостроф (ревью m1, bob-i83.24): en dash — обычный знак русской
+# типографики, и до правки им серия рвалась. Символы записаны кодами, чтобы случай был виден
+# в исходнике, а не терялся среди похожих на дефис глифов.
+@pytest.mark.parametrize(
+    "separator",
+    [
+        "\u2010",  # дефис
+        "\u2011",  # неразрывный дефис
+        "\u2012",  # цифровое тире
+        "\u2013",  # en dash
+        "\u2014",  # em dash
+        "\u2212",  # минус — категория Sm, не Pd, назван отдельно
+        "'",  # апостроф — разделитель разрядов в швейцарской записи
+        "\u2019",  # типографский апостроф
+        "\u2003",  # em space — любой пробел категории Zs
+        " \u2013 ",  # тире в пробелах
+    ],
+    ids=[
+        "hyphen-u2010",
+        "nb-hyphen-u2011",
+        "figure-dash-u2012",
+        "en-dash-u2013",
+        "em-dash-u2014",
+        "minus-u2212",
+        "apostrophe",
+        "right-quote-u2019",
+        "em-space-u2003",
+        "spaced-en-dash",
+    ],
+)
+def test_a_group_id_split_by_typographic_separators_is_one_run(separator: str) -> None:
+    line = "# группа -" + separator.join(("100", "4372", "9473", "07"))
+
+    assert id_like_digit_runs(f"telegram:\n  {line}\n") == [DigitRun(line=2, digits=_GROUP_ID)]
+
+
 @pytest.mark.parametrize(
     "line",
     [
@@ -79,6 +115,8 @@ def test_a_split_group_id_is_found_as_one_run(line: str) -> None:
         "# 2026-08-15-2026-10-21",
         "timeout_s: 30  # BOB-116 2026-10-21",
         "# 90-120 с",
+        "# 5 + 4372 + 9473",
+        "# 4372/9473 и 4372:9473",
     ],
     ids=[
         "list",
@@ -94,6 +132,8 @@ def test_a_split_group_id_is_found_as_one_run(line: str) -> None:
         "date-range",
         "timeout-and-date",
         "short-range",
+        "plus-is-not-a-separator",
+        "slash-and-colon",
     ],
 )
 def test_honest_config_text_has_no_finding(line: str) -> None:

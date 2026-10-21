@@ -166,8 +166,11 @@ async def test_tool_loop_403_on_tier1_is_recorded_once_per_http_call(
 
     assert reply == "Отвечаю из облачного Tier-0."
     assert forbidden_tier1.tier1.calls == 2  # прогон не вакуумный: каждый путь дошёл до HTTP
-    assert observer.records[TIER1] == forbidden_tier1.tier1.calls
-    assert observer.records[TIER0_PRIMARY] == forbidden_tier1.cloud.calls == 1
+    assert forbidden_tier1.cloud.calls == 1
+    # Сверяется весь счётчик (ревью R2 m6): запись под чужим id — тоже двойной учёт.
+    assert observer.records == Counter(
+        {TIER1: forbidden_tier1.tier1.calls, TIER0_PRIMARY: forbidden_tier1.cloud.calls}
+    )
 
 
 async def test_tool_loop_success_on_tier1_is_recorded(answering_tier1: _Stack) -> None:

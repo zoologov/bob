@@ -14,7 +14,8 @@
 
 BOB-116 F2 (ревью M2): гейт закрывается, только когда Tier-0 думать НЕЧЕМ — облако лежит и
 дублёра нет, он снят при старте или лежит тоже. Пока дублёр держит, рефлексия, проактивность
-и цели идут в обычном ритме (PRD US-2), а зонд по-прежнему идёт к облаку. Вторая половина
+и цели идут в обычном ритме (PRD US-2), а облако трогают только положенные зонды: между ними
+обёртка дублёра идёт сразу к дублёру (ревью R2 N1, PRD G3). Вторая половина
 файла держит это на НАСТОЯЩЕМ мониторе: сначала матрица исходов, затем настоящая обёртка
 дублёра над loopback-эндпоинтами (П.0.3 п.4).
 """
@@ -23,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
@@ -389,9 +391,68 @@ async def test_understudy_holding_a_dead_cloud_keeps_reflect_on_its_rhythm() -> 
 
     for lane in ("reflect", "proactive", "pursue_goals", "inner_monologue"):
         assert sum(r.count(lane) for r in rounds) == _ROUNDS, (lane, rounds)
-    # Монолог каждый раунд идёт сначала в облако — вернувшееся облако будет замечено.
+    # Раунд в 5 минут не короче потолка расписания зонда (300 с), поэтому каждый монолог
+    # здесь — положенный зонд облака; между зондами облако не трогают (ниже, R2 N1).
     assert stack.cloud.calls - cloud_before == _ROUNDS
     assert stack.local.calls >= _ROUNDS
+
+
+_HEARTBEAT_SECONDS = 30
+_HEARTBEAT_ROUNDS = 25
+# Зонд по HealthPolicy(): облако объявлено DEGRADED на 120-й секунде (пятый отказ), раунды —
+# с 180-й по 900-ю шагом 30 с; зонд положен через 60, 120, 300, 300 с — раунды 1, 5, 15, 25.
+_PROBE_ROUNDS = [1, 5, 15, 25]
+_FALLBACK_LOGGER = "bob.infrastructure.llm.fallback_provider"
+
+
+async def test_understudy_holding_a_dead_cloud_calls_the_cloud_only_on_due_probes(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """R2 N1, PRD G3: 25 тиков монолога каждые 30 с — облако зовут только положенные зонды.
+
+    Дублёр отвечает на все 25; строк WARNING обёртки — по одной на проваленный зонд, а не
+    на каждый тик.
+    """
+    caplog.set_level(logging.INFO, logger=_FALLBACK_LOGGER)
+    async with _stack(understudy=ANSWERS) as stack:
+        await stack.cloud_dies()
+        caplog.clear()
+        cloud_before, local_before = stack.cloud.calls, stack.local.calls
+
+        probed = []
+        for number in range(1, _HEARTBEAT_ROUNDS + 1):
+            stack.clock.advance(_HEARTBEAT_SECONDS)
+            cloud_seen = stack.cloud.calls
+            called = await stack.one_round()
+            assert "inner_monologue" in called, (number, called)
+            if stack.cloud.calls > cloud_seen:
+                probed.append(number)
+
+    assert probed == _PROBE_ROUNDS
+    assert stack.cloud.calls - cloud_before == len(_PROBE_ROUNDS)
+    assert stack.local.calls - local_before == _HEARTBEAT_ROUNDS
+    warnings = [
+        r for r in caplog.records if r.name == _FALLBACK_LOGGER and r.levelno >= logging.WARNING
+    ]
+    assert len(warnings) == len(_PROBE_ROUNDS)
+    assert stack.monitor.is_degraded(TIER0_PRIMARY)
+
+
+async def test_cloud_back_is_seen_by_the_next_due_probe_and_the_breaker_lifts() -> None:
+    """Облако вернулось между зондами: до зонда его не трогают, зонд его видит, дальше — оно."""
+    async with _stack(understudy=ANSWERS) as stack:
+        await stack.cloud_dies()
+        stack.cloud.behaviour = ANSWERS
+        stack.clock.advance(_HEARTBEAT_SECONDS)  # 150 → 180: первый зонд положен
+        cloud_before, local_before = stack.cloud.calls, stack.local.calls
+        await stack.one_round()
+        assert not stack.monitor.is_degraded(TIER0_PRIMARY)
+        for _ in range(3):
+            stack.clock.advance(_HEARTBEAT_SECONDS)
+            await stack.one_round()
+
+    assert stack.cloud.calls - cloud_before == 4
+    assert stack.local.calls == local_before
 
 
 async def test_cloud_returning_while_the_understudy_holds_is_seen_by_the_monologue() -> None:

@@ -20,10 +20,10 @@ from __future__ import annotations
 import random
 from typing import TYPE_CHECKING
 
-from bob.application.router.health_monitor import TIER0_EFFECTIVE, TIER0_PRIMARY
 from bob.application.runtime import periodic
 from bob.application.runtime.heartbeat import health_gated
 from bob.infrastructure.telegram.restart_notifier import _RestartNotifier
+from bob.kernel.provider_health import TIER0_EFFECTIVE, TIER0_PRIMARY
 from bob.personality.language import DEFAULT_LANGUAGE
 from bob.proactivity.adapters import KvRestartMarkerStore, RepoProactivitySources
 from bob.proactivity.decision import ProactiveDecider
@@ -185,9 +185,10 @@ def _background_tasks(
     ``TIER0_EFFECTIVE``, the same rule that tells the owner «не могу думать». While the
     understudy holds a dead cloud every lane keeps its rhythm (PRD US-2). The probe, its
     schedule and its log line stay ``tier0-primary``'s — the id under which both the router
-    and the understudy wrapper report the cloud's call; the wrapper tries the cloud first,
-    so a cloud that came back is seen by the next monologue tick. ``None`` → the schedule
-    is exactly as before BOB-116.
+    and the understudy wrapper report the cloud's call; the wrapper calls the dead cloud only
+    when its probe is due and answers on the understudy in between (review R2 N1), so a
+    cloud that came back is seen by the first call after its next due probe. ``None`` → the
+    schedule is exactly as before BOB-116.
     """
     runtime = _section(config, "runtime")
     heartbeat = float(_int(runtime, "heartbeat_seconds", _DEFAULT_HEARTBEAT_SECONDS))

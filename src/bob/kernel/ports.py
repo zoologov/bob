@@ -327,18 +327,36 @@ class SelfReportingProvider(Protocol):
 
 @runtime_checkable
 class HealthReader(Protocol):
-    """Read side of provider health: the ``/status`` snapshot and the heartbeat lane gate."""
+    """Read side of provider health: the ``/status`` snapshot, the heartbeat lane gate and
+    the understudy wrapper's breaker.
+
+    The ids a reader answers for are the ones in :mod:`bob.kernel.provider_health`: the
+    providers outcomes are reported under (``tier0-primary``, ``tier0-understudy``,
+    ``tier1``) and one id that is not a provider — ``TIER0_EFFECTIVE`` (``"tier0"``), Tier 0
+    as a whole. A reader that does not know an id reads it as healthy, so a reader wired
+    into the lane gate MUST answer ``TIER0_EFFECTIVE`` or the gate never closes.
+    """
 
     def snapshot(self) -> Mapping[str, HealthView]:
-        """Every known provider's health, keyed by ``provider_id``."""
+        """Every known provider's health, keyed by ``provider_id``; no ``TIER0_EFFECTIVE``."""
         ...
 
     def is_degraded(self, provider_id: str) -> bool:
-        """Whether ``provider_id`` is currently declared out of service."""
+        """Whether ``provider_id`` is currently declared out of service.
+
+        For a provider id — its own state (a provider stood down at startup is degraded).
+        For ``TIER0_EFFECTIVE`` — whether Tier 0 has nothing to think with: the cloud is
+        degraded AND the understudy is absent, stood down or degraded too. An unknown id is
+        healthy.
+        """
         ...
 
     def probe_due(self, provider_id: str) -> bool:
-        """Whether a call to ``provider_id`` may go now (always, unless degraded)."""
+        """Whether a call to ``provider_id`` may go now.
+
+        A healthy provider — always; a degraded one — when its probe schedule says so; one
+        stood down at startup — never. Asked for provider ids, not for ``TIER0_EFFECTIVE``.
+        """
         ...
 
 

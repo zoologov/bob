@@ -43,6 +43,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 __all__ = [
+    "TIER0_EFFECTIVE",
     "TIER0_PRIMARY",
     "TIER0_UNDERSTUDY",
     "TIER1",
@@ -63,6 +64,12 @@ __all__ = [
 TIER0_PRIMARY = "tier0-primary"
 TIER0_UNDERSTUDY = "tier0-understudy"
 TIER1 = "tier1"
+
+# Tier-0 целиком — облако вместе с дублёром (BOB-116 F2, ревью M2 и R2 m3). Не провайдер:
+# исходов под этим id никто не докладывает, и в снимке его нет. Его спрашивают у
+# :meth:`bob.kernel.ports.HealthReader.is_degraded` дорожки heartbeat — «думать есть чем?»;
+# контракт этого вопроса записан в докстринге порта.
+TIER0_EFFECTIVE = "tier0"
 
 
 class HealthState(Enum):

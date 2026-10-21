@@ -422,7 +422,7 @@ def test_outage_within_one_day_names_the_day_once() -> None:
             until=datetime(2026, 10, 1, 6, 42, tzinfo=_MSK),
         )
     ).content
-    assert content.startswith("я молчал 1 октября с 06:10 по 06:42 +03:00 (32 минуты): ")
+    assert content.startswith("я молчал 1 октября с 06:10 до 06:42 +03:00 (32 минуты): ")
 
 
 def test_outage_across_new_year_names_both_years() -> None:
@@ -443,8 +443,8 @@ def test_outage_across_new_year_names_both_years() -> None:
 @pytest.mark.parametrize(
     ("tz", "period"),
     [
-        (timezone(timedelta(hours=5, minutes=45)), "1 октября с 06:10 по 06:42 +05:45"),
-        (timezone(-timedelta(hours=9, minutes=30)), "1 октября с 06:10 по 06:42 -09:30"),
+        (timezone(timedelta(hours=5, minutes=45)), "1 октября с 06:10 до 06:42 +05:45"),
+        (timezone(-timedelta(hours=9, minutes=30)), "1 октября с 06:10 до 06:42 -09:30"),
     ],
 )
 def test_outage_period_names_the_offset_of_its_zone(tz: tzinfo, period: str) -> None:
@@ -465,7 +465,7 @@ def test_outage_with_naive_times_carries_no_offset() -> None:
             until=datetime(2026, 10, 1, 6, 42),  # noqa: DTZ001
         )
     ).content
-    assert content.startswith("я молчал 1 октября с 06:10 по 06:42 (32 минуты): ")
+    assert content.startswith("я молчал 1 октября с 06:10 до 06:42 (32 минуты): ")
 
 
 @pytest.mark.parametrize(
@@ -521,9 +521,9 @@ def test_outage_month_is_in_russian_genitive(month: int, genitive: str) -> None:
         (11 * 3600, "11 часов"),
         (21 * 3600, "21 час"),
         (23 * 3600 + 59 * 60, "23 часа 59 минут"),
-        (86400, "день"),
+        (86400, "сутки"),
         (86400 + 3600, "1 день 1 час"),
-        (86400 + 5 * 60, "день"),
+        (86400 + 5 * 60, "сутки"),
         (2 * 86400 + 4 * 3600, "2 дня 4 часа"),
         (5 * 86400, "5 дней"),
         (11 * 86400, "11 дней"),

@@ -320,7 +320,8 @@ async def test_failed_probe_waits_for_the_next_due_probe() -> None:
 # --- gate_id: the lane closes on a composite, the probe goes to the provider -----------
 # BOB-116 F2 (review M2): a Tier-0 lane is closed only when Tier-0 as a whole cannot think
 # (the cloud is down and the understudy cannot hold), while the probe, its schedule, its
-# failure count and its log line stay the cloud's — the wrapper tries the cloud first.
+# failure count and its log line stay the cloud's — the wrapper calls a degraded cloud
+# exactly when its probe is due (review R2 N1).
 
 _GATE = "tier0"
 

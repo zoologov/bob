@@ -100,9 +100,10 @@ def test_plural_agrees_with_the_number(count: int, form: str) -> None:
         (21 * 3600, "21 час"),
         (22 * 3600, "22 часа"),
         (23 * 3600 + 59 * 60 + 59, "23 часа 59 минут"),
-        (86400, "день"),
+        # Ровно сутки — «сутки», а не «день»: «молчал сутки», «через сутки» (ревью m5).
+        (86400, "сутки"),
         (86400 + 3600, "1 день 1 час"),
-        (86400 + 5 * 60, "день"),
+        (86400 + 5 * 60, "сутки"),
         (2 * 86400 + 5 * 60, "2 дня"),
         (2 * 86400 + 4 * 3600, "2 дня 4 часа"),
         (9 * 86400 + 23 * 3600 + 32 * 60, "9 дней 23 часа"),
@@ -120,7 +121,7 @@ def test_duration_reads_as_russian_accusative(seconds: float, expected: str) -> 
 
 def test_period_within_one_day_names_the_day_once() -> None:
     since = datetime(2026, 10, 1, 6, 10, tzinfo=_MSK)
-    assert period(since, since + timedelta(minutes=32)) == "1 октября с 06:10 по 06:42 +03:00"
+    assert period(since, since + timedelta(minutes=32)) == "1 октября с 06:10 до 06:42 +03:00"
 
 
 def test_period_across_days_names_both_days() -> None:
@@ -155,7 +156,7 @@ def _month(moment: datetime) -> str:
 def test_period_within_the_second_day_keeps_s_before_the_clock() -> None:
     # Предлог стоит перед часами («с двух»), а не перед «вторым» — «со» здесь неуместно.
     since = datetime(2026, 10, 2, 2, 10, tzinfo=_MSK)
-    assert period(since, since + timedelta(minutes=5)) == "2 октября с 02:10 по 02:15 +03:00"
+    assert period(since, since + timedelta(minutes=5)) == "2 октября с 02:10 до 02:15 +03:00"
 
 
 @pytest.mark.parametrize(
@@ -202,17 +203,17 @@ def test_period_across_days_of_one_year_carries_no_year() -> None:
 )
 def test_period_is_signed_with_the_offset_of_its_end(tz: timezone, label: str) -> None:
     since = datetime(2026, 10, 1, 6, 10, tzinfo=tz)
-    assert period(since, since + timedelta(minutes=32)).endswith(f"по 06:42 {label}")
+    assert period(since, since + timedelta(minutes=32)).endswith(f"до 06:42 {label}")
 
 
 def test_naive_period_carries_no_offset() -> None:
     since = datetime(2026, 10, 1, 6, 10)  # noqa: DTZ001 - наивное время — предмет теста
-    assert period(since, since + timedelta(minutes=5)) == "1 октября с 06:10 по 06:15"
+    assert period(since, since + timedelta(minutes=5)) == "1 октября с 06:10 до 06:15"
 
 
 def test_clock_pads_hours_and_minutes() -> None:
     since = datetime(2026, 10, 1, 0, 5, tzinfo=_MSK)
-    assert period(since, since + timedelta(hours=9)) == "1 октября с 00:05 по 09:05 +03:00"
+    assert period(since, since + timedelta(hours=9)) == "1 октября с 00:05 до 09:05 +03:00"
 
 
 # --- говорящий по id провайдера ----------------------------------------------------

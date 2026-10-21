@@ -36,6 +36,18 @@ composite (one HTTP call — one record). A failure is recorded before it propag
 heartbeat lane gate reads the snapshot right after the tick). The stream path is not
 reported: nothing streams Tier 0, and a stream's outcome is only known mid-iteration.
 
+**Breaker (BOB-116, review R2 N1).** When the injected observer can also READ health (the
+monitor is both — :class:`~bob.kernel.ports.HealthReader`), the composite does not knock on
+a cloud the monitor has declared dead: while ``tier0-primary`` is degraded and its probe is
+not due, a call goes straight to the stand-in — no cloud call, no log line, and nothing is
+recorded for the cloud, so its probe schedule is not moved. When the probe is due, the call
+goes to the cloud as usual and IS the probe: a failure is one ``WARNING`` and one record, a
+success lifts the degradation and the next call is the cloud's again. Without a reader the
+composite tries the cloud first on every call, as before. The breaker is for this composite
+only: :meth:`FallbackLLMProvider.without_understudy` hands out the bare cloud, which knows
+nothing of it, and a tool turn whose stand-in cannot call tools still goes to the cloud —
+the only provider that can serve it.
+
 **Capability mirroring (BOB-087.E1b).** A wrapper must not quietly change what the
 wrapped tier can do. :class:`~bob.kernel.ports.ToolCallingProvider` is an
 *optional* companion of the ``LLMProvider`` port, and the tool seam
@@ -58,7 +70,7 @@ from bob.application.router.health_monitor import (
     TIER0_UNDERSTUDY,
     NoopHealthObserver,
 )
-from bob.kernel.ports import ToolCallingProvider
+from bob.kernel.ports import HealthReader, ToolCallingProvider
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Sequence
@@ -102,6 +114,8 @@ class FallbackLLMProvider:
         self._primary = primary
         self._fallback = fallback
         self._health: HealthObserver = health if health is not None else NoopHealthObserver()
+        # The monitor reports AND reads; an observer that cannot read leaves the breaker off.
+        self._health_reader = health if isinstance(health, HealthReader) else None
 
     def without_understudy(self) -> LLMProvider:
         """The primary alone — this composite minus its stand-in (BOB-087.E-M1).
@@ -123,6 +137,8 @@ class FallbackLLMProvider:
         """Complete a chat turn, degrading to the local model on a transport failure."""
         if stream:
             return await self._primary.complete(messages, stream=True)
+        if self._cloud_resting():
+            return await self._understudy_alone(self._fallback.complete(messages, stream=False))
         try:
             result = await self._primary.complete(messages, stream=False)
         except Exception as error:
@@ -135,6 +151,27 @@ class FallbackLLMProvider:
                 turn=_CHAT_TURN,
             )
         await self._health.record_success(TIER0_PRIMARY)
+        return result
+
+    def _cloud_resting(self) -> bool:
+        """The cloud is declared dead and its probe is not due — do not call it now."""
+        reader = self._health_reader
+        if reader is None or not reader.is_degraded(TIER0_PRIMARY):
+            return False
+        return not reader.probe_due(TIER0_PRIMARY)
+
+    async def _understudy_alone(self, local_attempt: Awaitable[_LocalResult]) -> _LocalResult:
+        """Answer on the stand-in while the cloud rests: no log line, the stand-in reported.
+
+        The degradation was announced once by the monitor; a line per call would bury it.
+        There is no cloud error to re-raise, so the stand-in's own failure propagates.
+        """
+        try:
+            result = await local_attempt
+        except Exception as local_error:
+            await self._health.record_failure(TIER0_UNDERSTUDY, classify_failure(local_error))
+            raise
+        await self._health.record_success(TIER0_UNDERSTUDY)
         return result
 
     async def _degrade_to_local(
@@ -206,13 +243,15 @@ class ToolCallingFallbackLLMProvider(FallbackLLMProvider):
         tools: Sequence[ToolDefinition],
     ) -> ToolCallResult:
         """Complete a tool turn, degrading to the local model on a transport failure."""
+        local = self._fallback
+        if isinstance(local, ToolCallingProvider) and self._cloud_resting():
+            return await self._understudy_alone(local.complete_with_tools(messages, tools=tools))
         try:
             result = await self._tool_primary.complete_with_tools(messages, tools=tools)
         except Exception as error:
             await self._health.record_failure(TIER0_PRIMARY, classify_failure(error))
             if not should_fall_back(error):
                 raise
-            local = self._fallback
             if not isinstance(local, ToolCallingProvider):
                 logger.warning(
                     "Primary LLM failed on the %s (%s: %s); the local fallback cannot make "

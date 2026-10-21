@@ -61,6 +61,7 @@ from bob.application.router.health_messages import (
 from bob.kernel.local_time import in_local_zone, utc_offset_label
 from bob.kernel.ports import HealthView
 from bob.kernel.provider_health import (
+    TIER0_EFFECTIVE,
     TIER0_PRIMARY,
     TIER0_UNDERSTUDY,
     TIER1,
@@ -91,11 +92,8 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-# Tier-0 целиком — облако вместе с дублёром (BOB-116 F2, ревью M2). Не провайдер: исходов
-# под этим id никто не докладывает и в снимке его нет. Его спрашивают у
-# :meth:`ProviderHealthMonitor.is_degraded` дорожки heartbeat — «думать есть чем?».
-# Идентификаторы самих провайдеров живут в ядре и реэкспортируются отсюда.
-TIER0_EFFECTIVE = "tier0"
+# Идентификаторы провайдеров и «Tier-0 целиком» (:data:`TIER0_EFFECTIVE`) живут в ядре
+# (:mod:`bob.kernel.provider_health`) и реэкспортируются отсюда.
 
 # Восстановление после молчания: (provider_id, since, until, failure_class).
 type OutageRecovered = Callable[[str, datetime, datetime, str | None], Awaitable[None]]

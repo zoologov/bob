@@ -55,7 +55,7 @@ async def test_episode_period_is_in_the_process_zone_with_its_offset() -> None:
     content = describe_self_action(action).content
     local_since = _SINCE_UTC.astimezone()
     local_until = (_SINCE_UTC + timedelta(minutes=32)).astimezone()
-    assert f"с {local_since:%H:%M} по {local_until:%H:%M} {_offset_text(local_until)} (" in (
+    assert f"с {local_since:%H:%M} до {local_until:%H:%M} {_offset_text(local_until)} (" in (
         content
     )
     assert _offset_text(until) not in content

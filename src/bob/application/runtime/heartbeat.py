@@ -123,8 +123,8 @@ def health_gated(
     provider itself. A provider backed by a stand-in is gated on the reader's id for the
     whole (BOB-116 F2: Tier-0 is closed only when the cloud is down AND the understudy
     cannot hold), while the probe, its schedule, its failure count and its log line stay
-    ``provider_id``'s: the stand-in wrapper tries the provider first, so a due probe still
-    reaches it.
+    ``provider_id``'s: the stand-in wrapper calls a degraded provider exactly when its probe
+    is due, so a due probe still reaches it.
 
     While the gate is open the returned tick is ``tick`` in all but name: it runs and
     whatever it raises goes out unchanged. While the gate is closed:
