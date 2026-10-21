@@ -49,7 +49,7 @@ src/bob/memory/
   ports.py        # layer=domain          — порты-протоколы способности
   __init__.py     # layer=domain          — фасад (re-export EpisodicEvent, SemanticFact)
   entities.py     # layer=domain          — EpisodicEvent, SemanticFact (immutable value-objects)
-  self_action.py  # layer=domain          — SelfActionKind, SelfAction, describe_self_action + coding_terminal_kind (автобиография, BOB-079; два финала сессии — BOB-089)
+  self_action.py  # layer=domain          — SelfActionKind, SelfAction, OutageSpan, describe_self_action + coding_terminal_kind (автобиография, BOB-079; два финала сессии — BOB-089; простой провайдера — BOB-116)
   work_journal.py # layer=domain          — WorkEpisode + work_episode_event: дистиллированный dev-эпизод, event_type='work' (BOB-087.B1)
   register.py     # layer=domain          — Register (DEV/CASUAL) + may_recall_in_register/filter_by_register: чистый down-weight work-эпизодов в CASUAL (BOB-087.C1)
   register_pipeline.py # layer=domain     — register_ranked/pool_has_work: over-fetch → attenuate → re-sort → truncate («зубы» down-weight'а) + economy-gate (BOB-087.C2)
@@ -144,6 +144,23 @@ PR (`coding_finished` → «я доделал «X», открыл PR»), а на
 автобиографии — источник будущих ответов Боба о себе, поэтому запись о несовершённом
 действии стала бы конфабуляцией с провенансом «я это помню, я сам так сделал» — ровно тем
 классом, против которого BOB-090.C строил анти-конфабуляционный провенанс.
+
+🔴 **Простой провайдера — тоже поступок, который Боб себе присваивает (BOB-116 D7).**
+`SelfActionKind.OUTAGE_RECOVERED` (`"outage_recovered"`) — эпизод «я молчал» после
+восстановления LLM-провайдера, чтобы в автобиографии не было дыры (десять дней 403 в октябре
+2026 дали ноль эпизодов, Issues #64). Факты несёт типизированное поле `SelfAction.outage:
+OutageSpan | None` (а не строка `detail`): `OutageSpan(since, until, failure_class, provider)`,
+`until < since` отвергается `ValueError`. Рендер — от первого лица, без кодов HTTP: «я молчал
+1 октября с 06:10 до 06:42 +03:00 (32 минуты): облако не пускало меня по ключу/квоте, думать
+было нечем. Теперь снова могу.» Без `OutageSpan` — короткое «я молчал — думать было нечем.
+Теперь снова могу.». Период, длительность, говорящий («облако», «дублёр», «основная модель») и
+причина берутся из `bob.kernel.ru_text` — той же таблицы, что у сообщения владельцу и строки
+`/status`. Простой — не аномалия (молчание не промах Боба), тег области — `outage`. Кто и когда
+пишет эпизод, решает не домен: монитор здоровья зовёт колбэк только после настоящей немоты
+(облако лежало, а дублёра не было или он тоже лежал, либо лежала основная модель), а сборка
+пишет его с `visibility=owner_private` и без отправителя (`runtime/wiring/self_action.py`).
+Без `memory.autobiography` запись — no-op; на VPS флаг включён в трекаемом
+`config/bob.vps.yaml`.
 
 **Рабочий журнал — дистиллированный dev-эпизод (BOB-087.B1).** `work_journal.py`
 (чистый домен, I/O-free) вводит `WorkEpisode` — детальную первого-лица «операторскую»
@@ -464,7 +481,9 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), ~15 потребите
   `HybridMemoryRecall`, `OllamaEmbedder`, `OllamaReranker`, фабрики
   `build_embedder` / `build_reranker`; `self_action_recorder` (BOB-079).
 - `self_action.py` (чистый домен): `SelfActionKind`, `SelfAction`,
-  `describe_self_action` — рендер самодействия от первого лица (BOB-079).
+  `describe_self_action` — рендер самодействия от первого лица (BOB-079);
+  `OutageSpan(since, until, failure_class, provider)` и `SelfAction.outage` — факты простоя
+  для `SelfActionKind.OUTAGE_RECOVERED` (BOB-116).
 - `work_journal.py` (чистый домен): `WorkEpisode`, `work_episode_event`,
   `WORK_EVENT_TYPE` (ре-экспорт из `bob.kernel.episode_types` — общий словарь трёх
   контекстов, bob-abk.32) — дистиллированный dev-эпизод, event_type `work` (BOB-087.B1).
@@ -493,6 +512,9 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), ~15 потребите
 Тесты покрывают инварианты и поведение (identical после переезда):
 
 - Сущности: `tests/domain/memory/test_entities.py`.
+- Автобиография: `tests/domain/memory/test_self_action.py` (в том числе эпизод о простое
+  `OUTAGE_RECOVERED`: даты по-русски, причина без кодов HTTP, говорящий по провайдеру); живая
+  документация эпизода о простое — `tests/acceptance/features/llm_health.feature` S10.
 - Use-case'ы: `tests/application/usecases/test_extract_facts.py`,
   `test_consolidate_memory.py`, `test_consolidation_gaps.py`,
   `test_dedup_facts.py`.
