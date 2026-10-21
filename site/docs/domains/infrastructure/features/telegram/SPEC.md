@@ -1,7 +1,7 @@
 <!-- beadloom:badge-start -->
 > ✅ **fresh**
 > 
-> last synced 2026-10-21T08:49:35.850635+00:00 · coverage 12% (`telegram`)
+> last synced 2026-10-21T21:04:41.376096+00:00 · coverage 10% (`telegram`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
 <!-- beadloom:badge-end -->
@@ -62,13 +62,43 @@ draft-стриминг и Rich Messages, пиннинг ответа в topic-th
   то есть «потолка не сообщили»), поэтому непровязанный `GuppiHandler` покажет мусор, но
   промолчит о превышении. Живая сборка передаёт настоящее число — это проверяется тестом
   через `_build_multibot` и настоящую команду владельца, а не через конструктор.
+  🔴 `/status` (BOB-116 D6) отвечает whoami-строкой и, если подключён `HealthReader`, снимком
+  здоровья LLM-провайдеров (`health_status.render_health_status`), прочитанным в момент
+  команды, а не при сборке. Читатель — необязательный параметр `health` у `GuppiHandler` и у
+  `MultiBotGateway`, который передаёт его в `_build_guppi`; без него `/status` байт-в-байт
+  прежний.
+- **health_status.py** (BOB-116 D6) — чистая функция `render_health_status(snapshot, *,
+  tz=None)`: снимок монитора → блок строк по-русски, по строке на провайдера:
+  ```
+  LLM:
+  tier0 облако — деградирован с 2026-10-01 06:10 +03:00 (не пускало по ключу/квоте, 5 подряд)
+  дублёр — нет
+  tier1 — ок
+  ```
+  Порядок — `tier0-primary`, `tier0-understudy`, `tier1`, незнакомые id следом по алфавиту
+  под своим id. Нет дублёра — «нет»; дублёр, снятый при старте, — «выключен при старте:
+  <причина> (до перезапуска)»; здоровый с допороговыми отказами — «ок, сбоев подряд: N (…)».
+  Причина — безличная фраза `bob.kernel.ru_text.failure_report`, та же таблица, что в
+  сообщении владельцу и в эпизоде «я молчал». Время начала отказа — в поясе процесса с явным
+  смещением (`bob.kernel.local_time`).
+- **owner_alert.py** (BOB-116 D4) — `OwnerAlert(bot, owner_id, *, timeout_seconds=5.0)`,
+  реализация порта `OwnerAlertSink`: личное сообщение владельцу ботом Боба
+  (`send_message(chat_id=owner_id, text=…)` под `asyncio.wait_for`), без LLM — путь сигнала
+  не зависит от того, что сломалось. Таймаут живёт в адаптере (5 с, как у объявления
+  рестарта); `timeout_seconds ≤ 0` — `ValueError`; `TimeoutError` и ошибки транспорта уходят
+  наружу, глотает их монитор. `NoopOwnerAlert` — для `llm.health.owner_alert: false`.
+  Адаптер не тянет ни LLM-стек, ни `proactivity`: это держит тест на собранном импорте, а не
+  на тексте исходника.
 - **rich.py** — `MarkdownToRichMessage`, чистая конвертация markdown → дерево aiogram
   `RichMessage` (`convert`): заголовки/списки/цитаты/код/inline (bold/italic/`code`/spoiler)
   **+ GFM-таблицы `| … |` → нативный `RichBlockTable`** (header `is_header`, выравнивание из
   separator `:---:`, inline в ячейках; рваная/неполная → деградация в paragraph, BOB-086, Bot API 10.1);
   `RichMessageSerializer` — обратный рендер дерева в rich-message markdown (`to_markdown`).
 - **outage_notifier.py** — `_GuppiOutageNotifier`, честная системная строка «Bob
-  unavailable» в топик Боба при outage'е (`notify_outage`, BOB-049 .3).
+  unavailable» в топик Боба при outage'е (`notify_outage`, BOB-049 .3). 🔴 Строка уходит в
+  фиксированные `chat_id`/`topic_id` группы, а не туда, откуда пришёл ход: на ход владельца в
+  личке он видит тишину, а в теме группы появляется строка о сообщении, которого там никто не
+  видел. Дефект найден ревью BOB-116, не регресс этой работы; беада `bob-hod`, Issues #71.
 - **restart_notifier.py** — `_RestartNotifier`, объявление рестарта голосом Боба
   (`notify_owner` в личку owner'а + `notify_group` в топик Боба, BOB-094 срез 1) поверх
   того же узкого plain-`send_message`, что и outage-нотис. Транспорт только: таймаут и
@@ -100,7 +130,15 @@ draft-стриминг и Rich Messages, пиннинг ответа в topic-th
 - `BotRegistry.register(...)` / `.get(...)` / `.scope_of(...)` — реестр ботов.
 
 Модуль `src/bob/infrastructure/telegram/guppi.py`:
-- `GuppiHandler.reject(...)` / `.handle_general_command(...)` — gatekeeper + owner-команды.
+- `GuppiHandler.reject(...)` / `.handle_general_command(...)` — gatekeeper + owner-команды;
+  конструктор принимает необязательный `health: HealthReader | None` для `/status`.
+
+Модуль `src/bob/infrastructure/telegram/health_status.py`:
+- `render_health_status(snapshot, *, tz=None)` → `str` — блок «LLM:» для `/status`.
+
+Модуль `src/bob/infrastructure/telegram/owner_alert.py`:
+- `OwnerAlert(bot, owner_id, *, timeout_seconds=5.0).notify_owner(text)` — личка владельцу;
+  свойство `timeout_seconds`; `NoopOwnerAlert`; константа `DEFAULT_TIMEOUT_SECONDS = 5.0`.
 
 Модуль `src/bob/infrastructure/telegram/rich.py`:
 - `MarkdownToRichMessage.convert(...)` / `RichMessageSerializer.to_markdown(...)` — markdown ↔ RichMessage.
@@ -110,7 +148,12 @@ draft-стриминг и Rich Messages, пиннинг ответа в topic-th
 Тесты: `tests/infrastructure/telegram/test_gateway.py`, `test_gateway_reaction.py`,
 `test_guppi.py`, `test_guppi_proactivity.py`, `test_guppi_rules.py`,
 `test_multibot_content_routing.py`, `test_multibot_guppi.py`, `test_rich.py`,
-`test_rich_markdown_sender.py`, `test_coding_indicator.py`.
+`test_rich_markdown_sender.py`, `test_coding_indicator.py`. Здоровье LLM (BOB-116):
+`test_guppi_health_status.py` (рендер снимка, пояс и смещение, «выключен при старте»,
+провязка читателя через `MultiBotGateway`), `test_owner_alert.py` (личка владельца, таймаут,
+путь сигнала не грузит LLM-стек). Живая документация — `tests/acceptance/features/llm_health.feature`
+S9 (`/status` показывает состояние LLM-стека и время начала отказа) и S13 (`/status`
+показывает лежащий `tier1`).
 
 <!-- beadloom:track=src/bob/infrastructure/telegram/gateway.py -->
 <!-- beadloom:track=src/bob/infrastructure/telegram/aiogram_adapter.py -->
@@ -120,3 +163,5 @@ draft-стриминг и Rich Messages, пиннинг ответа в topic-th
 <!-- beadloom:track=src/bob/infrastructure/telegram/outbound_messenger.py -->
 <!-- beadloom:track=src/bob/infrastructure/telegram/outage_notifier.py -->
 <!-- beadloom:track=src/bob/infrastructure/telegram/restart_notifier.py -->
+<!-- beadloom:track=src/bob/infrastructure/telegram/health_status.py -->
+<!-- beadloom:track=src/bob/infrastructure/telegram/owner_alert.py -->

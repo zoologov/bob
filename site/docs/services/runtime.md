@@ -1,7 +1,7 @@
 <!-- beadloom:badge-start -->
 > ✅ **fresh**
 > 
-> last synced 2026-10-21T08:49:35.850635+00:00 · coverage 0% (`runtime`)
+> last synced 2026-10-21T21:04:41.376096+00:00 · coverage 0% (`runtime`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
 <!-- beadloom:badge-end -->
@@ -44,8 +44,15 @@ src/bob/runtime/
     goals.py            — _build_goal_engine, _build_pursue_goals_tick
     self_improvement.py — _build_self_improvement
     memory.py           — _build_consolidate_memory, _build_dedup_facts, _build_embedder, _build_reranker
-    proactivity.py      — _build_proactivity_engine, _background_tasks
+    proactivity.py      — _build_proactivity_engine, _background_tasks (+ гейт дорожек по здоровью LLM)
+    health.py           — монитор здоровья LLM из llm.health, канал сигнала владельцу, снятие дублёра (BOB-116)
+    tool_health.py      — report_tool_health, report_understudy (проверка внешних инструментов и дублёра при старте)
+    self_action.py      — build_self_action_recorder, build_outage_episode_writer (автобиография)
 ```
+
+<!-- TODO: verify — раскладка выше перечисляет не все модули `wiring/`: здесь только те, о
+     которых говорит этот документ; полный список — каталог `src/bob/runtime/wiring/`. -->
+
 
 Каждый файл несёт заголовок `# beadloom:domain=bob`, а весь пакет резолвится к узлу
 `runtime` (`source: src/bob/runtime/`) с тегом `layer-runtime`.
@@ -65,11 +72,75 @@ embedder, reranker, clock, proactivity_seed) -> Application` — единств�
 `handle_message`, `intake_dispatcher`, `multibot`, `authorizer`, `registry`, тики
 (`inner_monologue_tick`/`mood_drift_tick`/`reflect_tick`/`proactive_tick`) и
 опциональные `pursue_goals_tick`/`coding_assistant` (только когда флаг включён).
-`startup()` инициализирует персистентность, прогоняет идемпотентный Genesis,
-загружает soul и резолвит идентичности ботов; `shutdown()` останавливает runtime,
+С BOB-116 ещё `health` (монитор здоровья LLM), `owner_alert` (канал сигнала владельцу) и
+`understudy_stand_down` (снятие дублёра на роутере и мониторе сразу); `None` — только в
+ручных тестовых сборках.
+`startup()` сначала отчитывается о внешних инструментах и о дублёре Tier-0
+(`report_tool_health`, `report_understudy` — до инициализации персистентности, Genesis и
+любого вызова провайдера), затем инициализирует персистентность, прогоняет идемпотентный
+Genesis, загружает soul и резолвит идентичности ботов; `shutdown()` останавливает runtime,
 **дренирует intake-диспетчер** (`intake_dispatcher.aclose()` — досдаёт буферизованные
 ответы) и закрывает персистентность — именно в этом порядке, чтобы не писать сквозь
 закрытое соединение.
+
+### Здоровье LLM (BOB-116, `wiring/health.py`)
+
+Монитор здоровья провайдеров собирается **до** провайдеров и роутера — оба докладывают ему
+исход каждого вызова — и **после** рекордера автобиографии, в которую он пишет эпизод «я
+молчал». Один и тот же объект `ProviderHealthMonitor` (наблюдатель и читатель) получают:
+
+- фабрика провайдеров (`build_tier_providers(merged, health=monitor)`): Tier 1 обёрнут
+  докладывающей обёрткой `tier1`, композит дублёра докладывает облако и дублёр отдельно и
+  читает монитор для breaker облака (`domains/infrastructure/features/llm/SPEC.md`);
+- `LLMRouter(..., health=monitor)` — доклад вызовов, которые никто другой не докладывает;
+- гейт дорожек heartbeat (`_background_tasks(..., health=monitor)`, ниже);
+- GUPPI `/status` (`_build_multibot(..., health=monitor)` → `MultiBotGateway` → `GuppiHandler`).
+
+`build_llm_health(config, *, clock, bot, recorder)` → `LlmHealth(monitor, sink)`:
+
+- политика — `build_health_policy` из `llm.health` (дефолты ядра; `failures_threshold < 2`
+  останавливает старт `ValueError`). 🔴 Предел, названный ревью (m4): `_seconds` на кривом
+  YAML-списке интервалов (`[600, "1h"]`) молча берёт дефолт ядра, тогда как env-путь падает с
+  именем переменной;
+- канал сигнала — `build_owner_alert_sink`: `OwnerAlert` ботом Боба в личку
+  `telegram.owner_id`; `NoopOwnerAlert`, если `llm.health.owner_alert: false` (ключ не задан —
+  включён) или `owner_id ≤ 0`. Обращение в тексте — `telegram.owner_name`;
+- `has_understudy` — `understudy_endpoint(config) is not None`;
+- колбэк восстановления — `wiring/self_action.build_outage_episode_writer(recorder)`: эпизод
+  `SelfActionKind.OUTAGE_RECOVERED` с `OutageSpan` во времени пояса процесса, `sender_id=None`,
+  `visibility=owner_private`. Без `memory.autobiography` рекордер — no-op. Когда писать эпизод
+  (только после настоящей немоты), решает монитор, не сборка.
+
+**Проверка и снятие дублёра при старте (D11).** `Application.startup` первым делом зовёт
+`report_tool_health`, затем `wiring/tool_health.report_understudy(config, sink=owner_alert,
+stand_down=understudy_stand_down)`: одна строка лога в любом случае (`tier0 understudy: off` /
+`on, model … ready` / `on, NOT ready — …`). Если дублёр включён, но не готов, сначала
+`build_understudy_stand_down(router=…, monitor=…)` снимает его на роутере
+(`stand_down_tier0_understudy`) и в мониторе (`stand_down_understudy(reason)`) — синхронно,
+без `await` между ними, — затем владелец получает сообщение «стартовал без дублёра». Боб
+стартует в любом случае, без дублёра до следующего перезапуска: модель, скачанная позже, не
+подхватывается. Проверка — async HTTP, а `build_application` синхронный, поэтому она живёт в
+`startup`, до Genesis и до любого вызова провайдера. Ошибка самой проверки, снятия или
+доставки логируется, и старт идёт дальше.
+
+**Гейт дорожек heartbeat (`wiring/proactivity._background_tasks`).** С подключённым
+читателем дорожки, которые думают Tier-0, обёрнуты `health_gated(tick, reader=monitor,
+provider_id=TIER0_PRIMARY, probe=…, gate_id=TIER0_EFFECTIVE)`:
+
+| Дорожка | Каденция | Под гейтом |
+|---|---|---|
+| `poll` | непрерывно | нет — LLM не зовёт |
+| `inner_monologue` | `heartbeat_seconds` (30 с) | да, это ЗОНД (`probe=True`) |
+| `mood_drift` | своя | нет — LLM не зовёт |
+| `reflect` | `heartbeat × 10` | да, без зонда |
+| `proactive` | `heartbeat × множитель` | да, без зонда |
+| `pursue_goals` | `goals.tick_seconds`, только если подключён | да, без зонда |
+
+Дорожка закрывается, только когда Tier-0 целиком не может думать (`TIER0_EFFECTIVE`, F2):
+облако лежит И дублёра нет, он снят при старте или лежит тоже. Пока дублёр держит мёртвое
+облако, все дорожки идут в своём ритме (PRD US-2), а в облако между зондами не стучится
+композит дублёра (breaker, G1). Зонд, его расписание и строка лога — за `tier0-primary`.
+Без читателя расписание дорожек такое же, как до BOB-116.
 
 ### Entrypoint (`main.py`)
 
@@ -165,6 +236,14 @@ path-ридеры (`_db_path`, `_soul_dir`, `_templates_dir`, `_backfill_name_ma
   `_as_dispatch_handler` адаптирует `ChatDispatcher.submit` (быстрый неблокирующий подписчик
   `MESSAGE_RECEIVED`, intake-развязка BOB-066), `_as_reaction_handler` — реакцию.
 - `wiring/*` — внутренние `_build_*` фабрики (не публичный контракт; ре-экспортятся для тестов через `app.py`-shim).
+- `bob.runtime.wiring.health` (BOB-116): `LlmHealth(monitor, sink)`, `build_llm_health(config,
+  *, clock, bot, recorder)`, `build_health_policy`, `build_owner_alert_sink`,
+  `build_understudy_stand_down(*, router, monitor)` → `UnderstudyStandDown`,
+  `configured_understudy`, `health_owner_name`; `LlmHealth`, `build_llm_health` и
+  `build_understudy_stand_down` реэкспортированы из `bob.runtime.wiring`.
+- `bob.runtime.wiring.tool_health.report_understudy(config, *, sink, stand_down=None)` →
+  `UnderstudyCheck | None` (async).
+- `bob.runtime.wiring.self_action.build_outage_episode_writer(recorder)` → `OutageRecovered`.
 
 ## Тестирование
 
@@ -173,9 +252,19 @@ path-ридеры (`_db_path`, `_soul_dir`, `_templates_dir`, `_backfill_name_ma
 целится в новый дом entrypoint, а не в shim). Инвариант `_REPO_ROOT` закреплён
 unit-тестом `tests/test_runtime_repo_root.py`.
 
+Здоровье LLM (BOB-116): `tests/runtime/test_llm_health_composition.py` (монитор в сборке,
+канал сигнала, снятие дублёра), `tests/runtime/test_tool_health_at_startup.py` (строка о
+дублёре при старте, сигнал, снятие до первого вызова), `tests/runtime/test_tier1_health_on_the_tool_loop.py`
+(обёртка Tier-1 на пути `ToolLoop`), `tests/runtime/wiring/test_health_gated_lanes.py` (гейт
+дорожек на настоящем мониторе: при живом дублёре `reflect` идёт в ритме, облако трогают
+только зонды), `tests/runtime/wiring/test_outage_episode_writer.py` (эпизод в поясе процесса).
+Живая документация — `tests/acceptance/features/llm_health.feature`, вся программа собрана
+`build_application`.
+
 <!-- beadloom:track=src/bob/runtime/composition.py -->
 <!-- beadloom:track=src/bob/runtime/main.py -->
 <!-- beadloom:track=src/bob/runtime/clock.py -->
 <!-- beadloom:track=src/bob/runtime/config.py -->
+<!-- beadloom:track=src/bob/runtime/wiring/health.py -->
 
 <!-- enrich with: beadloom docs polish -->

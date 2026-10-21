@@ -29,6 +29,7 @@ Application runtime — AgentRuntime, AsyncEventBus, and resilient heartbeat tic
 - `TurnScope`
 - `batch_grew`
 - `derive_turn_seed`
+- `health_gated`
 - `is_transient`
 - `make_focus_predicate`
 - `message_is_focused`

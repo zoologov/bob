@@ -1,7 +1,7 @@
 <!-- beadloom:badge-start -->
 > ✅ **fresh**
 > 
-> last synced 2026-10-21T08:49:35.850635+00:00 · coverage 100% (`llm`)
+> last synced 2026-10-21T21:04:41.376096+00:00 · coverage 100% (`llm`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
 <!-- beadloom:badge-end -->
@@ -25,11 +25,35 @@ tool-calling поверх aiohttp (backend — Ollama/Qwen). Узел `llm` (`pa
   chat-completions поверх aiohttp: `complete(...)` (обычное завершение, опционально
   стриминг токенов) и `complete_with_tools(...)` (нативный tool-calling ход для tool-loop'а).
 - **factory.py** — сборка провайдеров из конфигурации:
-  - `build_tier_providers(...)` — построить провайдеры Tier 0 (быстрый) и Tier 1
-    (качественный); при `llm.tier0_fallback` = `ollama` Tier 0 отдаётся завёрнутым в
+  - `build_tier_providers(config, *, health=None)` — построить провайдеры Tier 0 (быстрый) и
+    Tier 1 (качественный); при `llm.tier0_fallback` = `ollama` Tier 0 отдаётся завёрнутым в
     композит с локальным дублёром (пусто — по умолчанию — ровно тот же провайдер,
-    что и раньше).
+    что и раньше). С переданным `health` (монитор здоровья, BOB-116) Tier 1 отдаётся
+    обёрнутым `build_reporting_provider(..., provider_id="tier1")`, а `health` уходит в
+    композит дублёра; без `health` все провайдеры голые, как до BOB-116.
+  - `UnderstudyEndpoint(base_url, model)` и `understudy_endpoint(config)` — одно чтение флага
+    `llm.tier0_fallback`: настроенный дублёр или `None`. Им пользуются и сборка композита, и
+    проверка дублёра при старте.
   - `build_web_search_provider(...)` — построить провайдер веб-поиска.
+- **reporting_provider.py** (BOB-116 F1, ревью M1) — `ReportingLLMProvider` и
+  `ToolCallingReportingLLMProvider`: провайдер, который докладывает исход каждого вызова
+  обёрнутого провайдера монитору под одним `provider_id` (свойство `reported_id`, порт
+  `SelfReportingProvider` из kernel), для любого вызывающего. Зачем: ход владельца идёт
+  через `ToolLoop` прямо на Tier 1, мимо роутера, и до F1 401/403/5xx там не видел никто —
+  ни сигнала владельцу, ни строки в `/status`. Теперь роутер и `ToolLoop` получают одну и ту
+  же обёртку, а роутер её вызовы не докладывает: один HTTP-вызов — одна запись. Класс отказа
+  — `classify_failure`, отказ записывается ДО того, как ошибка уйдёт дальше, сама ошибка не
+  меняется; стрим делегируется без доклада. Вариант выбирает `build_reporting_provider(*,
+  inner, health, provider_id)` по способностям обёрнутого провайдера: обёртка объявляет
+  `complete_with_tools` ровно тогда, когда его умеет `inner` (тот же приём, что у композита
+  дублёра, BOB-087.E1b).
+- **understudy_probe.py** (BOB-116 D3) — проверка дублёра при старте: `probe_understudy(endpoint,
+  *, timeout_seconds=5.0)` спрашивает `GET {base_url}/models` (форма Ollama) и возвращает
+  `UnderstudyCheck(configured, ready, reason, model)` с человеческой причиной («модели X нет на
+  … (нужен ollama pull X)», «… не отвечает», «… ответил 404»); имя без тега читается как
+  `:latest`. `summary` — строка лога старта: `tier0 understudy: off` / `on, model … ready` /
+  `on, NOT ready — …`. Ничего не шлёт и не решает: сигнал владельцу и снятие дублёра собирает
+  композиция. Зачем отдельно: обёртка узнаёт, что дублёра нет, только когда облако уже упало.
 - Вердикт «это авария связи или наш дефект» живёт **не здесь**: чистое ядро
   `should_fall_back(error)` переехало в `src/bob/application/router/fallback_policy.py`
   (bob-41o), потому что тем же вердиктом судит верхний фолбэк роутера Tier1 → Tier0, а
@@ -40,8 +64,14 @@ tool-calling поверх aiohttp (backend — Ollama/Qwen). Узел `llm` (`pa
   fallback, реализующий тот же порт `LLMProvider`: `FallbackLLMProvider` (только
   `complete`) и `ToolCallingFallbackLLMProvider` (плюс `complete_with_tools` под той же
   политикой). Какой из двух собрать — решает `build_fallback_provider(...)` по
-  способностям primary.
-- **__init__.py** — фасад пакета (OpenAI-совместимый провайдер + Tier 0/1 провайдеры).
+  способностям primary. С BOB-116 композит докладывает монитору `tier0-primary` (облако) и
+  `tier0-understudy` (дублёр) по отдельности: мёртвый ключ облака за живым дублёром
+  вызывающий не видит — ответ пришёл, — и только этот доклад доводит его до владельца.
+  Вызов через композит роутер не докладывает.
+- **__init__.py** — фасад пакета: `OpenAICompatProvider`, `build_tier_providers`,
+  `build_web_search_provider`, композит дублёра (`FallbackLLMProvider`,
+  `ToolCallingFallbackLLMProvider`, `build_fallback_provider`) и докладывающая обёртка
+  (`ReportingLLMProvider`, `ToolCallingReportingLLMProvider`, `build_reporting_provider`).
 
 ### Аварийный Tier-0-фолбэк (BOB-087.E)
 
@@ -77,7 +107,24 @@ primary напрямую: сбой стрима всплывает посред�
 Что видит владелец: каждое переключение — строка `WARNING` в логе (`./bob logs`) с типом
 и текстом причины и с указанием, какой ход деградировал — обычный чат или tool-ход
 (у маленькой модели просадка на инструментах резче, чем на разговоре). Если легла и
-локальная модель, пишется второй `WARNING`. На здоровом ходе лог молчит.
+локальная модель, пишется второй `WARNING`. На здоровом ходе лог молчит. С BOB-116 сверх
+лога — состояние: после порога монитор пишет владельцу в личку «облако отказывает…, пока
+держусь на дублёре», а `/status` у GUPPI показывает облако деградированным.
+
+### Breaker облака при живом дублёре (BOB-116 G1, ревью R2 N1)
+
+Когда переданный композиту `health` умеет ещё и читать (монитор — `HealthReader`), композит
+не стучится в облако, которое монитор признал мёртвым: пока `tier0-primary` деградирован и
+его зонд не положен (`probe_due` ложно), вызов идёт сразу к дублёру — без вызова облака, без
+строки `WARNING`, с записью только под `tier0-understudy`, и расписание зонда облака не
+сдвигается. Когда зонд положен, вызов идёт в облако как прежде и сам является зондом: отказ —
+одна строка `WARNING` и одна запись, успех снимает деградацию. Отказ дублёра в режиме breaker
+поднимается как есть (ошибки облака в этом вызове нет). Замер на loopback: 25 тиков монолога по
+30 с при мёртвом облаке и живом дублёре — 4 вызова облака (зонды через 60, 120, 300, 300 с) и 25
+ответов дублёра; до G1 было 25 вызовов облака и 25 строк `WARNING`. Без читателя композит, как
+раньше, сначала пробует облако на каждом вызове. Breaker живёт только в композите:
+`without_understudy()` отдаёт голое облако, которое о нём не знает, а tool-ход при дублёре без
+инструментов по-прежнему идёт в облако — единственного, кто может его обслужить.
 
 ### Что считается поводом уйти на более слабую модель
 
@@ -86,17 +133,24 @@ primary напрямую: сбой стрима всплывает посред�
 и для фолбэка роутера Tier1 → Tier0 (bob-41o). Одна политика, а не две расходящиеся. Граница проходит между сбоем
 **канала** и сбоем **контракта**, и это главное решение среза: фолбэк, срабатывающий на
 нашем собственном дефекте, устойчивости не добавляет — он прячет дефект за тихо
-деградировавшим ответом. Кривой запрос, протухший ключ, несуществующая модель обязаны
-быть видны как отказ, а не молча обслуживаться другой моделью.
+деградировавшим ответом. Кривой запрос и несуществующая модель обязаны быть видны как
+отказ, а не молча обслуживаться другой моделью.
 
-**Уходим — эндпоинт не смог нас обслужить:** таймаут (`TimeoutError`); отказ соединения,
-сброс, ошибка DNS (`OSError` и родня, `aiohttp.ClientConnectionError`); обрыв на полуслове
-(`ServerDisconnectedError`) и оборванное тело ответа (`ClientPayloadError`); HTTP 5xx;
-HTTP 408 (эндпоинт сам не дождался) и 429 (облако сейчас нас не обслуживает — с нашей
-стороны это недоступность).
+🔴 **Поправка BOB-116 (2026-10-21): протухший ключ — недоступность, а не контракт.** Здесь
+стояло «кривой запрос, протухший ключ, несуществующая модель». Ключ на 403 «всплыл» в 32 086
+строк лога, а Боб десять дней молчал при простаивающем дублёре (Issues #64). Отозванный ключ
+или исчерпанный аккаунт слабая модель не прячет: облако отказывается обслуживать нас, как на
+429. Поэтому 401/403 (класс `auth`) уводят на дублёра, а дойти до владельца ключу помогает
+сигнал монитора здоровья (обёртка докладывает `tier0-primary` отдельно от дублёра).
 
-**Не уходим — это контракт, его надо показать:** прочие 4xx (400, 401, 403, 404, 409,
-413, 422) — наш кривой запрос, ключ или модель; битая форма ответа (`ValueError` из
+**Уходим — эндпоинт не смог нас обслужить** (класс из `classify_failure` — в скобках):
+таймаут (`timeout`: `TimeoutError`); отказ соединения, сброс, ошибка DNS (`connection`:
+`OSError` и родня, `aiohttp.ClientConnectionError`, `ServerDisconnectedError` на полуслове);
+оборванное тело ответа (`shape`: `ClientPayloadError`); HTTP 5xx и 408 (`server`); 429
+(`rate` — облако сейчас нас не обслуживает); 401/403 (`auth`, с BOB-116).
+
+**Не уходим — это контракт (`contract`), его надо показать:** прочие 4xx (400, 404, 409,
+413, 422) — наш кривой запрос или модель; битая форма ответа (`ValueError` из
 парсеров, `json.JSONDecodeError`) — вызов удался, содержимое неверно; `aiohttp.InvalidURL`
 как дефект конфигурации, а не сетевое событие; голый `aiohttp.ClientError` без
 транспортных улик; `TypeError`, `RuntimeError` и прочие программные ошибки; отмена
@@ -131,6 +185,12 @@ HTTP 408 (эндпоинт сам не дождался) и 429 (облако с
 - Выключенный флаг возвращает прежнюю сборку буквально: на Tier 0 стоит тот же класс с
   тем же состоянием, что и до среза, — не «примерно то же самое» (закреплено тестами
   фабрики, отдельно для пустого значения и для отсутствующего ключа).
+- Доклад здоровья (BOB-116): один HTTP-вызов — одна запись в мониторе. Композит дублёра
+  докладывает `tier0-primary` и `tier0-understudy`, докладывающая обёртка — `tier1`; роутер
+  вызовы через них не докладывает. Отказ записывается до того, как ошибка уйдёт дальше, и
+  ошибку доклад не меняет. Стрим не докладывается.
+- Без `health` фабрика собирает провайдеров буквально как до BOB-116: голый Tier 1, композит
+  без доклада и без breaker.
 
 ## Известные ограничения
 
@@ -173,10 +233,20 @@ E3; решение по нему владелец ещё не принял, по
 виден в `WARNING`. Симметрично 429 поглощает и наш собственный runaway (прецедент BOB-076).
 Оба огрубления приняты сознательно.
 
-**Состояния деградации нет, сигнал поштучный.** Логируется каждое переключение, но переходы
-«здоров → деградировал» и обратно отдельно не отмечаются, и `./bob status` о режиме ничего
-не знает. При затяжной аварии в логе окажутся сотни одинаковых строк, из которых не
-прочитать главного: живёт ли Боб на аварийной модели прямо сейчас.
+~~**Состояния деградации нет, сигнал поштучный.**~~ 🔴 Снято BOB-116 (2026-10-21). Было:
+переходы «здоров → деградировал» и обратно не отмечались, и при затяжной аварии лог состоял из
+сотен одинаковых строк. Теперь у каждого провайдера есть состояние в мониторе здоровья
+(`application/router/health_monitor.py`): переход — одна строка лога и сообщение владельцу,
+`/status` у GUPPI показывает, кто лежит и с какого времени, а breaker композита (выше) не
+стучится в мёртвое облако между зондами. `./bob status` (лаунчер) о здоровье LLM по-прежнему
+не знает: состояние живёт в памяти процесса, смотреть его — через `/status` у GUPPI.
+
+**На VPS дублёр выключен по замеру (BOB-116 D9, 2026-10-21).** Spike A: `qwen3:8b` на CPU VPS
+(4 vCPU, 7,9 ГБ RAM, GPU нет) не прошёл критерии RFC — REFLECT 116 с холодный / 76 с тёплый
+при пороге 90 с, классификатор 39 с / 4 с при пороге 15 с, модель 5,9 ГБ вместе с `bge-m3`
+1,2 ГБ не помещается в 5,8 ГБ доступной памяти, модели вытесняют друг друга. `tier0_fallback`
+в трекаемом `config/bob.vps.yaml` пуст, числа — в комментарии там же. Варианты дальше (второй
+облачный провайдер или замер `qwen3:4b`) — решение владельца.
 
 **«Локальность» дублёра держится на значении по умолчанию.** `tier0_fallback_base_url`
 берётся из конфигурации как есть, проверки на loopback нет: чужой хост в этом ключе увёл бы
@@ -190,15 +260,31 @@ E3; решение по нему владелец ещё не принял, по
 - `OpenAICompatProvider.complete_with_tools(...)` → нативный tool-calling ход.
 
 Модуль `src/bob/infrastructure/llm/factory.py`:
-- `build_tier_providers(...)` → провайдеры Tier 0 / Tier 1.
+- `build_tier_providers(config, *, health=None)` → провайдеры Tier 0 / Tier 1.
+- `UnderstudyEndpoint(base_url, model)`; `understudy_endpoint(config)` →
+  `UnderstudyEndpoint | None`.
 - `build_web_search_provider(...)` → провайдер веб-поиска.
 
+Модуль `src/bob/infrastructure/llm/reporting_provider.py`:
+- `build_reporting_provider(*, inner, health, provider_id)` → докладывающая обёртка,
+  зеркалящая способности `inner`.
+- `ReportingLLMProvider(*, inner, health, provider_id)` — `complete(...)` с докладом;
+  свойство `reported_id`.
+- `ToolCallingReportingLLMProvider(*, inner, health, provider_id)` — плюс
+  `complete_with_tools(...)`; без инструментального `inner` — `TypeError`.
+
+Модуль `src/bob/infrastructure/llm/understudy_probe.py`:
+- `probe_understudy(endpoint, *, timeout_seconds=5.0)` → `UnderstudyCheck` (async; `None`
+  на входе — дублёр выключен, без сети).
+- `UnderstudyCheck(configured, ready, reason=None, model=None)`; свойство `summary`.
+
 Модуль `src/bob/infrastructure/llm/fallback_provider.py`:
-- `build_fallback_provider(primary=…, fallback=…)` → композит, зеркалящий способности
-  primary (единственный поддерживаемый способ сборки).
-- `FallbackLLMProvider(primary=…, fallback=…).complete(messages, *, stream=False)` →
-  завершение на primary, при транспортном сбое — одна попытка на локальной модели.
-- `ToolCallingFallbackLLMProvider(primary=…, fallback=…)` → композит для tool-calling
+- `build_fallback_provider(primary=…, fallback=…, health=None)` → композит, зеркалящий
+  способности primary (единственный поддерживаемый способ сборки).
+- `FallbackLLMProvider(primary=…, fallback=…, health=None).complete(messages, *, stream=False)` →
+  завершение на primary, при транспортном сбое — одна попытка на локальной модели; с
+  `health`-читателем — breaker облака (раздел выше).
+- `ToolCallingFallbackLLMProvider(primary=…, fallback=…, health=None)` → композит для tool-calling
   primary; без такого primary конструктор бросает `TypeError`, чтобы объект не объявил
   способности, которой у него нет.
 - `ToolCallingFallbackLLMProvider.complete_with_tools(messages, *, tools)` → tool-ход на
@@ -211,7 +297,8 @@ E3; решение по нему владелец ещё не принял, по
 ## Тестирование
 
 Поведение фолбэка через настоящую границу: `tests/acceptance/features/tier0_fallback.feature`
-(24 сценария, включая S14/S22-S24 — строгость верхнего фолбэка роутера) с шагами `tests/acceptance/steps/test_tier0_fallback.py` и стендом
+(26 сценариев, включая S14/S22-S24 — строгость верхнего фолбэка роутера — и S25/S26 — 403 и
+401 на Tier-0 при подключённом дублёре, ответ от дублёра, BOB-116) с шагами `tests/acceptance/steps/test_tier0_fallback.py` и стендом
 `tests/acceptance/tier0_fallback_harness.py` — три реальных loopback-эндпоинта aiohttp,
 реальный `ConfigLoader`, реальная фабрика и реальный `LLMRouter`; отказы настоящие
 (таймаут, 503, обрыв TCP, закрытый порт), а не подделанные исключения.
@@ -224,6 +311,20 @@ E3; решение по нему владелец ещё не принял, по
 `tests/infrastructure/llm/test_web_search_qwen.py`, и суждения на Tier 0
 (`test_response_judge.py`, `test_reaction_judge.py`, `test_room_reader.py`).
 
+Здоровье (BOB-116): `tests/infrastructure/llm/test_fallback_provider_health.py` (доклад облака
+и дублёра по отдельности, breaker при деградированном облаке и непоставленном зонде),
+`test_reporting_provider.py` (доклад обёртки, зеркало способностей),
+`test_understudy_probe.py` (проверка дублёра при старте),
+`test_health_reporting_loopback.py` (один HTTP-вызов — одна запись, на настоящих
+loopback-эндпоинтах харнесса `tier0_fallback`), `tests/runtime/test_tier1_health_on_the_tool_loop.py`
+(403 Tier-1 на пути `ToolLoop` записан по разу на HTTP-вызов, других id нет). Живая
+документация — `tests/acceptance/features/llm_health.feature`: S2 (одиночный 503 при живом
+дублёре сигнала не даёт), S11 (дублёр включён, модели нет — сигнал при старте, Боб стартует
+без дублёра), S13 (403 Tier-1 в ходе владельца — сигнал и `/status`). Возврат облака при живом
+дублёре сценарий не держит — его держат юниты и `tests/runtime/wiring/test_health_gated_lanes.py`.
+
 <!-- beadloom:track=src/bob/infrastructure/llm/openai_compat.py -->
 <!-- beadloom:track=src/bob/infrastructure/llm/factory.py -->
 <!-- beadloom:track=src/bob/infrastructure/llm/fallback_provider.py -->
+<!-- beadloom:track=src/bob/infrastructure/llm/reporting_provider.py -->
+<!-- beadloom:track=src/bob/infrastructure/llm/understudy_probe.py -->

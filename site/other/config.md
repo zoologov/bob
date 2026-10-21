@@ -14,6 +14,7 @@ Config adapter — two-bot layered config loader (env + files) for the running p
 ## Public symbols
 
 - `ConfigLoader`
+- `coerce_env_value`
 
 ## Relationships
 

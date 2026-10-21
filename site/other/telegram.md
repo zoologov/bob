@@ -32,6 +32,8 @@ Telegram adapter — aiogram gateway (long-polling, authz gate, native draft str
 - `MessageReactionCountUpdatedLike`
 - `MessageReactionUpdatedLike`
 - `MultiBotGateway`
+- `NoopOwnerAlert`
+- `OwnerAlert`
 - `ProactivityStoreLike`
 - `PursuitStoreLike`
 - `RichMarkdownSender`
@@ -41,6 +43,7 @@ Telegram adapter — aiogram gateway (long-polling, authz gate, native draft str
 - `TelegramOutboundMessenger`
 - `UpdateLike`
 - `is_reaction_update`
+- `render_health_status`
 
 ## Relationships
 

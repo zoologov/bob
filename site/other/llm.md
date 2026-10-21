@@ -15,10 +15,17 @@ LLM adapter — OpenAI-compatible provider for Tier 0/1 completion + tool-callin
 
 - `FallbackLLMProvider`
 - `OpenAICompatProvider`
+- `ReportingLLMProvider`
 - `ToolCallingFallbackLLMProvider`
+- `ToolCallingReportingLLMProvider`
+- `UnderstudyCheck`
+- `UnderstudyEndpoint`
 - `build_fallback_provider`
+- `build_reporting_provider`
 - `build_tier_providers`
 - `build_web_search_provider`
+- `probe_understudy`
+- `understudy_endpoint`
 
 ## Relationships
 
