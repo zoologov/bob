@@ -25,13 +25,13 @@ from bob.memory.work_journal import WORK_EVENT_TYPE
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bob.memory.ports import Recalled
+    from bob.kernel.episode_types import Recalled
 
 _CHAT_EVENT_TYPE = "message"
 
 
 class _SpyRecall:
-    """A fake :class:`~bob.memory.ports.MemoryRecall` that records what it was asked for."""
+    """A fake :class:`~bob.kernel.ports.MemoryRecall` that records what it was asked for."""
 
     def __init__(self, hits: Sequence[Recalled]) -> None:
         self._hits = list(hits)

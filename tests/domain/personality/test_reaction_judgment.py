@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import pytest
 
+from bob.kernel.interlocutor import Interlocutor, InterlocutorKind, Trust
 from bob.personality.reaction_judgment import (
     REACTION_JUDGE_SYSTEM_PROMPT,
     ReactionJudgeParseError,
@@ -22,11 +23,6 @@ from bob.personality.reaction_judgment import (
     parse_reaction_meaning,
 )
 from bob.personality.reaction_meaning import ReactionContext
-from bob.social.interlocutor import (
-    Interlocutor,
-    InterlocutorKind,
-    Trust,
-)
 
 
 def _ctx(

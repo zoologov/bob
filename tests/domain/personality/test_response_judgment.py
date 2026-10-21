@@ -27,11 +27,7 @@ from bob.conversation.response_judgment import (
     parse_response_choice,
     validate_reaction_emoji,
 )
-from bob.social.interlocutor import (
-    Interlocutor,
-    InterlocutorKind,
-    Trust,
-)
+from bob.kernel.interlocutor import Interlocutor, InterlocutorKind, Trust
 
 
 def _context(

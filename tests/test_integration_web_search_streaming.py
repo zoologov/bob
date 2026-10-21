@@ -25,17 +25,17 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 
 from bob.capabilities.adapters.web_search_qwen import QwenWebSearchProvider
-from bob.capabilities.ports import ToolCall, ToolCallResult, WebSearchResult, WebSource
+from bob.capabilities.ports import WebSearchResult, WebSource
 from bob.capabilities.usecases.progress_announcer import GatewayProgressAnnouncer
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.tool_loop import ToolLoop
 from bob.capabilities.usecases.web_search import make_web_search_capability
+from bob.kernel.ports import ToolCall, ToolCallResult
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
 
-    from bob.capabilities.ports import ToolDefinition
-    from bob.kernel.ports import ToolLoopMessage
+    from bob.kernel.ports import ToolDefinition, ToolLoopMessage
 
 _RESPONSES_PATH = "/v1/responses"
 

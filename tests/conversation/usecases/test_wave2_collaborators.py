@@ -45,10 +45,8 @@ from bob.personality.usecases.mood_perceiver import MoodPerceiver
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-from bob.application.usecases.handle_message import (
-    EngagementState,
-    PersonalityState,
-)
+from bob.conversation.engagement import EngagementState
+from bob.personality.state import PersonalityState
 
 
 class _FixedClock:

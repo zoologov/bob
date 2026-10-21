@@ -12,7 +12,7 @@ A thin application adapter that keeps :class:`HandleMessage` pure of store plumb
 for Bob's per-person relationship quality:
 
 * :meth:`RelationshipTracker.current` LOADS the relationship Bob has with the
-  perceived :class:`~bob.social.interlocutor.Interlocutor` (an unknown
+  perceived :class:`~bob.kernel.interlocutor.Interlocutor` (an unknown
   sender → ``None``), so the compose path can colour his tone (warmth) and nudge his
   willingness to compromise (warmth + compatibility) for THIS person.
 * :meth:`RelationshipTracker.record_interaction` updates the relationship AFTER the
@@ -31,12 +31,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from bob.social.relationship import Relationship, apply_interaction
+from bob.kernel.relationship import Relationship
+from bob.social.relationship import apply_interaction
 
 if TYPE_CHECKING:
+    from bob.kernel.interlocutor import Interlocutor
     from bob.personality.mood import Mood
     from bob.personality.negotiation import Stance
-    from bob.social.interlocutor import Interlocutor
     from bob.social.ports import RelationshipStore
     from bob.social.relationship import RelationshipDeltas
 

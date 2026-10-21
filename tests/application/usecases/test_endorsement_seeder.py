@@ -14,8 +14,8 @@ anyone, an owner / known peer is never seeded, and no ``owner_id`` is conservati
 from __future__ import annotations
 
 from bob.application.usecases.endorsement_seeder import EndorsementSeeder
-from bob.social.interlocutor import Interlocutor, InterlocutorKind, Trust
-from bob.social.relationship import Relationship
+from bob.kernel.interlocutor import Interlocutor, InterlocutorKind, Trust
+from bob.kernel.relationship import Relationship
 
 _OWNER_ID = 1
 _GUEST_ID = 42

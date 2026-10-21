@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from datetime import datetime
 
-    from bob.application.runtime.events import MessageReceived
+    from bob.kernel.events import MessageReceived
     from bob.kernel.ports import Clock
 
 # The default ambient salience for a backlogged message at the intake seam: the reflective

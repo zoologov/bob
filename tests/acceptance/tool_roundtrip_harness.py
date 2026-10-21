@@ -36,8 +36,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from bob.capabilities.ports import ToolCallResult, ToolDefinition
-    from bob.kernel.ports import ToolLoopMessage
+    from bob.kernel.ports import ToolCallResult, ToolDefinition, ToolLoopMessage
 
 # A real fact that lives in the guard file the scenario reads — its presence in the final
 # reply proves the tool result actually flowed back into Bob's answer (round-trip closed).

@@ -35,24 +35,24 @@ from bob.personality.voice import relationship_tone_directive
 from bob.social.relationship import compromise_bias
 
 if TYPE_CHECKING:
-    from bob.application.runtime.events import MessageReceived
-    from bob.application.usecases.handle_message import (
+    from bob.conversation.ports import ZoneClassifier
+    from bob.kernel.events import MessageReceived
+    from bob.kernel.interlocutor import Interlocutor
+    from bob.kernel.ports import Clock
+    from bob.kernel.relationship import Relationship
+    from bob.kernel.roster import RosterMember
+    from bob.kernel.sulk import SulkState
+    from bob.personality.negotiation import Negotiation, NegotiationZone, Stance
+    from bob.personality.soul import SOUL
+    from bob.personality.taste import Verdict
+    from bob.personality.voice import RelationshipToneThresholds
+    from bob.social.ports import (
         FirstImpressionReader,
         InterlocutorResolver,
         RelationshipReader,
         RosterRecaller,
         SulkReader,
     )
-    from bob.conversation.ports import ZoneClassifier
-    from bob.kernel.ports import Clock
-    from bob.personality.negotiation import Negotiation, NegotiationZone, Stance
-    from bob.personality.soul import SOUL
-    from bob.personality.taste import Verdict
-    from bob.personality.voice import RelationshipToneThresholds
-    from bob.social.interlocutor import Interlocutor
-    from bob.social.relationship import Relationship
-    from bob.social.roster import RosterMember
-    from bob.social.sulk import SulkState
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ class SocialContext:
         """Perceive WHO is writing this turn, or ``None`` (no seam wired) (BOB-019).
 
         Asks the wired perception seam to resolve the inbound into an
-        :class:`~bob.social.interlocutor.Interlocutor` (owner / known /
+        :class:`~bob.kernel.interlocutor.Interlocutor` (owner / known /
         guest / bot). Unwired (the default) returns ``None`` so the compose path
         adds no who-is-writing line and the turn behaves exactly as before.
         """
@@ -194,7 +194,7 @@ class SocialContext:
 
         With no sulk seam wired (or no perceived interlocutor) returns ``None`` so the
         compose path adds no cold-tone line and the turn behaves exactly as before.
-        Otherwise returns the persisted :class:`~bob.social.sulk.SulkState` for this
+        Otherwise returns the persisted :class:`~bob.kernel.sulk.SulkState` for this
         sender so the prompt can go cold while Bob is hurt AT THEM — an обида toward
         another participant never chills this reply (🔴 addressed cooling). обида carries
         NO memory and NO soul — only the affect state.

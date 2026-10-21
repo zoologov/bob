@@ -17,19 +17,22 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.application.router import LLMRequest, LLMRouter, TaskType
-from bob.capabilities.ports import ToolCallingProvider, ToolCallResult
 from bob.infrastructure.llm.fallback_provider import (
     FallbackLLMProvider,
     ToolCallingFallbackLLMProvider,
     build_fallback_provider,
 )
-from bob.kernel.ports import LLMProvider, UnderstudyBackedProvider
+from bob.kernel.ports import (
+    LLMProvider,
+    ToolCallingProvider,
+    ToolCallResult,
+    UnderstudyBackedProvider,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
 
-    from bob.capabilities.ports import ToolDefinition
-    from bob.kernel.ports import LLMMessage, ToolLoopMessage
+    from bob.kernel.ports import LLMMessage, ToolDefinition, ToolLoopMessage
 
 _MESSAGES: list[LLMMessage] = [{"role": "user", "content": "привет"}]
 _TOOL_MESSAGES: list[ToolLoopMessage] = [{"role": "user", "content": "почитай код"}]

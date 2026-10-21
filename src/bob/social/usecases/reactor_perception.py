@@ -13,7 +13,7 @@ it composes the unchanged access policy
 (:class:`~bob.social.usecases.authorizer.Authorizer`) with the pure domain
 :func:`~bob.social.interlocutor.classify` so the person who reacted to one
 of Bob's messages becomes an
-:class:`~bob.social.interlocutor.Interlocutor` (owner / known / guest +
+:class:`~bob.kernel.interlocutor.Interlocutor` (owner / known / guest +
 trust). The perceiving use-case folds that identity into the reaction judgment.
 
 This is perception, NOT a gate: it reads ``is_owner`` (identity, not chat-scoped) and
@@ -26,9 +26,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from bob.social.interlocutor import Interlocutor, classify
+from bob.social.interlocutor import classify
 
 if TYPE_CHECKING:
+    from bob.kernel.interlocutor import Interlocutor
     from bob.social.usecases.authorizer import Authorizer
 
 

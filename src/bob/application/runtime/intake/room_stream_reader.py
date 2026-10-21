@@ -39,9 +39,9 @@ from bob.conversation.room_reading import (
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
 
-    from bob.application.runtime.events import MessageReceived
     from bob.conversation.room_reading import BatchRoomReader
-    from bob.social.interlocutor import InterlocutorKind
+    from bob.kernel.events import MessageReceived
+    from bob.kernel.interlocutor import InterlocutorKind
 
     type _MoodTone = Callable[[], str]
     type _PerceiveKind = Callable[[MessageReceived], Awaitable[InterlocutorKind]]

@@ -12,7 +12,7 @@ Register is the conversational MODE of a turn — is Bob operating as a develope
 or just chatting (``CASUAL``) — and it colours which of his own memories should press into
 a reply. This is a distinct concern from такт разглашения
 (:mod:`~bob.social.disclosure`): disclosure keys on WHO is listening (the social
-:class:`~bob.social.interlocutor.Trust`); register keys on WHAT mode the conversation is
+:class:`~bob.kernel.interlocutor.Trust`); register keys on WHAT mode the conversation is
 in. It lives in the memory domain because it works purely on recalled memory items, keyed
 on the ``work`` provenance minted by :mod:`~bob.memory.work_journal`.
 

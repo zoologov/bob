@@ -15,8 +15,8 @@ same-author follow-up question merges into one deduplicated reply.
 
 from __future__ import annotations
 
-from bob.application.runtime.events import MessageReceived
 from bob.application.runtime.staleness_reassessor import StalenessReassessor
+from bob.kernel.events import MessageReceived
 from bob.presence.staleness import (
     StalenessContext,
     StalenessGate,

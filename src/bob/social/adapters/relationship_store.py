@@ -12,7 +12,7 @@ Realises :class:`bob.social.ports.RelationshipStore` over the ``person_relations
 table (named to avoid the legacy single-row ``relationship`` owner-blob): one row per
 ``sender_id`` so Bob keeps a quality of relationship with each
 person he talks to. The domain
-:class:`~bob.social.relationship.Relationship` (the four bounded axes:
+:class:`~bob.kernel.relationship.Relationship` (the four bounded axes:
 trust / respect / warmth / compatibility) is mapped to and from a row here, so the
 domain stays I/O-free. An unknown sender has no row, so :meth:`load` returns ``None``.
 
@@ -28,11 +28,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
-from bob.social.gender import Gender, GenderRead
-from bob.social.relationship import Relationship
+from bob.kernel.relationship import Relationship
+from bob.social.gender import GenderRead
 
 if TYPE_CHECKING:
     import aiosqlite
+
+    from bob.kernel.interlocutor import Gender
 
 
 class _ConnectionProvider(Protocol):

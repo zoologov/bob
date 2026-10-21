@@ -21,7 +21,7 @@ from bob.conversation.room_reading import (
     RoomReadingContext,
 )
 from bob.conversation.usecases.read_the_room import ReadTheRoom
-from bob.social.interlocutor import Interlocutor, InterlocutorKind, Trust
+from bob.kernel.interlocutor import Interlocutor, InterlocutorKind, Trust
 
 _READING = RoomReading(
     situation="болтают",

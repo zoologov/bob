@@ -52,7 +52,7 @@ module), сгенерированные `scripts/gen_boundary_rules.py`.
    домен. Модуль лишь предоставляет чистое ядро (`reaction_effect`, `reaction_meaning`) и
    Tier-0 адаптер `LlmReactionJudge`; сам сшивающий use-case держится вне вертикали.
 5. **Порты живут в `personality/ports.py`** (`MessageReactor` / `ReflectionReader` /
-   `FascinationStore` / `NotableReactionStore`); канонический импорт —
+   `FascinationStore` / `NotableReactionStore` / `CurrentFascinationReader`); канонический импорт —
    `from bob.personality.ports import MessageReactor` (транзитный ports-шим
    `bob.domain.ports` удалён, BOB-062.8).
 
@@ -62,7 +62,8 @@ module), сгенерированные `scripts/gen_boundary_rules.py`.
 
 ```
 src/bob/personality/
-  ports.py            # layer=domain          — personality-порты (MessageReactor/ReflectionReader/Fascination/NotableReaction)
+  ports.py            # layer=domain          — personality-порты (MessageReactor/ReflectionReader/Fascination/NotableReaction/CurrentFascinationReader)
+  state.py            # layer=domain          — PersonalityState: живой per-boot снимок SOUL, общий для хода/тиков/проактивности (BOB-113)
   __init__.py         # layer=domain          — фасад модуля
   mood.py             # layer=domain          — Mood (5 осей [-1,1]) + MoodDelta, update/drift/lift, tone()
   disposition.py      # layer=domain          — Disposition (optimism/resilience) — черта-аттрактор (BOB-033)
@@ -155,7 +156,8 @@ THE анти-runaway-гардрейл. `mood_taste.modulate` — mood време
 `who_is_writing_directive` / `stranger_directive` (читают уже-вычисленный `kind.value`
 собеседника — БЕЗ runtime-импорта `InterlocutorKind`; `who_is_writing_directive` также
 доклеивает родовую клаузу по уже-вычисленному `gender.value` — «обращайся в женском/мужском
-роде», UNKNOWN → ничего, BOB-078 A, тоже без импорта social `Gender`), `profanity_stance`,
+роде», UNKNOWN → ничего, BOB-078 A, тоже без runtime-импорта Enum'а `Gender` из
+`kernel.interlocutor`), `profanity_stance`,
 `user_repeat_directive`, `improvement_directive`, `tactful_withhold_directive`
 (BOB-066.2.6 — тёплый отказ такта разглашения: гейт привилегий по-прежнему НЕ раскрывает
 приватные данные owner'а гостю, а эта строка лишь заменяет сухую стену на человечное «это
@@ -228,7 +230,9 @@ drift-guard-тестом, чтобы `personality` не импортировал
 `parse_reaction_meaning`, `ReactionJudgeParseError` на мусоре). `reaction_effect.py` — чистое
 ядро «реакция меняет Боба»: `apply_reaction_to_mood` (тёплая реакция сперва тянет mood к
 baseline, потом ложится bounded-дельта — тот же путь соц. контагиона, что и текст),
-`nudge_relationship_warmth`, `NotableReaction` (лёгкая запись «меня получили», только когда
+`nudge_relationship_warmth` (клампит теплоту границами `kernel.relationship.MIN_AXIS`/
+`MAX_AXIS` — единственный источник инварианта оси, своей копии нет, bob-etb.8),
+`NotableReaction` (лёгкая запись «меня получили», только когда
 `worth_acknowledging`). `reaction_aloud.acknowledgment_hint` — редкий hint упомянуть это
 вслух; `reaction.reaction_emoji_for(mood)` — picker emoji из стандартного набора.
 
@@ -336,10 +340,15 @@ kv-таблице (`record`/`latest`/`clear` — hint всплывает не б
 
 ## Инварианты
 
-- **personality — стабильное ядро.** 0 runtime-зависимостей на `conversation`/`social`;
+- **personality — стабильное ядро, самый нижний модуль runtime-порядка вертикалей.**
+  Ни одного импорта `conversation`/`social`, в том числе под `TYPE_CHECKING` (с BOB-113
+  чужие понятия приходят из `kernel`: `Interlocutor`, `Relationship`, `RosterMember`,
+  `SulkState`, `RuleModulators`, `Recalled`, `MemoryRecall`, `MessageReceived`,
+  `ToolCallingProvider`).
   `voice.py` не импортит ни `Verbosity`/`EngagementLevel` из conversation (они теперь
-  здесь), ни `InterlocutorKind` из social (читает `kind.value`). Цикл `voice↔brevity/
-  engagement` разорван — `no-dependency-cycles` зелёный.
+  здесь), ни Enum'ы `InterlocutorKind`/`Gender` в runtime (читает `kind.value` и
+  `gender.value`). Цикл `voice↔brevity/engagement` разорван — `no-dependency-cycles`
+  зелёный.
 - **Mood/taste ограничены и не убегают.** Оси Mood в `[-1, 1]` (клампятся); эволюция вкуса
   масштабируется на `(1 - conviction)` — устоявшееся мнение почти не движется, tone
   детерминирован (тестируем без модели). `mood_taste.modulate` окрашивает вердикт ≤1 шага и
@@ -394,6 +403,8 @@ kv-таблице (`record`/`latest`/`clear` — hint всплывает не б
   `SqliteFascinationStore`.
 - `NotableReactionStore` — лёгкий стор последней «меня получили»-реакции. Реализация —
   `KvNotableReactionStore`.
+- `CurrentFascinationReader` — шов чтения ТЕКУЩЕЙ живой увлечённости (состаренной, не
+  угасшей; `None` = нет, упоминание no-op). Переехал сюда из `handle_message.py` (BOB-113).
 
 Фасад `src/bob/personality/__init__.py` — вход в модуль. Канонический импорт портов —
 `from bob.personality.ports import MessageReactor` (транзитный ports-шим
@@ -409,7 +420,8 @@ kv-таблице (`record`/`latest`/`clear` — hint всплывает не б
   `recalled_origin_directive` (BOB-090.C1), `guppi_no_roleplay_directive` (BOB-090.D3),
   `guppi_voice_canon` (BOB-096.3 — тот же запрет в двух формах, реализация порта
   `VoiceCanon` роутера), `reaction_meaning.ReactionMeaning`,
-  `reaction_effect.apply_reaction_to_mood`, `reflection.build_reflection_prompt`, `soul.SOUL`,
+  `reaction_effect.apply_reaction_to_mood`/`nudge_relationship_warmth`,
+  `reflection.build_reflection_prompt`, `soul.SOUL`, `state.PersonalityState` (BOB-113),
   `room_tone.room_tone_directive`/`room_engagement_bias` (+ `RoomToneThresholds`).
 - Use-case'ы: `usecases.UpdateMoodFromText`, `ApplyReflection`, `ReappraiseReflection`,
   `EvolveFascination`, `EvolvePhantoms`, `HeuristicReflectionParser`.

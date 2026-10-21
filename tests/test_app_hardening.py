@@ -37,10 +37,10 @@ from bob.app import (
     main,
 )
 from bob.application.runtime import RuntimeState
-from bob.application.usecases.handle_message import PersonalityState
 from bob.personality.disposition import DEFAULT_DISPOSITION
 from bob.personality.mood import Mood
 from bob.personality.soul import SOUL
+from bob.personality.state import PersonalityState
 from bob.personality.taste import TasteEngine
 from bob.personality.usecases.evolve_phantoms import EvolvePhantoms
 from bob.social.adapters.soul_store import SoulStore

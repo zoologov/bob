@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import pytest
 
+from bob.kernel.relationship import Relationship
 from bob.personality.mood import Mood
 from bob.personality.negotiation import Stance
 from bob.social.relationship import (
-    Relationship,
     RelationshipDeltas,
     apply_interaction,
     compromise_bias,

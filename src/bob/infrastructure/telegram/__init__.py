@@ -13,11 +13,10 @@ and a silent plain ``send_message`` fallback). Markdown is turned into the typed
 rich tree by :class:`MarkdownToRichMessage`. Native streaming is gone: Bob is reached
 only through a group topic, where drafts are DM-only and edits are slow + flood-prone.
 Transport only: no Higher-Mind / LLM / memory logic — it receives updates and
-publishes :class:`MessageReceived` onto the EventBus, and delivers a reply given a
-token async-iterator (consumed to assemble the full text, then sent once).
+publishes :class:`~bob.kernel.events.MessageReceived` onto the EventBus, and delivers a
+reply given a token async-iterator (consumed to assemble the full text, then sent once).
 """
 
-from bob.application.runtime.events import MESSAGE_RECEIVED, MessageReceived
 from bob.infrastructure.telegram.gateway import (
     PLAIN_TEXT_LIMIT,
     BotLike,
@@ -39,7 +38,6 @@ from bob.infrastructure.telegram.rich import (
 
 __all__ = [
     "GUPPI_REJECT_TEXT",
-    "MESSAGE_RECEIVED",
     "PLAIN_TEXT_LIMIT",
     "BotIdentity",
     "BotLike",
@@ -48,7 +46,6 @@ __all__ = [
     "BotScope",
     "GuppiHandler",
     "MarkdownToRichMessage",
-    "MessageReceived",
     "MultiBotGateway",
     "RichMessageSerializer",
     "TelegramGateway",

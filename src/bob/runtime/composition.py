@@ -40,24 +40,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from bob.application.router import LLMRouter
-from bob.application.runtime import (
-    BOB_MESSAGE_REACTION,
-    MESSAGE_RECEIVED,
-    AgentRuntime,
-    AsyncEventBus,
-    BobMessageReaction,
-    MessageReceived,
-)
+from bob.application.runtime import AgentRuntime, AsyncEventBus
 from bob.application.runtime.intake import (
     ChatDispatcher,
     RoomStreamReader,
     make_focus_predicate,
 )
-from bob.application.usecases.handle_message import (
-    EngagementState,
-    HandleMessage,
-    PersonalityState,
-)
+from bob.application.usecases.handle_message import HandleMessage
 from bob.application.usecases.heartbeat import (
     InnerMonologueTick,
     MoodDriftTick,
@@ -74,6 +63,7 @@ from bob.conversation.adapters.interim_line import LlmInterimLineGenerator
 from bob.conversation.adapters.response_judge import LlmResponseJudge
 from bob.conversation.adapters.room_reader import LlmRoomReader
 from bob.conversation.adapters.volatility_judge import LlmVolatilityJudge
+from bob.conversation.engagement import EngagementState
 from bob.conversation.usecases.decide_response import DecideResponse
 from bob.conversation.usecases.read_the_room import ReadTheRoom
 from bob.conversation.zone_classifier import TasteZoneClassifier
@@ -89,6 +79,12 @@ from bob.infrastructure.telegram.aiogram_adapter import (
 )
 from bob.infrastructure.telegram.multibot import BotIdentity
 from bob.infrastructure.telegram.outage_notifier import _GuppiOutageNotifier
+from bob.kernel.events import (
+    BOB_MESSAGE_REACTION,
+    MESSAGE_RECEIVED,
+    BobMessageReaction,
+    MessageReceived,
+)
 from bob.memory.adapters import HybridMemoryRecall, SqliteMemoryRepo
 from bob.memory.usecases.extract_facts import ExtractFacts
 from bob.personality.adapters.fascination_store import SqliteFascinationStore
@@ -96,6 +92,7 @@ from bob.personality.adapters.notable_reaction_store import KvNotableReactionSto
 from bob.personality.adapters.reaction_judge import LlmReactionJudge
 from bob.personality.language import DEFAULT_LANGUAGE
 from bob.personality.negotiation import Negotiation
+from bob.personality.state import PersonalityState
 from bob.personality.usecases.apply_reflection import ApplyReflection
 from bob.personality.usecases.evolve_fascination import EvolveFascination
 from bob.personality.usecases.evolve_phantoms import EvolvePhantoms

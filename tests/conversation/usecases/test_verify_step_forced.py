@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.capabilities.ports import WebSearchProvider, WebSearchResult
+from bob.capabilities.ports import WebSearchResult
 from bob.conversation.usecases.verify_step import (
     _VERIFY_GROUNDED_NOTE,
     VerifyInterimAnnouncer,
@@ -23,6 +23,7 @@ from bob.conversation.usecases.verify_step import (
 )
 
 if TYPE_CHECKING:
+    from bob.conversation.ports import VerifySearch
     from bob.conversation.volatility_judgment import (
         VolatilityContext,
         VolatilityJudge,
@@ -52,7 +53,7 @@ def _no_announcer(*, chat_id: int, sender_name: str) -> VerifyInterimAnnouncer:
 
 
 def _step(
-    judge: VolatilityJudge | None, provider: WebSearchProvider | None
+    judge: VolatilityJudge | None, provider: VerifySearch | None
 ) -> VerifyStep:
     return VerifyStep(
         verify_judge=judge,

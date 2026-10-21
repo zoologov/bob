@@ -8,7 +8,7 @@
 
 """HybridMemoryRecall — semantic + keyword recall fused with Reciprocal Rank Fusion.
 
-Realises :class:`bob.memory.ports.MemoryRecall` as a drop-in replacement for the
+Realises :class:`bob.kernel.ports.MemoryRecall` as a drop-in replacement for the
 keyword-only :class:`Fts5MemoryRecall`: consumers (``handle_message`` /
 ``recall_memory``) keep talking to ``recall(query, k) -> [Recalled]`` and never
 learn the retrieval grew a semantic half. Internally it runs two candidate
@@ -61,8 +61,9 @@ from bob.memory.adapters.fts_recall import Fts5MemoryRecall
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from bob.kernel.episode_types import Recalled
     from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
-    from bob.memory.ports import Embedder, Recalled, Reranker
+    from bob.memory.ports import Embedder, Reranker
 
 logger = logging.getLogger(__name__)
 

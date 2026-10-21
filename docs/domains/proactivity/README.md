@@ -25,10 +25,12 @@
 
 1. **`self_improvement.py` забран в proactivity** из `domain/personality/`. Это
    метакогниция над собственным поведением (BOB-028), а не черта личности; модуль
-   не импортирует ничего из `bob.*`, поэтому цикла не возникает. Переезд потянул
+   импортирует из `bob.*` только значение `RuleModulators` из ядра
+   (`bob.kernel.modulators`, BOB-113), поэтому цикла не возникает. Переезд потянул
    смену тега `feature=personality → proactivity` и относящиеся тесты. Стык
    `application/usecases/handle_message → proactivity.self_improvement`
-   (read-модуляторы `RuleModulators` / `build_modulators`) — намеренно разрешённое
+   (сборка модуляторов `build_modulators`; само значение `RuleModulators` с BOB-113 в
+   ядре) — намеренно разрешённое
    ребро: `self_improvement.py` это публичная доменная поверхность proactivity.
 2. **`run_genesis.py` остаётся вне proactivity** (не перенесён). По зависимостям
    это first-boot генезис SOUL (тянет `SoulStore` / social + router), а не
@@ -68,7 +70,7 @@ src/bob/proactivity/
   social_energy.py    # layer=domain          — SocialEnergy: [0,1]-резервуар тяги
   decision.py         # layer=domain          — ProactiveDecider: urge → p → seeded-семпл → вето
   state.py            # layer=domain          — ProactivityState (персист-снимок между тиками)
-  self_improvement.py # layer=domain          — 🔴 из personality: модель правил + модуляторы
+  self_improvement.py # layer=domain          — 🔴 из personality: модель правил + build_modulators (значение RuleModulators — kernel.modulators, BOB-113)
   rule_announcement.py # layer=domain         — стоит ли говорить: вердикт + кап попыток
   rule_voice.py       # layer=domain          — голос Боба на предложении поправить себя
   restart_voice.py    # layer=domain          — голос Боба на рестарте: «ухожу обновиться» / «вернулся»
@@ -174,7 +176,10 @@ authz, гость-инварианта, ядра SOUL или safety-инвари
 правило НЕ способно их представить *по конструкции*. `active_rules` берёт лишь
 `APPROVED` (`RuleState`), так что неодобренное правило не влияет на поведение;
 `build_modulators` сводит активные правила в нейтральный по умолчанию
-`RuleModulators`, который применяет `handle_message`.
+`RuleModulators` (значение живёт в `src/bob/kernel/modulators.py`, BOB-113). `HandleMessage`
+собирает его на ход и раздаёт коллабораторам, которые его применяют: `TurnGate` и
+`AntiRepeatGuard` (`conversation`) и `VoiceComposer` (`personality`). Оба модуля стоят ниже
+`proactivity` по runtime-порядку вертикалей, поэтому значение и переехало в ядро.
 
 `proposal_defect(rule, *, max_magnitude)` → `ProposalDefect | None` (BOB-096) — чистая
 ПРИЧИНА, по которой предложение нельзя вынести владельцу, и единственный источник истины
@@ -457,11 +462,14 @@ count** (сколько проактивных эпизодов в анти-сп
 - модуль не импортит композиционный корень (`app.py`).
 
 Намеренно разрешённые кросс-рёбра (все — на публичную доменную поверхность):
-- `handle_message → proactivity.self_improvement` (read-модуляторы);
+- `handle_message → proactivity.self_improvement` (`build_modulators`);
 - `guppi → proactivity.goals.state` / `.self_improvement` / `.state` (UI-рендер
   `/quiet` / `/wake` над доменным состоянием);
 - `guppi` и `multibot → proactivity.usecases.plan_goal.PlanGoal` (тип);
 - `proactivity → memory.entities` (движок читает `episodic_log`);
+- `proactivity.usecases → personality.state` / `personality.ports` (типы `PersonalityState` и
+  `CurrentFascinationReader` для движка и `PursueGoals`; до BOB-113 тянулись вверх из
+  `application/usecases/handle_message`);
 - kernel → proactivity ребра НЕТ (проверено).
 
 ## API
@@ -494,7 +502,7 @@ count** (сколько проактивных эпизодов в анти-сп
   (`GoalState`, `TaskState`, `can_transition`), `goals.graph`
   (`GoalGraph`, `ready_tasks`, `next_safe_task`, `blocked_reason`).
 - Самоулучшение: `self_improvement` (`ImprovementRule`, `Lever`, `RuleState`,
-  `active_rules`, `build_modulators`, `RuleModulators`, `is_actionable_proposal`,
+  `active_rules`, `build_modulators` (→ `kernel.modulators.RuleModulators`), `is_actionable_proposal`,
   `proposal_defect`, `ProposalDefect`, `MAGNITUDE_RANGE_TOP`).
 - Доставка предложения: `rule_announcement` (`AnnounceStatus`, `announce_status`,
   `next_to_announce`, `is_undelivered_proposal`, `unactionable_reason`,

@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from bob.app import build_application
-from bob.application.runtime.events import MessageReceived
+from bob.kernel.events import MessageReceived
 from tests.acceptance.fake_gateway import (
     CHAT_ID,
     OWNER_ID,

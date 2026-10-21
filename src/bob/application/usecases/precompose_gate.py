@@ -31,11 +31,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Protocol
 
-from bob.social.interlocutor import InterlocutorKind, Trust
+from bob.kernel.interlocutor import InterlocutorKind, Trust
 
 if TYPE_CHECKING:
-    from bob.application.runtime.events import MessageReceived
-    from bob.social.interlocutor import Interlocutor
+    from bob.kernel.events import MessageReceived
+    from bob.kernel.interlocutor import Interlocutor
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +127,7 @@ class PreComposeGate:
         short-circuits the normal compose). Inert when no router is wired (the default /
         ``coder.interactive`` false). 🔴 owner-only + DM-only: ``is_owner`` is derived from
         the perceived interlocutor (only an
-        :class:`~bob.social.interlocutor.InterlocutorKind.OWNER` sender is owner here) and
+        :class:`~bob.kernel.interlocutor.InterlocutorKind.OWNER` sender is owner here) and
         ``is_group`` is threaded from the channel signal — the router re-checks both, so a
         guest or a GROUP message is never routed into interactive and the mode fires ONLY
         in the owner's DM. Resilient like the coding gate: any router fault is logged and
@@ -163,7 +163,7 @@ class PreComposeGate:
         Returns whether the natural-language coding path CONSUMED the turn (so the
         caller short-circuits the normal compose). Inert when no router is wired (the
         default / ``coder.enabled`` false). Owner is derived from the perceived
-        interlocutor — only an :class:`~bob.social.interlocutor.InterlocutorKind.OWNER`
+        interlocutor — only an :class:`~bob.kernel.interlocutor.InterlocutorKind.OWNER`
         sender is ever owner here, so with no perception seam (or a guest/known sender)
         the message is never routed (``is_owner`` false) and the router itself re-checks;
         the gated use-case re-checks the owner again (defense-in-depth).

@@ -19,6 +19,8 @@ from datetime import UTC, datetime
 
 import pytest
 
+from bob.kernel.interlocutor import Gender, Interlocutor, InterlocutorKind, Trust
+from bob.kernel.roster import RosterMember
 from bob.personality.expression import EngagementLevel, Verbosity
 from bob.personality.mood import Mood
 from bob.personality.voice import (
@@ -49,13 +51,6 @@ from bob.personality.voice import (
     variable_form_directive,
     who_is_writing_directive,
 )
-from bob.social.gender import Gender
-from bob.social.interlocutor import (
-    Interlocutor,
-    InterlocutorKind,
-    Trust,
-)
-from bob.social.roster import RosterMember
 
 
 def test_improvement_directive_empty_when_no_adjustments() -> None:

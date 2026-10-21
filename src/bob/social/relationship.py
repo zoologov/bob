@@ -8,7 +8,9 @@
 
 """Relationship — Bob's per-person relationship quality, accrued over turns (BOB-014).
 
-A pure value object: how Bob stands with one person, on four axes each bounded to
+The value — :class:`~bob.kernel.relationship.Relationship`, how Bob stands with one
+person — lives in the shared kernel (BOB-113, RFC D: modules below ``social`` read
+it); this module owns the behaviour that accrues it. Four axes, each bounded to
 ``[-1, 1]`` and starting at ``0`` (neutral, a person he has not formed a read on):
 
 * **trust** — how much Bob relies on this person's word and intent;
@@ -32,22 +34,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from bob.kernel.relationship import MAX_AXIS, MIN_AXIS, Relationship
 from bob.personality.negotiation import Stance
 
 if TYPE_CHECKING:
     from bob.personality.mood import Mood
 
 __all__ = [
-    "Relationship",
     "RelationshipDeltas",
     "apply_interaction",
     "compromise_bias",
     "endorsed_seed",
 ]
-
-# Each relationship axis is bounded to the closed interval [-1, 1].
-_MIN_AXIS = -1.0
-_MAX_AXIS = 1.0
 
 # Default small per-interaction step sizes (Q1: ≈0.05) — one turn nudges, never
 # jolts, so a relationship is *accrued* over many turns, not set in one.
@@ -89,7 +87,7 @@ _STANCE_RESPECT_FACTOR: dict[Stance, float] = {
 
 def _clamp(value: float) -> float:
     """Saturate ``value`` into the axis bounds rather than overflowing them."""
-    return max(_MIN_AXIS, min(_MAX_AXIS, value))
+    return max(MIN_AXIS, min(MAX_AXIS, value))
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,26 +104,6 @@ class RelationshipDeltas:
     respect_step: float = _DEFAULT_RESPECT_STEP
     compatibility_step: float = _DEFAULT_COMPAT_STEP
     drift_rate: float = _DEFAULT_DRIFT_RATE
-
-
-@dataclass(frozen=True, slots=True)
-class Relationship:
-    """Bob's quality of relationship with one person, on four bounded axes."""
-
-    sender_id: int
-    trust: float = 0.0
-    respect: float = 0.0
-    warmth: float = 0.0
-    compatibility: float = 0.0
-
-    def __post_init__(self) -> None:
-        for name in ("trust", "respect", "warmth", "compatibility"):
-            value = getattr(self, name)
-            if not _MIN_AXIS <= value <= _MAX_AXIS:
-                raise ValueError(
-                    f"relationship axis '{name}' must be within "
-                    f"[{_MIN_AXIS}, {_MAX_AXIS}], got {value}"
-                )
 
 
 def _drift(value: float, *, rate: float) -> float:

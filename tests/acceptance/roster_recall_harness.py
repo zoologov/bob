@@ -31,11 +31,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from bob.kernel.interlocutor import Interlocutor, InterlocutorKind, Trust
 from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 from bob.personality.voice import roster_directive
 from bob.social.adapters.first_impression_store import SqliteFirstImpressionStore
 from bob.social.first_impression import FirstImpression
-from bob.social.interlocutor import Interlocutor, InterlocutorKind, Trust
 from bob.social.usecases.roster_recall import RosterRecall
 
 if TYPE_CHECKING:

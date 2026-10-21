@@ -27,7 +27,7 @@ from bob.conversation.room_reading_wire import (
     build_room_prompt,
     parse_room_reading,
 )
-from bob.social.interlocutor import Interlocutor, InterlocutorKind, Trust
+from bob.kernel.interlocutor import Interlocutor, InterlocutorKind, Trust
 
 _FULL = (
     "situation: ребята обсуждают фильм\n"

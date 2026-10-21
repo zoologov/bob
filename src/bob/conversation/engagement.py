@@ -34,20 +34,22 @@ match. No I/O, no clock (elapsed time is passed in) — trivially testable and p
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from bob.personality.expression import EngagementLevel
 
 if TYPE_CHECKING:
+    from datetime import datetime
     from random import Random
 
+    from bob.kernel.relationship import Relationship
     from bob.personality.mood import Mood
     from bob.personality.taste import Verdict
-    from bob.social.relationship import Relationship
 
 __all__ = [
     "ConversationalFatigue",
+    "EngagementState",
     "EngagementThresholds",
     "FatigueRates",
     "appetite_of",
@@ -346,6 +348,24 @@ class ConversationalFatigue:
         if interesting:
             return ConversationalFatigue(_clamp(self.level - cfg.interest_ease))
         return ConversationalFatigue(_clamp(self.level + cfg.aimless_rise))
+
+
+@dataclass
+class EngagementState:
+    """Mutable in-memory holder for Bob's conversational fatigue across turns (BOB-014).
+
+    The lightest correct home for the small, decaying fatigue counter: a per-boot
+    holder (mirroring :class:`~bob.personality.state.PersonalityState` for mood) that the
+    turn loads, decays by the elapsed wall-clock since the last turn, reads for the
+    appetite decision, then updates (an aimless turn tires Bob, an interesting one eases
+    him). It is bounded and always decays with time, so appetite is guaranteed to
+    recover — the owner is never permanently locked out, even across a long aimless run.
+    ``last_turn_at`` is stamped from the injected clock so decay is real elapsed time,
+    not a turn count.
+    """
+
+    fatigue: ConversationalFatigue = field(default_factory=ConversationalFatigue)
+    last_turn_at: datetime | None = None
 
 
 # How much a genuinely interesting, well-going exchange lifts Bob's mood valence — a

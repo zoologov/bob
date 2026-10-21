@@ -31,17 +31,16 @@ from bob.capabilities.adapters.introspection.subprocess_introspector import (
     SubprocessRepoIntrospector,
 )
 from bob.capabilities.introspection.privacy_guard import PrivacyGuard
-from bob.capabilities.ports import ToolCall, ToolCallResult
 from bob.capabilities.usecases.project_health import make_project_health_capability
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.tool_loop import ToolLoop
+from bob.kernel.ports import ToolCall, ToolCallResult
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
 
-    from bob.capabilities.ports import ToolDefinition
-    from bob.kernel.ports import ToolLoopMessage
+    from bob.kernel.ports import ToolDefinition, ToolLoopMessage
 
 
 class ScriptedBeadloom:

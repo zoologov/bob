@@ -15,8 +15,6 @@ LLM-роутера. Зависит от домена через порты-пр�
   asyncio-цикла: start/stop и супервизия фоновых задач.
 - **runtime/event_bus.py** — `AsyncEventBus`, in-process publish/subscribe с
   конкурентным fan-out и изоляцией ошибок обработчиков.
-- **runtime/events.py** — `MessageReceived`, нормализованное событие сообщения
-  (принадлежит приложению, не транспорту), и константа имени `MESSAGE_RECEIVED`.
 - **runtime/heartbeat.py** — `periodic()`, обёртка одноразового тика в
   супервизируемый повторяющийся фоновый цикл (sleep инъецируется для
   детерминизма); `RetryPolicy` — политика backoff для ретрая транзиентных сбоев тика.
@@ -394,9 +392,6 @@ Tier 1); иначе ход идёт прежним plain-путём роутер
 
 Модуль `src/bob/application/runtime/event_bus.py`:
 - `AsyncEventBus` — `subscribe(event_name, handler)`, `async publish(event)`.
-
-Модуль `src/bob/application/runtime/events.py`:
-- `MessageReceived`, `MESSAGE_RECEIVED`.
 
 Модуль `src/bob/application/runtime/heartbeat.py`:
 - `periodic(tick, *, interval_seconds, sleep=None, retry=None)` → фабрика фоновой задачи.

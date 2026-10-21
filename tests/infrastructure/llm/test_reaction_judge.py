@@ -17,14 +17,10 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.application.router.llm_router import LLMRouter, TaskType
+from bob.kernel.interlocutor import Interlocutor, InterlocutorKind, Trust
 from bob.personality.adapters.reaction_judge import LlmReactionJudge
 from bob.personality.reaction_judgment import ReactionJudgeParseError
 from bob.personality.reaction_meaning import ReactionContext
-from bob.social.interlocutor import (
-    Interlocutor,
-    InterlocutorKind,
-    Trust,
-)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence

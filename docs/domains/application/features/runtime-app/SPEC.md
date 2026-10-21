@@ -4,7 +4,9 @@
 # runtime-app — рантайм приложения (asyncio-примитивы)
 
 Асинхронные примитивы рантайма GUPPI: жизненный цикл процесса, in-process шина
-событий, события приложения и устойчивые heartbeat-тики (retry/backoff). Узел
+событий и устойчивые heartbeat-тики (retry/backoff). Сами события интейка
+(`MessageReceived`, `BobMessageReaction`) живут в shared kernel — `src/bob/kernel/events.py`
+(BOB-113). Узел
 `runtime-app` (`part_of` слоя `bob-application`, source `src/bob/application/runtime/`).
 
 🔴 Отличать от `runtime` (composition root в `src/bob/runtime/` — проводка всех слоёв):
@@ -20,25 +22,6 @@ async-примитивы приложения, а не корень сборки
   `state` / `is_running`; `RuntimeState` — перечисление состояний жизненного цикла.
 - **event_bus.py** — `AsyncEventBus`, asyncio fan-out: доставить каждое событие всем
   обработчикам его имени (`subscribe` / `publish`) с изоляцией ошибок обработчиков.
-- **events.py** — события уровня приложения на шине: `MessageReceived` (сообщение
-  пользователя из Telegram, нормализованное для приложения) и `BobMessageReaction`
-  (реакция, добавленная/снятая на одно из собственных сообщений Боба, BOB-050); у обоих
-  стабильное свойство `name` для маршрутизации. Поля `MessageReceived` — координаты хода
-  (`update_id`, `chat_id`, `message_id`, `text`), отправитель (`sender_id`, `sender_name`),
-  сигналы адресности (`reply_to_sender_id`, `mentions_bob`, BOB-023), канальный сигнал
-  `is_group` (BOB-082.1) и два поля BOB-090:
-  - `topic_id` (`message_thread_id` форум-топика) — ТОЧНЫЙ адрес рядом с `chat_id`:
-    `is_group` отвечает только «личка или комната», а чтобы позже написать туда, где
-    разговор действительно шёл, нужен и топик. Гейтвей знал этот сигнал всегда (он и так
-    привязывает ответы Боба к треду), но до приложения его не доводил. `None` = топика нет
-    (личка либо группа без форумов), и это не догадка и не замена неизвестному чату.
-  - `sender_username` — Telegram-ник БЕЗ «собаки», рядом с человеческим `sender_name`. Он
-    приезжал в каждом апдейте и терялся на этой границе, поэтому не существовал нигде — и
-    Боб писал «@Норман» вместо `@NormanGri`. `None` = ника нет, нормальное состояние в
-    Telegram, ведущее к обращению по ИМЕНИ, а не к составленному тегу.
-
-  Оба поля имеют умолчание, поэтому событие обратно совместимо; заполняет их
-  `TelegramGateway` из входящего апдейта.
 - **heartbeat.py** — `periodic(...)`, обёртка тик-корутины в супервизируемый
   повторяющийся фоновый цикл (sleep инъецируется для детерминизма); `RetryPolicy` —
   политика ограниченного backoff для ретрая транзиентных сбоев тика.
@@ -97,7 +80,6 @@ inbox, focus, scope, room_stream_reader).
 
 <!-- beadloom:track=src/bob/application/runtime/agent.py -->
 <!-- beadloom:track=src/bob/application/runtime/event_bus.py -->
-<!-- beadloom:track=src/bob/application/runtime/events.py -->
 <!-- beadloom:track=src/bob/application/runtime/heartbeat.py -->
 <!-- beadloom:track=src/bob/application/runtime/retry.py -->
 <!-- beadloom:track=src/bob/application/runtime/delayed_turn.py -->

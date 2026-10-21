@@ -17,7 +17,7 @@ line per ``sender_id``, nothing more.
 * :class:`FirstImpression` — a frozen value object: WHO (``sender_id``), WHEN Bob
   first met them (``first_seen_at``), and a one-line ``note`` (how he clocked them).
 * :func:`impression_note_for` — a pure, cheap heuristic that derives that light
-  note from the perceived :class:`~bob.social.interlocutor.Interlocutor`
+  note from the perceived :class:`~bob.kernel.interlocutor.Interlocutor`
   (its kind + display name). It is grounded in what Bob can already see — who the
   person is, socially — and invents NO facts about them; it is a *vibe*, not a
   dossier. No I/O, no clock of its own, so it stays trivially testable and pure.
@@ -28,12 +28,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from bob.social.interlocutor import InterlocutorKind
+from bob.kernel.interlocutor import InterlocutorKind
 
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from bob.social.interlocutor import Interlocutor
+    from bob.kernel.interlocutor import Interlocutor
 
 __all__ = ["FirstImpression", "impression_note_for"]
 

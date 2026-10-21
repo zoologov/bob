@@ -62,8 +62,8 @@ if TYPE_CHECKING:
         ReplyParameters,
     )
 
-    from bob.application.usecases.handle_message import ReplyGateway
     from bob.infrastructure.telegram.gateway import UpdateLike
+    from bob.kernel.ports import ReplyGateway
 
 # Живые адреса: личка владельца (её chat_id равен его user id) и General, где GUPPI
 # отвечает на команды.

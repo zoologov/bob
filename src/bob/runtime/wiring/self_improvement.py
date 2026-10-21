@@ -37,8 +37,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from bob.application.router import LLMRouter
-    from bob.application.usecases.handle_message import ReplyGateway
-    from bob.kernel.ports import Clock
+    from bob.kernel.ports import Clock, ReplyGateway
     from bob.proactivity.adapters import SqliteSelfImprovementStore
 
 

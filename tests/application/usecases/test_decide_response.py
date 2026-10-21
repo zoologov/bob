@@ -18,11 +18,7 @@ from bob.conversation.response_choice import (
     ResponseIntent,
 )
 from bob.conversation.usecases.decide_response import DecideResponse
-from bob.social.interlocutor import (
-    Interlocutor,
-    InterlocutorKind,
-    Trust,
-)
+from bob.kernel.interlocutor import Interlocutor, InterlocutorKind, Trust
 
 
 class _FakeJudge:

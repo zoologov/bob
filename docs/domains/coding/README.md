@@ -567,8 +567,9 @@ bounded context'а, и подпапка внутри `src/bob/coding/` тоже 
 - `TypingKeepalive` / `StatusPanel` — порты индикаторов «Боб печатает…» и живой статус-панели
   (BOB-046 .2). BOB-112: переехали сюда из `usecases/coding_assistant.py` (там остался
   re-export): адаптер `adapters/live_stream.py` брал `StatusPanel` из use-case ради аннотации,
-  и с beadloom 2.2.0, читающим импорты под `TYPE_CHECKING`, это стало видимым нарушением
-  `coding-internals-no-usecases`. Порт, который реализует адаптер, живёт в `ports.py`.
+  и с тех пор, как beadloom (начиная с линии 2.2) читает импорты под `TYPE_CHECKING`, это
+  стало видимым нарушением `coding-internals-no-usecases`. Порт, который реализует адаптер,
+  живёт в `ports.py`.
 
 Фасад `src/bob/coding/__init__.py` re-export'ит: `CodingSession`, `CodingSessionState`,
 `can_transition`, `can_start`, `can_approve_plan`, `can_stop`, `is_terminal`, `narrate`,

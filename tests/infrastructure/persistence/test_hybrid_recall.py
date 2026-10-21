@@ -4,7 +4,7 @@
 
 """Tests for HybridMemoryRecall: FTS5(BM25) + sqlite-vec(KNN) fused with RRF.
 
-Drives BEAD-03: a drop-in :class:`~bob.domain.ports.MemoryRecall` that fuses a
+Drives BEAD-03: a drop-in :class:`~bob.kernel.ports.MemoryRecall` that fuses a
 semantic (vector KNN) candidate list with a keyword (FTS5 BM25) candidate list
 via Reciprocal Rank Fusion. The key win is "помнит по смыслу" — a query with no
 keyword overlap still surfaces semantically-near memory through the vector half.

@@ -26,13 +26,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from bob.application.runtime.events import MessageReceived
 from bob.application.usecases.precompose_gate import PreComposeGate
 from bob.coding.adapters.session_store import SqliteCodingSessionStore
 from bob.coding.entities import CodingSession
 from bob.coding.state import CodingSessionState
+from bob.kernel.events import MessageReceived
+from bob.kernel.interlocutor import Interlocutor, InterlocutorKind, Trust
 from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
-from bob.social.interlocutor import Interlocutor, InterlocutorKind, Trust
 
 if TYPE_CHECKING:
     from pathlib import Path

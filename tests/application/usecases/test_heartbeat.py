@@ -20,7 +20,6 @@ import pytest
 
 from bob.app import _load_soul
 from bob.application.router.llm_router import LLMRouter
-from bob.application.usecases.handle_message import PersonalityState
 from bob.application.usecases.heartbeat import (
     _MONOLOGUE_VALENCE_BAND,
     InnerMonologueTick,
@@ -36,6 +35,7 @@ from bob.personality.reflection import (
     select_reflection_angle,
 )
 from bob.personality.soul import SOUL
+from bob.personality.state import PersonalityState
 from bob.personality.taste import TasteAxis, TasteEngine
 from bob.personality.usecases.apply_reflection import ApplyReflection, ReflectionSignal
 from bob.personality.usecases.reappraise_reflection import ReappraisalOutcome

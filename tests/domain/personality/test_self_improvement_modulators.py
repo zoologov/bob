@@ -20,10 +20,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from bob.kernel.modulators import RuleModulators
 from bob.proactivity.self_improvement import (
     ImprovementRule,
     Lever,
-    RuleModulators,
     RuleOrigin,
     RuleState,
     build_modulators,

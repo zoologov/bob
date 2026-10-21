@@ -18,13 +18,13 @@ they are pure (no store, no LLM).
 from __future__ import annotations
 
 from bob.application.usecases.handle_message import _turn_is_shared_scope
+from bob.kernel.interlocutor import Trust
 from bob.social.disclosure import (
     VISIBILITY_OWNER_PRIVATE,
     VISIBILITY_PUBLIC,
     filter_surfaceable,
     visibility_for_scope,
 )
-from bob.social.interlocutor import Trust
 
 # --- The channel → shared-scope classifier ------------------------------------------
 

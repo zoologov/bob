@@ -22,9 +22,9 @@ import aiosqlite
 import pytest
 
 from bob.infrastructure.persistence.connection import SqliteConnection
+from bob.kernel.relationship import Relationship
 from bob.social.adapters.allowlist_store import KvAllowlistStore
 from bob.social.adapters.relationship_store import SqliteRelationshipStore
-from bob.social.relationship import Relationship
 
 if TYPE_CHECKING:
     from pathlib import Path

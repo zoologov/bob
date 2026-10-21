@@ -24,7 +24,7 @@ from bob.conversation.room_reading import (
     RoomReadingContext,
 )
 from bob.conversation.room_reading_wire import RoomReadingParseError
-from bob.social.interlocutor import Interlocutor, InterlocutorKind, Trust
+from bob.kernel.interlocutor import Interlocutor, InterlocutorKind, Trust
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence

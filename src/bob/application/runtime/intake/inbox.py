@@ -26,7 +26,7 @@ from bob.application.runtime.intake.decisions import batch_grew, should_debounce
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from bob.application.runtime.events import MessageReceived
+    from bob.kernel.events import MessageReceived
 
     type _Sleep = Callable[[float], Awaitable[None]]
     type _Focused = Callable[[MessageReceived], bool]

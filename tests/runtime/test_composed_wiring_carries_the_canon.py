@@ -44,7 +44,7 @@ import pytest
 
 from bob.app import build_application
 from bob.application.router.llm_router import LLMRequest, LLMRouter, TaskType
-from bob.capabilities.ports import ToolCallResult
+from bob.kernel.ports import ToolCallResult
 from bob.personality.voice import guppi_voice_canon
 from bob.runtime import composition
 from bob.runtime.wiring import permission as permission_wiring
@@ -57,8 +57,7 @@ if TYPE_CHECKING:
 
     from bob.application.usecases.handle_message import HandleMessage
     from bob.application.usecases.privileged_fulfiller import PrivilegedRequestFulfiller
-    from bob.capabilities.ports import ToolDefinition
-    from bob.kernel.ports import LLMMessage, ToolLoopMessage
+    from bob.kernel.ports import LLMMessage, ToolDefinition, ToolLoopMessage
 
 _CHAT_ID = -1004372947307
 _OWNER_ID = 7
@@ -72,7 +71,7 @@ class _RecordingProvider:
     Одна деталь-фейк во всём файле — сеть. Обе ручки настоящие по контракту:
     ``complete`` (порт :class:`~bob.kernel.ports.LLMProvider`, путь роутера) и
     ``complete_with_tools`` (порт
-    :class:`~bob.capabilities.ports.ToolCallingProvider`, путь тул-лупа). Вторая нужна
+    :class:`~bob.kernel.ports.ToolCallingProvider`, путь тул-лупа). Вторая нужна
     не для полноты: композиция выбирает тул-провайдер по наличию ИМЕННО этого метода
     (:func:`~bob.runtime.wiring.access._as_tool_provider`), и без него привилегированное
     исполнение свернуло бы на путь роутера — а проверять надо тот, что идёт мимо него.

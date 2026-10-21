@@ -26,10 +26,10 @@ import sqlite3
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from bob.application.runtime.events import MessageReceived
 from bob.coding.adapters.owner_notifier import _CodingOwnerNotifier
 from bob.coding.usecases.coding_assistant import CodingAssistant
 from bob.coding.usecases.work_journal_recorder import DistillingWorkJournalRecorder
+from bob.kernel.events import MessageReceived
 from bob.memory.adapters.self_action_recorder import MemoryBackedSelfActionRecorder
 from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 from bob.memory.work_journal import WorkEpisode

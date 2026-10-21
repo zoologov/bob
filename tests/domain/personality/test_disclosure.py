@@ -15,6 +15,7 @@ owner-DM or an uncertain scope is ``owner_private`` (fail-safe, INV-8).
 
 from __future__ import annotations
 
+from bob.kernel.interlocutor import Trust
 from bob.social.disclosure import (
     VISIBILITY_OWNER_PRIVATE,
     VISIBILITY_PUBLIC,
@@ -22,7 +23,6 @@ from bob.social.disclosure import (
     may_surface,
     visibility_for_scope,
 )
-from bob.social.interlocutor import Trust
 
 
 def test_public_surfaces_to_a_guest() -> None:

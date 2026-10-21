@@ -33,7 +33,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from bob.capabilities.ports import Capability, Permission, ToolDefinition
+    from bob.capabilities.ports import Capability, Permission
+    from bob.kernel.ports import ToolDefinition
 
 
 class UnknownCapabilityError(LookupError):

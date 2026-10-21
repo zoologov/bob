@@ -56,11 +56,11 @@ from aiogram.types import (
     ReplyParameters,
 )
 
-from bob.application.runtime.events import BobMessageReaction, MessageReceived
 from bob.infrastructure.telegram.rich import (
     MarkdownToRichMessage,
     RichMessageSerializer,
 )
+from bob.kernel.events import BobMessageReaction, MessageReceived
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Sequence

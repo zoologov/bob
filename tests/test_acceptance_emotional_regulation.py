@@ -37,7 +37,6 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.application.router.llm_router import LLMRouter
-from bob.application.usecases.handle_message import PersonalityState
 from bob.application.usecases.heartbeat import (
     _MONOLOGUE_VALENCE_BAND,
     ReflectTick,
@@ -46,6 +45,7 @@ from bob.conversation.conversation import recalled_excluding_reflections
 from bob.personality.disposition import Disposition
 from bob.personality.mood import Mood
 from bob.personality.soul import SOUL
+from bob.personality.state import PersonalityState
 from bob.personality.taste import TasteEngine
 from bob.personality.usecases.reappraise_reflection import ReappraiseReflection
 from bob.personality.usecases.update_mood_from_text import (

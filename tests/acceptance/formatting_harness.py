@@ -36,7 +36,7 @@ from bob.personality.voice import OffDayThresholds
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
 
-    from bob.memory.ports import Recalled
+    from bob.kernel.episode_types import Recalled
     from bob.personality.negotiation import NegotiationZone as _Zone
 
 

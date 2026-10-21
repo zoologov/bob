@@ -38,7 +38,6 @@ from typing import TYPE_CHECKING, Final, cast
 from aiohttp import web
 
 from bob.application.router.llm_router import LLMRequest, LLMRouter, TaskType
-from bob.application.usecases.handle_message import PersonalityState
 from bob.application.usecases.heartbeat import ReflectTick
 from bob.application.usecases.privileged_fulfiller import PrivilegedRequestFulfiller
 from bob.capabilities.usecases.registry import CapabilityRegistry
@@ -52,6 +51,7 @@ from bob.personality.adapters.fascination_store import SqliteFascinationStore
 from bob.personality.disposition import Disposition
 from bob.personality.mood import Mood
 from bob.personality.soul import SOUL
+from bob.personality.state import PersonalityState
 from bob.personality.taste import TasteEngine
 from bob.personality.usecases.evolve_fascination import EvolveFascination
 from bob.personality.voice import guppi_voice_canon
@@ -63,9 +63,8 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
     from pathlib import Path
 
-    from bob.application.usecases.handle_message import ReplyGateway
     from bob.capabilities.ports import Permission
-    from bob.kernel.ports import LLMProvider
+    from bob.kernel.ports import LLMProvider, ReplyGateway
 
 _CHAT_PATH = "/v1/chat/completions"
 #: Мёртвый loopback-порт: соединение отвергается сразу — настоящий отвал облака.

@@ -13,9 +13,12 @@ turn — the owner he knows, a known (allowlisted) friend, a stranger, or anothe
 bot — and let that colour how he answers. This module is the pure foundation of
 that social layer, sitting *above* the unchanged access policy (``Authorizer``):
 
-* :class:`Interlocutor` — a frozen value object: the sender's identity (id +
-  display name) plus a :class:`InterlocutorKind` (OWNER / KNOWN / GUEST / BOT)
-  and a :class:`Trust` level (TRUSTED / GUEST).
+* :class:`~bob.kernel.interlocutor.Interlocutor` — a frozen value object: the
+  sender's identity (id + display name) plus a
+  :class:`~bob.kernel.interlocutor.InterlocutorKind` (OWNER / KNOWN / GUEST / BOT)
+  and a :class:`~bob.kernel.interlocutor.Trust` level (TRUSTED / GUEST). The values
+  live in the shared kernel (BOB-113, RFC D) — modules below ``social`` read them;
+  the behaviour that derives them stays here.
 * :func:`classify` — a pure function that derives that identity from the authz
   facts already known for the turn (``is_owner`` / ``is_authorized``) and the
   Telegram ``is_bot`` flag.
@@ -28,66 +31,13 @@ perception, not a decision — the guest-restricted pipeline is a later bead.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import Enum
+from bob.kernel.interlocutor import Gender, Interlocutor, InterlocutorKind, Trust
 
-from bob.social.gender import Gender
-
-__all__ = ["Interlocutor", "InterlocutorKind", "Trust", "classify"]
+__all__ = ["classify"]
 
 # Stable label used when the transport hands us no display name, so a perceived
 # interlocutor always has a non-empty, human-readable name to fold into voice.
 _UNKNOWN_NAME = "незнакомец"
-
-
-class InterlocutorKind(Enum):
-    """Who, socially, is writing this turn.
-
-    OWNER — Bob's person; KNOWN — an allowlisted (authorized) human friend;
-    GUEST — an unauthorized human (a stranger Bob can still meet socially); BOT —
-    another bot (a distinct kind, the foundation for a future BobNet peer).
-    """
-
-    OWNER = "owner"
-    KNOWN = "known"
-    GUEST = "guest"
-    BOT = "bot"
-
-
-class Trust(Enum):
-    """How much Bob trusts this interlocutor — orthogonal to the kind.
-
-    TRUSTED — owner or an authorized peer (full social standing); GUEST — not
-    authorized (a stranger; in a later bead this gates the restricted pipeline).
-    A bot's trust still follows authorization, so an allowlisted peer bot is
-    TRUSTED while a random bot is GUEST.
-    """
-
-    TRUSTED = "trusted"
-    GUEST = "guest"
-
-
-@dataclass(frozen=True, slots=True)
-class Interlocutor:
-    """The perceived social identity of the sender of one turn (immutable).
-
-    ``gender`` is the interlocutor's grammatical gender as read from THEIR own
-    self-presentation (BOB-078 A) — never from their name. It defaults to
-    :attr:`Gender.UNKNOWN` (neutral: Bob forces no grammatical gender) so an
-    unperceived or newly-met sender is unchanged.
-
-    ``username`` is their Telegram ``@ник`` without the «собака» (BOB-090.B3) — how they
-    can be ADDRESSED in a room, as opposed to ``display_name``, which is how they are
-    CALLED. ``None`` (the default) means «ника нет / не знаю», a normal state in Telegram;
-    it must lead to addressing them by name, never to a tag composed out of one.
-    """
-
-    sender_id: int | None
-    display_name: str
-    kind: InterlocutorKind
-    trust: Trust
-    gender: Gender = Gender.UNKNOWN
-    username: str | None = None
 
 
 def classify(
@@ -100,7 +50,7 @@ def classify(
     gender: Gender = Gender.UNKNOWN,
     username: str | None = None,
 ) -> Interlocutor:
-    """Derive the :class:`Interlocutor` from the turn's authz facts (pure).
+    """Derive the :class:`~bob.kernel.interlocutor.Interlocutor` from authz facts (pure).
 
     Mapping (deterministic, no side effects): the owner is OWNER/TRUSTED; an
     authorized non-owner human is KNOWN/TRUSTED; an unauthorized human is

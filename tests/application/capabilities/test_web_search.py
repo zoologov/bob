@@ -26,16 +26,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.capabilities.ports import (
-    ToolCall,
-    ToolCallResult,
-    ToolDefinition,
-    WebSearchResult,
-    WebSource,
-)
+from bob.capabilities.ports import WebSearchResult, WebSource
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.tool_loop import ToolLoop
 from bob.capabilities.usecases.web_search import make_web_search_capability
+from bob.kernel.ports import ToolCall, ToolCallResult, ToolDefinition
 
 if TYPE_CHECKING:
     from bob.kernel.ports import ToolLoopMessage

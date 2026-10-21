@@ -15,12 +15,8 @@ display name is carried through unchanged.
 
 from __future__ import annotations
 
-from bob.social.interlocutor import (
-    Interlocutor,
-    InterlocutorKind,
-    Trust,
-    classify,
-)
+from bob.kernel.interlocutor import Interlocutor, InterlocutorKind, Trust
+from bob.social.interlocutor import classify
 
 
 def test_owner_is_classified_owner_and_trusted() -> None:

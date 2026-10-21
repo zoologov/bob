@@ -27,10 +27,10 @@ from bob.conversation.engagement import (
     engagement_mood_lift,
     topic_interest,
 )
+from bob.kernel.relationship import Relationship
 from bob.personality.expression import EngagementLevel
 from bob.personality.mood import Mood
 from bob.personality.taste import Verdict
-from bob.social.relationship import Relationship
 
 _GOOD_MOOD = Mood(valence=0.6, arousal=0.4, openness=0.4)
 _BAD_MOOD = Mood(valence=-0.6, arousal=-0.1)

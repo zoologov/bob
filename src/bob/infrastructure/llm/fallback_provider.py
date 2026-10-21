@@ -27,7 +27,7 @@ on another model would duplicate output rather than rescue it. Nothing streams T
 today, and the honest narrow behaviour is better than a broken-by-design retry.
 
 **Capability mirroring (BOB-087.E1b).** A wrapper must not quietly change what the
-wrapped tier can do. :class:`~bob.capabilities.ports.ToolCallingProvider` is an
+wrapped tier can do. :class:`~bob.kernel.ports.ToolCallingProvider` is an
 *optional* companion of the ``LLMProvider`` port, and the tool seam
 (``bob.runtime.wiring.access._as_tool_provider``) probes for it with ``hasattr`` — so a
 composite that dropped ``complete_with_tools`` would put the tool loop to sleep without
@@ -43,13 +43,18 @@ import logging
 from typing import TYPE_CHECKING, TypeVar
 
 from bob.application.router.fallback_policy import should_fall_back
-from bob.capabilities.ports import ToolCallingProvider
+from bob.kernel.ports import ToolCallingProvider
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Sequence
 
-    from bob.capabilities.ports import ToolCallResult, ToolDefinition
-    from bob.kernel.ports import LLMMessage, LLMProvider, ToolLoopMessage
+    from bob.kernel.ports import (
+        LLMMessage,
+        LLMProvider,
+        ToolCallResult,
+        ToolDefinition,
+        ToolLoopMessage,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +147,7 @@ class ToolCallingFallbackLLMProvider(FallbackLLMProvider):
     under the SAME :func:`~bob.application.router.fallback_policy.should_fall_back`
     policy as plain chat. Build it via :func:`build_fallback_provider`, which picks this
     variant only when the primary really is a
-    :class:`~bob.capabilities.ports.ToolCallingProvider`.
+    :class:`~bob.kernel.ports.ToolCallingProvider`.
 
     The local understudy is used for a tool turn ONLY if it can make tool calls at all.
     When it cannot, the primary's outage propagates: an answer produced without the

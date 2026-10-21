@@ -3,16 +3,19 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=runtime-app
+# beadloom:feature=kernel
+# beadloom:layer=domain
 
-"""Application-level events carried on the EventBus.
+"""Intake events carried on the EventBus.
 
 These are plain, frozen value objects the runtime and use-cases exchange. The
 Telegram gateway (infrastructure) translates an inbound update into a
 :class:`MessageReceived` and publishes it; a use-case (application) consumes it.
-The event is an application concern — transport-agnostic data a use-case needs
-to react — not an infrastructure detail, so it lives with the runtime that owns
-the bus. :class:`MessageReceived` exposes a stable ``name`` so it satisfies the
+The event is transport-agnostic data a use-case needs to react — not an
+infrastructure detail. It lives in the shared kernel (BOB-113) because modules
+BELOW the runtime that owns the bus (``conversation``, ``personality``) read it
+too; parked in ``application/runtime`` it forced their signatures into an upward
+edge. :class:`MessageReceived` exposes a stable ``name`` so it satisfies the
 :class:`bob.kernel.ports.DomainEvent` contract for bus routing.
 """
 

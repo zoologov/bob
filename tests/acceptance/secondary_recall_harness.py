@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from bob.memory.ports import MemoryRecall
+    from bob.kernel.ports import MemoryRecall
 
 _MESSAGE_EVENT_TYPE = "message"
 
