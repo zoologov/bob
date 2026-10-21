@@ -55,6 +55,15 @@ GUPPI's policy layer over the provider-agnostic :class:`LLMProvider` ports
    through :class:`~bob.capabilities.usecases.tool_loop.ToolLoop`, which the privileged
    fulfilment drove with the router nowhere in sight — so it carried no canon at all until
    BOB-096.8 put the SAME seam at that second door too.
+7. **Lets a turn survive a side step the provider could not serve** (BOB-116 D13).
+   :meth:`LLMRouter.run_optional` is for a step its CALLER declares optional — the mood read
+   off the inbound, the staleness re-read before sending. When the provider could not or
+   would not serve it (the same verdict that decides a fallback: 401/403, 429, 5xx, timeout,
+   a dropped channel) the step yields ``None`` and the turn goes on to the voice door, which
+   already ends in Bob's reply or the honest GUPPI notice. Until D13 a 403 on the mood
+   classifier killed the whole turn before that door, so with no understudy the room got
+   silence instead of the notice. A ``contract`` failure and anything that is not a provider
+   failure at all still propagate: the seam skips an outage, it does not hide a defect.
 
 This module is pure application policy: it holds no transport/HTTP knowledge —
 that lives behind the injected :class:`LLMProvider` adapters.
@@ -291,13 +300,52 @@ class LLMRouter:
         "connection trouble, Bob is temporarily unavailable" system line) — the interlocutor
         gets a live line, never a borrowed voice, a bare traceback or silence.
         """
+        return await self._run(request, optional=False)
+
+    async def run_optional(self, request: LLMRequest) -> str | None:
+        """Complete a step the caller declares OPTIONAL; ``None`` when no provider could serve it.
+
+        For a side step of a turn — the mood read off the inbound, the staleness re-read
+        before sending — whose absence the turn survives (BOB-116 D13). The routing, the
+        rescue matrix and the health reporting are exactly those of :meth:`run`; only the end
+        differs. When the last attempt failed because the endpoint could not or would not
+        serve us — the SAME verdict that decides a fallback
+        (:func:`~bob.application.router.fallback_policy.should_fall_back`: auth, rate, server,
+        timeout, connection, shape) — the step is skipped: one WARNING line without a stack,
+        and ``None``. The monitor has already recorded that failure, so nothing more is
+        reported, and the caller leaves its state as it was.
+
+        🔴 Not a catch-all. A ``contract`` failure (a 400, a broken body, our own bug) is a
+        defect the fallback policy refuses to hide, and this method refuses to hide it too;
+        an error that is not a provider failure at all (a database error, a ``TypeError``)
+        classifies as ``contract`` and propagates as well. Cancellation is not an
+        ``Exception`` and is never caught.
+        """
+        try:
+            return await self._run(request, optional=True)
+        except Exception as error:
+            if not should_fall_back(error):
+                raise
+            logger.warning(
+                "optional step %s skipped: the provider could not serve it (%s: %s: %s)",
+                request.task_type.value,
+                classify_failure(error),
+                type(error).__name__,
+                error,
+            )
+            return None
+
+    async def _run(self, request: LLMRequest, *, optional: bool) -> str:
+        """The one routing path behind :meth:`run` and :meth:`run_optional`."""
         preferred = self._destination_tier(request)
         messages = self._build_messages(request)
         voice = self._who_may_answer(request)
         try:
             return await self._complete_gated(preferred, messages, voice)
         except Exception as error:
-            rescue = self._rescue_tier(request, preferred=preferred, voice=voice, error=error)
+            rescue = self._rescue_tier(
+                request, preferred=preferred, voice=voice, error=error, optional=optional
+            )
             if rescue is None:
                 raise
         return await self._complete_gated(rescue, messages, voice)
@@ -309,6 +357,7 @@ class LLMRouter:
         preferred: int,
         voice: OutageVoice,
         error: Exception,
+        optional: bool,
     ) -> int | None:
         """Which tier — if any — may try this turn once more; ``None`` = the failure stands.
 
@@ -316,6 +365,8 @@ class LLMRouter:
         a rescue and the right to have one at all are read in one screen instead of being
         spread over the ``except`` arms. Announcing the switch is part of it: a degradation
         the owner cannot see in the log is exactly the silent one Срез E ruled out.
+        ``optional`` (from :meth:`run_optional`) changes only what a Tier-0 outage that
+        nobody rescues writes to the log here: nothing, because the skip writes its own line.
         """
         if preferred != _TIER_LOCAL:
             if not should_fall_back(error):
@@ -339,6 +390,11 @@ class LLMRouter:
                 request.task_type.value,
             )
             return _TIER_API
+        if optional and should_fall_back(error):
+            # The skip in run_optional is the one line about this outage: logging it here
+            # too would report one failure twice, once with a stack. A contract failure is
+            # not skipped, so it keeps the stack below.
+            return None
         if self._health_reader is not None and self._health_reader.is_degraded(TIER0_PRIMARY):
             # The outage is already declared — the monitor logged the transition once and
             # told the owner; a stack per failed turn would only bury that line.

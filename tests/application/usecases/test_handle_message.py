@@ -16,11 +16,16 @@ only genuinely-internal ``private_context`` stays Tier-0-only.
 from __future__ import annotations
 
 import asyncio
+import logging
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from random import Random
 from typing import TYPE_CHECKING
 
+import aiohttp
 import pytest
+from multidict import CIMultiDict, CIMultiDictProxy
+from yarl import URL
 
 from bob.application.router.llm_router import LLMRouter
 from bob.application.runtime.intake.scope import TurnScope, new_turn_scope
@@ -8366,6 +8371,120 @@ async def test_tier0_outage_never_ships_the_understudy_voice_to_the_chat() -> No
     assert bot.sent == []
     assert notifier.notices == 1  # the honest «проблемы со связью» notice
     assert _bob_half(repo.episodes[0]["content"]) == "(нет ответа: проблемы со связью)"
+
+
+# --- BOB-116 D13: отказ сервисной двери Tier-0 внутри хода не роняет ход -----------------
+
+_SENTIMENT_PROMPT_MARK = "Classify the sentiment"
+_ROUTER_LOGGER = "bob.application.router.llm_router"
+
+
+def _http_403() -> aiohttp.ClientResponseError:
+    url = URL("http://llm.example/v1/chat/completions")
+    headers: CIMultiDictProxy[str] = CIMultiDictProxy(CIMultiDict())
+    info = aiohttp.RequestInfo(url, "POST", headers, url)
+    return aiohttp.ClientResponseError(info, (), status=403, message="Forbidden")
+
+
+class _SentimentFailingTier0:
+    """Tier 0, где падает ровно классификатор настроения; прочие запросы получают ответ."""
+
+    def __init__(self, error: BaseException) -> None:
+        self._error = error
+        self.sentiment_calls = 0
+
+    async def complete(
+        self,
+        messages: Sequence[Mapping[str, str]],
+        *,
+        stream: bool = False,  # noqa: ARG002 — part of the LLMProvider protocol
+    ) -> str:
+        text = " ".join(str(m.get("content", "")) for m in messages)
+        if _SENTIMENT_PROMPT_MARK in text:
+            self.sentiment_calls += 1
+            raise self._error
+        return "positive"
+
+
+class _ForbiddenProvider:
+    """Провайдер, чей ключ отозван: каждый вызов — 403."""
+
+    async def complete(
+        self,
+        messages: Sequence[Mapping[str, str]],  # noqa: ARG002 — part of the LLMProvider protocol
+        *,
+        stream: bool = False,  # noqa: ARG002 — part of the LLMProvider protocol
+    ) -> str:
+        raise _http_403()
+
+
+async def test_a_tier0_sentiment_outage_does_not_abort_the_turn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # 🔴 Находка T (S5): 403 на классификаторе настроения ронял весь ход ДО ответа. Теперь
+    # шаг пропущен, настроение не тронуто, ход доходит до голосовой двери и отвечает.
+    caplog.set_level(logging.DEBUG, logger=_ROUTER_LOGGER)
+    decide, _fake = _judge(ResponseIntent.REPLY)
+    notifier = _FakeOutageNotifier()
+    tier0 = _SentimentFailingTier0(_http_403())
+    handler, bot, _repo, _tier1 = _build(
+        reply="полный ответ",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+        tier0_provider=tier0,
+        outage_notifier=notifier,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert tier0.sentiment_calls == 1  # шаг был, и он отказал
+    assert bot.final_text == "полный ответ"  # ход дошёл до ответа
+    assert notifier.notices == 0  # голосовая дверь жива — уведомления нет
+    skipped = [
+        r
+        for r in caplog.records
+        if r.name == _ROUTER_LOGGER and "sentiment" in r.getMessage()
+    ]
+    assert len(skipped) == 1
+    assert skipped[0].exc_info is None
+
+
+async def test_a_dead_tier0_without_understudy_ends_in_the_guppi_notice() -> None:
+    # Зеркало S5 на уровне хода: Tier-0 без дублёра отвечает 403, облачный ярус тоже не
+    # служит → честное уведомление GUPPI, а не тишина в комнате.
+    decide, _fake = _judge(ResponseIntent.REPLY)
+    notifier = _FakeOutageNotifier()
+    handler, bot, repo, _tier1 = _build(
+        reply="unused",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+        tier0_provider=_ForbiddenProvider(),
+        tier1_provider=_ForbiddenProvider(),
+        essential_attempts=2,
+        retry_sleep=_RecordingSleep(),
+        outage_notifier=notifier,
+    )
+
+    await handler.handle(_message("привет"))
+
+    assert notifier.notices == 1
+    assert bot.sent == []
+    assert _bob_half(repo.episodes[0]["content"]) == "(нет ответа: проблемы со связью)"
+
+
+async def test_a_database_error_in_the_sentiment_step_still_aborts_the_turn() -> None:
+    # Шов не «ловит всё»: ошибка не провайдера (здесь — БД) проходит наружу, как раньше.
+    decide, _fake = _judge(ResponseIntent.REPLY)
+    handler, bot, _repo, _tier1 = _build(
+        reply="не должно отправиться",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+        tier0_provider=_SentimentFailingTier0(sqlite3.OperationalError("database is locked")),
+    )
+
+    with pytest.raises(sqlite3.OperationalError):
+        await handler.handle(_message("расскажи подробно про кофе"))
+    assert bot.sent == []
 
 
 async def test_successful_react_is_full_bob_not_a_failure() -> None:

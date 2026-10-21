@@ -14,7 +14,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import aiohttp
 import pytest
+from multidict import CIMultiDict, CIMultiDictProxy
+from yarl import URL
 
 from bob.application.router.llm_router import LLMRouter, TaskType
 from bob.presence.adapters.staleness_judge import LlmStalenessJudge
@@ -72,6 +75,7 @@ async def test_builds_tier0_request_and_parses_reply() -> None:
 
     reading = await judge.assess(_context())
 
+    assert reading is not None
     assert reading.answered_by_other is True
     assert reading.new_direct_question is False
     assert provider.messages is not None
@@ -87,12 +91,14 @@ async def test_request_runs_on_the_local_tier_only() -> None:
     # STALENESS_JUDGE is pinned Tier-0: a Tier-0-only router proves it never needs Tier 1.
     judge, _ = _judge("answered: no\nclosed: no\nclarified: no\nnew_question: no")
     reading = await judge.assess(_context())
+    assert reading is not None
     assert reading.answered_by_other is False
 
 
 async def test_garbled_reply_reads_as_nothing_shifted() -> None:
     judge, _ = _judge("не знаю, честно")
     reading = await judge.assess(_context())
+    assert reading is not None
     assert reading.answered_by_other is False
     assert reading.new_direct_question is False
 
@@ -101,3 +107,26 @@ async def test_raises_on_model_error() -> None:
     judge, _ = _judge("answered: no", raises=True)
     with pytest.raises(RuntimeError):
         await judge.assess(_context())
+
+
+# --- BOB-116 D13: недоступный Tier-0 — пересмотра нет, а не мёртвый ход ---------------
+
+
+class _ForbiddenProvider:
+    """Tier 0 с отозванным ключом: каждый вызов — настоящий ответ 403."""
+
+    async def complete(
+        self,
+        messages: Sequence[Mapping[str, str]],  # noqa: ARG002
+        *,
+        stream: bool = False,  # noqa: ARG002
+    ) -> str | AsyncIterator[str]:
+        url = URL("http://llm.example/v1/chat/completions")
+        headers: CIMultiDictProxy[str] = CIMultiDictProxy(CIMultiDict())
+        info = aiohttp.RequestInfo(url, "POST", headers, url)
+        raise aiohttp.ClientResponseError(info, (), status=403, message="Forbidden")
+
+
+async def test_an_unavailable_tier0_gives_no_reading_instead_of_raising() -> None:
+    judge = LlmStalenessJudge(router=LLMRouter(providers={0: _ForbiddenProvider()}))
+    assert await judge.assess(_context()) is None

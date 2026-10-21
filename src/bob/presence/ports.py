@@ -55,6 +55,10 @@ class StalenessJudge(Protocol):
     short-circuits it structurally.
     """
 
-    async def assess(self, ctx: StalenessContext) -> StalenessReading:
-        """Return the judge's read of how ``ctx`` shifted under the drafted reply."""
+    async def assess(self, ctx: StalenessContext) -> StalenessReading | None:
+        """Return the judge's read of how ``ctx`` shifted under the drafted reply.
+
+        ``None`` — the judge could not be asked (its model was unavailable, BOB-116 D13); the
+        gate then SENDs the draft, the same fail-safe as a garbled read.
+        """
         ...

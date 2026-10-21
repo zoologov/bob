@@ -11,10 +11,14 @@ itself lives in the pure domain.
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+import aiohttp
 import pytest
+from multidict import CIMultiDict, CIMultiDictProxy
+from yarl import URL
 
 from bob.application.router.llm_router import LLMRouter
 from bob.personality.disposition import Disposition
@@ -277,3 +281,57 @@ async def test_no_target_keeps_pure_delta_behaviour() -> None:
 
     # social only moved by the presence step (+), not pulled toward any baseline.
     assert updated.social == pytest.approx(low.social + 0.15)
+
+
+# --- BOB-116 D13: отказ сервисной двери Tier-0 не роняет ход и не трогает настроение ---
+
+
+class _FailingProvider:
+    """Tier 0, который не может ответить: ``error`` поднимается на каждом вызове."""
+
+    def __init__(self, error: BaseException) -> None:
+        self._error = error
+        self.calls = 0
+
+    async def complete(
+        self,
+        messages: Sequence[Mapping[str, str]],  # noqa: ARG002 — сигнатура LLMProvider
+        *,
+        stream: bool = False,  # noqa: ARG002 — сигнатура LLMProvider
+    ) -> str | AsyncIterator[str]:
+        self.calls += 1
+        raise self._error
+
+
+def _http_403() -> aiohttp.ClientResponseError:
+    url = URL("http://llm.example/v1/chat/completions")
+    headers: CIMultiDictProxy[str] = CIMultiDictProxy(CIMultiDict())
+    request_info = aiohttp.RequestInfo(url, "POST", headers, url)
+    return aiohttp.ClientResponseError(request_info, (), status=403, message="Forbidden")
+
+
+def _failing(error: BaseException, *, moment: datetime) -> UpdateMoodFromText:
+    router = LLMRouter(
+        providers={0: _FailingProvider(error), 1: StubProvider(reply="unused")}
+    )
+    return UpdateMoodFromText(router=router, clock=FixedClock(moment))
+
+
+async def test_sentiment_outage_leaves_the_mood_exactly_as_it_was() -> None:
+    # Никакого отката к «нейтрально»: ни валентность, ни сигналы частоты/ночи/присутствия —
+    # шаг пропущен целиком, настроение то же, что было до хода.
+    usecase = _failing(_http_403(), moment=_late_night())
+    mood = Mood(valence=-0.4, arousal=0.3, social=-0.2)
+    signals = TextSignals(text="Боб, привет!", message_count=5, present=True)
+
+    updated = await usecase.run(mood, signals, target=Mood(valence=0.5, social=0.5))
+
+    assert updated == mood
+
+
+async def test_a_database_error_in_the_sentiment_step_still_propagates() -> None:
+    usecase = _failing(sqlite3.OperationalError("database is locked"), moment=_daytime())
+    signals = TextSignals(text="привет", message_count=1, present=True)
+
+    with pytest.raises(sqlite3.OperationalError):
+        await usecase.run(Mood(), signals)

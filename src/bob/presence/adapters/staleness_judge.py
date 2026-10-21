@@ -44,14 +44,17 @@ class LlmStalenessJudge:
     def __init__(self, *, router: LLMRouter) -> None:
         self._router = router
 
-    async def assess(self, ctx: StalenessContext) -> StalenessReading:
+    async def assess(self, ctx: StalenessContext) -> StalenessReading | None:
         """Run the Tier-0 staleness read for ``ctx`` and parse it into a reading.
 
         Builds the request from the pure prompt builder, runs it on the local tier, and parses
-        the reply (fail-safe: a garbled read → all-False → the gate SENDs).
+        the reply (fail-safe: a garbled read → all-False → the gate SENDs). The re-read is a
+        side step of a turn that has already drafted its reply (BOB-116 D13): when Tier 0
+        cannot serve it, ``None`` — no reading, and the gate SENDs the draft — instead of an
+        error that would lose the reply. A contract failure still raises.
         """
-        raw = await self._router.run(self._request(ctx))
-        return parse_staleness_reading(raw)
+        raw = await self._router.run_optional(self._request(ctx))
+        return None if raw is None else parse_staleness_reading(raw)
 
     @staticmethod
     def _request(ctx: StalenessContext) -> LLMRequest:

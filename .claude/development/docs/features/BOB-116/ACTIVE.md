@@ -32,8 +32,9 @@
 | D10 сборка | bob-i83.11 | ✓ done (8510 passed; 18 тестов; две находки → D11) |
 | D11 fix: старт без дублёра по-настоящему + единый часовой пояс | bob-i83.15 | ✓ done (8590 passed; stand_down в startup; kernel/local_time; 12 саботажей) |
 | D12 fix: лог монитора в локальном поясе | bob-i83.16 | ✓ done (30/30; слепая зона «тот же день» закрыта тестом) |
-| T тесты | bob-i83.12 | in progress |
-| R ревью | bob-i83.13 | blocked (T, D12) |
+| T тесты | bob-i83.12 | ✓ done (12 сценариев, 11 зелёных + S5 xfail → D13; mutation 144/144 · 41/41 · 19/19) |
+| D13 fix: сервисная дверь не роняет ход (S5) | bob-i83.17 | ✓ done (шов LLMRouter.run_optional; настроение + пересмотр черновика; S5 зелёный, xfail снят; 8656 passed / 17 skipped; 5 саботажей) |
+| R ревью | bob-i83.13 | blocked (D13) |
 | TW доки | bob-i83.14 | blocked (R) |
 
 ## Progress
