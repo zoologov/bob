@@ -321,10 +321,11 @@ _OFFDAY_TONE = (
 # WHICH pipeline runs (the guest-restricted path is a later bead).
 # Cyrillic look-alikes are intentional in these Russian literals.
 # Keyed by the ALREADY-COMPUTED interlocutor-kind value (the ``InterlocutorKind``
-# enum's ``.value`` string), NOT the enum member itself: voice belongs to
-# personality and must not import the social ``InterlocutorKind`` at runtime, so the
-# social→personality edge stays one-directional (BOB-062.5). Behaviour is unchanged —
-# the caller classified the interlocutor upstream; here we only read its kind value.
+# enum's ``.value`` string), NOT the enum member itself. The enum lived in ``social``
+# when this table was written (BOB-062.5: no runtime social→personality back-edge);
+# since BOB-113 it is ``bob.kernel.interlocutor`` and importing it would be legal, but
+# the table stays string-keyed on purpose — the caller classified the interlocutor
+# upstream; here we only read its kind value. Behaviour is unchanged.
 _KIND_LABEL: dict[str, str] = {
     "owner": "твой владелец",
     "known": "твой знакомый",
@@ -335,9 +336,9 @@ _KIND_LABEL: dict[str, str] = {
 # Grammatical-gender clause (BOB-078 A): when the interlocutor's gender is read from
 # THEIR own self-presentation (never their name), Bob addresses them in that gender;
 # an UNKNOWN read forces nothing (neutral). Keyed by the ALREADY-COMPUTED gender value
-# (the social ``Gender`` enum's ``.value`` string), NOT the enum member — voice belongs
-# to personality and must not import the social ``Gender`` at runtime, keeping the
-# social→personality edge one-directional (mirrors ``_KIND_LABEL``, BOB-062.5).
+# (the ``Gender`` enum's ``.value`` string — the enum is ``bob.kernel.interlocutor``
+# since BOB-113, formerly social), NOT the enum member: string-keyed on purpose, the
+# read happened upstream (mirrors ``_KIND_LABEL``, BOB-062.5).
 # Cyrillic look-alikes are intentional in these Russian literals.
 _GENDER_CLAUSE: dict[str, str] = {
     "fem": " Обращайся к собеседнику в женском роде.",
