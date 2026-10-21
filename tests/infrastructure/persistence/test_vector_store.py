@@ -12,6 +12,7 @@ on write. No network/Ollama — the deterministic :class:`FakeEmbedder` stands i
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -145,6 +146,42 @@ async def test_backfill_is_idempotent(tmp_path: Path, embedder: FakeEmbedder) ->
     # Assert: still exactly one vector (no duplicates).
     assert await second.vector_count(source="semantic") == 1
     await second.close()
+
+
+async def test_boot_logs_the_vector_backfill_per_source(
+    tmp_path: Path, embedder: FakeEmbedder, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Arrange: a db with two facts and one episode; one fact is already embedded,
+    # so the boot backfill finds one fact and the episode missing (BOB-124: a long
+    # boot must be readable in the journal, not guessed from a profiler).
+    db_path = tmp_path / "bob.db"
+    legacy = SqliteMemoryRepo(db_path)
+    await legacy.initialize()
+    await legacy.save_fact(_fact("bob loves jazz"))
+    await legacy.save_episode_entity(_episode("we talked about the ocean"))
+    await legacy.close()
+    first = SqliteMemoryRepo(db_path, embedder=embedder)
+    await first.initialize()
+    await first.save_fact(_fact("bob hates loud noise"))
+    await first.close()
+    legacy = SqliteMemoryRepo(db_path)
+    await legacy.initialize()
+    await legacy.save_fact(_fact("bob reads at night"))
+    await legacy.close()
+
+    # Act
+    repo = SqliteMemoryRepo(db_path, embedder=embedder)
+    with caplog.at_level(logging.INFO, logger="bob.memory.adapters.sqlite_memory_repo"):
+        await repo.initialize()
+    await repo.close()
+
+    # Assert: one line names each source with its row count and how many lacked a
+    # vector, plus the time the backfill took.
+    lines = [r.getMessage() for r in caplog.records if "vector backfill" in r.getMessage()]
+    assert len(lines) == 1
+    assert "semantic 3 rows (1 missing)" in lines[0]
+    assert "episodic 1 rows (0 missing)" in lines[0]
+    assert lines[0].rstrip().endswith(" s")
 
 
 async def test_dimension_mismatch_is_rejected(tmp_path: Path) -> None:
