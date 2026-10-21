@@ -88,7 +88,7 @@ if TYPE_CHECKING:
         PursuitStoreLike,
         RuleStoreLike,
     )
-    from bob.kernel.ports import Clock, EventBus
+    from bob.kernel.ports import Clock, EventBus, HealthReader
     from bob.proactivity.usecases.plan_goal import PlanGoal
 
 logger = logging.getLogger(__name__)
@@ -264,6 +264,7 @@ class MultiBotGateway:
         identity_retry_sleep: Sleep = _LIVE_SLEEP,
         poll_sleep: Sleep = _LIVE_SLEEP,
         outage_threshold: int = _DEFAULT_OUTAGE_THRESHOLD,
+        health: HealthReader | None = None,
     ) -> None:
         self._registry = registry
         # BOB-103: the failure-path pause seam. On a network poll failure the loop
@@ -296,6 +297,9 @@ class MultiBotGateway:
         # the same config value the announcer speaks by; passed straight through.
         self._rule_max_magnitude = rule_max_magnitude
         self._coding_assistant = coding_assistant
+        # BOB-116 D6: the LLM-provider health snapshot GUPPI's ``/status`` shows; passed
+        # straight through to GUPPI (``None`` keeps ``/status`` byte-for-byte as before).
+        self._health = health
         self._poll_timeout = poll_timeout
         # One inner TelegramGateway per bot does the per-bot intake/normalisation
         # and reply. Bob's inner gateway pins replies — and the "typing…" indicator
@@ -389,7 +393,8 @@ class MultiBotGateway:
         it additionally owns the BOB-015 goal commands (``/goals``,
         ``/goal approve|plan|plan-approve|pause|resume|cancel``, ``/goals stop|go``).
         Each unwired group of commands falls through to a silent drop
-        (backward-compatible).
+        (backward-compatible). A wired ``HealthReader`` (BOB-116) adds the LLM-provider
+        health snapshot to ``/status``.
         """
         if authorizer is None or BotIdentity.GUPPI not in self._inner:
             return None
@@ -407,6 +412,7 @@ class MultiBotGateway:
             rule_max_magnitude=self._rule_max_magnitude,
             coding_assistant=self._coding_assistant,
             coding_configured=True,
+            health=self._health,
         )
 
     # --- Startup --------------------------------------------------------------

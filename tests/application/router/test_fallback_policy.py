@@ -2,13 +2,21 @@
 # SPDX-License-Identifier: BUSL-1.1
 # See the LICENSE file in the project root for full license information.
 
-"""Tests for the Tier-0 fallback verdict (BOB-087.E1) — pure, mutation-gated core.
+"""Tests for the Tier-0 fallback verdict (BOB-087.E1, BOB-116) — pure, mutation-gated core.
 
-The one question under test: is THIS failure a reason to leave the cloud Tier-0
-endpoint for the local emergency model? Transport/availability failures — yes;
-contract failures (our own bug, a mis-shaped request, a broken response body) and
-cancellation — no, because falling back there would mask defects instead of
-surviving an outage.
+Two questions under test, the second built on the first:
+
+* :func:`classify_failure` — WHICH kind of failure is this (``auth`` / ``rate`` / ``server``
+  / ``timeout`` / ``connection`` / ``shape`` / ``contract``)? The class is what the health
+  monitor counts and what the owner is told (BOB-116 RFC «Класс отказа»);
+* :func:`should_fall_back` — is THIS failure a reason to leave the preferred model for a
+  weaker one? Every class but ``contract`` — yes. ``contract`` (our own bug, a mis-shaped
+  request, a broken response body) and cancellation — no, because falling back there
+  would mask defects instead of surviving an outage.
+
+🔴 BOB-116: 401/403 moved from «contract» to ``auth`` → fallback. Bob was mute for ten days
+on a 403 from the cloud because the policy called a revoked key «our defect» and let it
+surface on every turn instead of letting the understudy answer.
 """
 
 from __future__ import annotations
@@ -21,7 +29,7 @@ from typing import cast
 import aiohttp
 import pytest
 
-from bob.application.router.fallback_policy import should_fall_back
+from bob.application.router.fallback_policy import classify_failure, should_fall_back
 
 
 def _response_error(status: int) -> aiohttp.ClientResponseError:
@@ -135,8 +143,103 @@ def test_server_error_floor_is_exactly_500(status: int, expected: bool) -> None:
         (430, False),  # unassigned — must not be swept in with 429
     ],
 )
-def test_only_408_and_429_are_availability_statuses(status: int, expected: bool) -> None:
+def test_408_and_429_are_availability_statuses_and_their_neighbours_are_not(
+    status: int, expected: bool
+) -> None:
     assert should_fall_back(_response_error(status)) is expected
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (400, False),  # bad request — OUR malformed call, surfaces
+        (401, True),  # unauthorized — the key is revoked/expired: unavailable for us
+        (402, False),  # payment required — not in the auth pair, stays a contract failure
+        (403, True),  # forbidden — the BOB-116 shape: ten days mute on a 403
+        (404, False),  # unknown model / path — a config defect of ours, surfaces
+    ],
+)
+def test_only_401_and_403_are_auth_statuses(status: int, expected: bool) -> None:
+    # 🔴 BOB-116: a revoked key or an exhausted account is not a defect a weaker model would
+    # HIDE — the cloud refuses to serve us, exactly as on 429 — so for ROUTING it is an
+    # outage. Both neighbours of each code are pinned so the pair cannot widen silently.
+    assert should_fall_back(_response_error(status)) is expected
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_auth_failure_falls_back(status: int) -> None:
+    assert should_fall_back(_response_error(status)) is True
+
+
+# --- the class of a failure: what the health monitor counts and the owner is told ---
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        # auth — the cloud refuses US: revoked key, exhausted account
+        pytest.param(_response_error(401), "auth", id="401 auth"),
+        pytest.param(_response_error(403), "auth", id="403 auth"),
+        # rate — rate-limited
+        pytest.param(_response_error(429), "rate", id="429 rate"),
+        # server — broken on their side, or the endpoint gave up waiting
+        pytest.param(_response_error(408), "server", id="408 server"),
+        pytest.param(_response_error(500), "server", id="500 server"),
+        pytest.param(_response_error(501), "server", id="501 server"),
+        pytest.param(_response_error(503), "server", id="503 server"),
+        pytest.param(_response_error(599), "server", id="599 server"),
+        # timeout — the request never came back
+        pytest.param(TimeoutError(), "timeout", id="TimeoutError timeout"),
+        pytest.param(aiohttp.ServerTimeoutError(), "timeout", id="ServerTimeoutError timeout"),
+        # connection — the channel could not be established or held
+        pytest.param(_connector_error(), "connection", id="refused connection"),
+        pytest.param(aiohttp.ServerDisconnectedError(), "connection", id="disconnect connection"),
+        pytest.param(socket.gaierror("dns"), "connection", id="gaierror connection"),
+        pytest.param(ConnectionResetError("reset"), "connection", id="reset connection"),
+        # shape — the body was cut off mid-transfer
+        pytest.param(aiohttp.ClientPayloadError("truncated"), "shape", id="truncated shape"),
+        # contract — our defect or a broken answer: surfaces, never masked
+        pytest.param(_response_error(400), "contract", id="400 contract"),
+        pytest.param(_response_error(402), "contract", id="402 contract"),
+        pytest.param(_response_error(404), "contract", id="404 contract"),
+        pytest.param(_response_error(407), "contract", id="407 contract"),
+        pytest.param(_response_error(409), "contract", id="409 contract"),
+        pytest.param(_response_error(413), "contract", id="413 contract"),
+        pytest.param(_response_error(422), "contract", id="422 contract"),
+        pytest.param(_response_error(428), "contract", id="428 contract"),
+        pytest.param(_response_error(430), "contract", id="430 contract"),
+        pytest.param(_response_error(499), "contract", id="499 contract"),
+        pytest.param(ValueError("no choices"), "contract", id="ValueError contract"),
+        pytest.param(json.JSONDecodeError("bad", "{", 0), "contract", id="JSON contract"),
+        pytest.param(aiohttp.InvalidURL("http://[bad"), "contract", id="InvalidURL contract"),
+        pytest.param(aiohttp.ClientError("x"), "contract", id="bare ClientError contract"),
+        pytest.param(TypeError("x"), "contract", id="TypeError contract"),
+        pytest.param(RuntimeError("x"), "contract", id="RuntimeError contract"),
+        pytest.param(asyncio.CancelledError(), "contract", id="CancelledError contract"),
+        pytest.param(KeyboardInterrupt(), "contract", id="KeyboardInterrupt contract"),
+    ],
+)
+def test_classify_failure(error: BaseException, expected: str) -> None:
+    assert classify_failure(error) == expected
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        _response_error(401),
+        _response_error(429),
+        _response_error(503),
+        TimeoutError(),
+        _connector_error(),
+        aiohttp.ClientPayloadError("truncated"),
+        _response_error(400),
+        ValueError("no choices"),
+        asyncio.CancelledError(),
+    ],
+)
+def test_should_fall_back_is_every_class_but_contract(error: BaseException) -> None:
+    # The two answers cannot drift apart: the routing verdict IS «the class is not contract».
+    assert should_fall_back(error) is (classify_failure(error) != "contract")
 
 
 @pytest.mark.parametrize(
@@ -156,24 +259,26 @@ def test_each_transport_entry_is_load_bearing(error: BaseException) -> None:
     assert should_fall_back(error) is True
 
 
-def test_timeout_entry_is_documentation_not_behaviour() -> None:
-    # Honest note rather than a false sense of coverage: ``TimeoutError`` has been an
-    # ``OSError`` subclass since PEP 3151, so naming it alongside ``OSError`` changes
-    # nothing — removing the name would keep every test green. It is kept for readability
-    # (a timeout is THE outage shape BOB-084 observed), and it is deliberately named inside
-    # the SAME predicate as ``OSError`` so the gate never grows a knowingly-equivalent
-    # mutant for it. This test says all of that out loud.
+def test_timeout_is_asked_before_the_socket_shape() -> None:
+    # ``TimeoutError`` has been an ``OSError`` subclass since PEP 3151, and aiohttp's
+    # ``ServerTimeoutError`` is a ``ClientConnectionError``. For the ROUTING verdict that
+    # overlap is harmless (both fall back), but since BOB-116 the CLASS is reported to the
+    # owner: a timeout read as «connection» would tell him the wrong thing. So the timeout
+    # shape is load-bearing now, and asked first.
     assert issubclass(TimeoutError, OSError)
-    assert should_fall_back(TimeoutError()) is True
+    assert classify_failure(TimeoutError()) == "timeout"
+    assert classify_failure(aiohttp.ServerTimeoutError()) == "timeout"
+    assert classify_failure(OSError("socket")) == "connection"
 
 
 # --- contract failures: OUR bug or a broken answer -> never mask with a fallback ---
 
 
-@pytest.mark.parametrize("status", [400, 401, 403, 404, 409, 413, 422])
+@pytest.mark.parametrize("status", [400, 404, 409, 413, 422])
 def test_client_side_status_does_not_fall_back(status: int) -> None:
-    # A malformed request / bad key / unknown model is a defect of ours: falling
-    # back would hide it behind a quietly degraded local answer.
+    # A malformed request / unknown model / oversized payload is a defect of ours: falling
+    # back would hide it behind a quietly degraded local answer. 401/403 are NOT here since
+    # BOB-116 — a revoked key is the cloud refusing us, see ``test_auth_failure_falls_back``.
     assert should_fall_back(_response_error(status)) is False
 
 

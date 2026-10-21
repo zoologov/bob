@@ -12,7 +12,8 @@ through :class:`MultiBotGateway.route`/``poll_once`` with fake bots:
 * **owner command** — owner ``/authorize <id>`` in General → GUPPI grants via the
   shared authorizer (persisted) and Bob never sees it;
 * **non-owner command** — ignored (no grant, no send);
-* **/status** — GUPPI answers;
+* **/status** — GUPPI answers; with a ``HealthReader`` handed to the gateway the answer
+  carries the LLM health snapshot (BOB-116 D6 — the gateway threads it into GUPPI);
 * **stranger DM** — a foreign chat is silent (no reject, no send, no reveal).
 """
 
@@ -31,9 +32,11 @@ from bob.infrastructure.telegram.multibot import (
     MultiBotGateway,
 )
 from bob.kernel.events import MESSAGE_RECEIVED, MessageReceived
+from bob.kernel.ports import HealthView
+from bob.kernel.provider_health import HealthState
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from aiogram.types import InputRichMessage
 
@@ -200,8 +203,24 @@ def _update(
     )
 
 
+@dataclass
+class _FakeHealthReader:
+    """Structural ``HealthReader`` with a fixed snapshot (BOB-116 D6)."""
+
+    views: dict[str, HealthView] = field(default_factory=dict)
+
+    def snapshot(self) -> Mapping[str, HealthView]:
+        return self.views
+
+    def is_degraded(self, provider_id: str) -> bool:  # noqa: ARG002  # pragma: no cover
+        return False
+
+    def probe_due(self, provider_id: str) -> bool:  # noqa: ARG002  # pragma: no cover
+        return True
+
+
 def _build(
-    *, authorizer: _FakeAuthorizer
+    *, authorizer: _FakeAuthorizer, health: _FakeHealthReader | None = None
 ) -> tuple[MultiBotGateway, AsyncEventBus, _FakeBot, _FakeBot]:
     bus = AsyncEventBus()
     bob, guppi = _FakeBot(), _FakeBot()
@@ -217,7 +236,7 @@ def _build(
         scope=BotScope(chat_id=_CHAT_ID, topic_id=None),
     )
     gateway = MultiBotGateway(
-        registry=registry, bus=bus, poll_timeout=10, authorizer=authorizer
+        registry=registry, bus=bus, poll_timeout=10, authorizer=authorizer, health=health
     )
     return gateway, bus, bob, guppi
 
@@ -289,6 +308,26 @@ async def test_status_command_answered_by_guppi() -> None:
     assert published is False
     assert len(guppi.sends) == 1
     assert "GUPPI" in guppi.sends[0].text
+
+
+@pytest.mark.asyncio
+async def test_status_carries_the_health_snapshot_the_gateway_was_given() -> None:
+    health = _FakeHealthReader(
+        views={"tier0-primary": HealthView(state=HealthState.HEALTHY)}
+    )
+    gateway, _, _, guppi = _build(
+        authorizer=_FakeAuthorizer(allow_all=True), health=health
+    )
+
+    await gateway.route(
+        _update(22, text="/status", thread_id=None, user_id=_OWNER_ID),
+        BotIdentity.GUPPI,
+    )
+
+    assert len(guppi.sends) == 1
+    assert "\n\nLLM:\ntier0 облако — ок\nдублёр — нет\ntier1 — нет данных" in (
+        guppi.sends[0].text
+    )
 
 
 @pytest.mark.asyncio

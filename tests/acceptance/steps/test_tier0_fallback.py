@@ -30,6 +30,7 @@ from tests.acceptance.tier0_fallback_harness import (
     CLOUD_REFUSAL,
     CLOUD_REPLY,
     DISCONNECTS,
+    FORBIDDEN,
     HANGS,
     LOCAL_REPLY,
     PRIVATE_CONTEXT,
@@ -37,6 +38,7 @@ from tests.acceptance.tier0_fallback_harness import (
     SERVER_ERROR,
     SHAREABLE_CONTEXT,
     TIER1_REPLY,
+    UNAUTHORIZED,
     UNREACHABLE,
     TurnOutcome,
     TurnRequest,
@@ -111,6 +113,17 @@ def cloud_bad_request(fallback_context: _FallbackContext) -> None:
     fallback_context.request = replace(fallback_context.request, cloud_tier0=BAD_REQUEST)
 
 
+@given("облачный Tier-0 отвечает ошибкой 403")
+def cloud_forbidden(fallback_context: _FallbackContext) -> None:
+    # Настоящий 403 с loopback: облако отказывает НАМ (протухший ключ, исчерпанный аккаунт).
+    fallback_context.request = replace(fallback_context.request, cloud_tier0=FORBIDDEN)
+
+
+@given("облачный Tier-0 отвечает ошибкой 401")
+def cloud_unauthorized(fallback_context: _FallbackContext) -> None:
+    fallback_context.request = replace(fallback_context.request, cloud_tier0=UNAUTHORIZED)
+
+
 @given("облачный Tier-0 отвечает телом без choices")
 def cloud_broken_shape(fallback_context: _FallbackContext) -> None:
     fallback_context.request = replace(fallback_context.request, cloud_tier0=BROKEN_SHAPE)
@@ -134,7 +147,8 @@ def tier1_hangs(fallback_context: _FallbackContext) -> None:
 
 @given("Tier-1 отвечает ошибкой 400")
 def tier1_bad_request(fallback_context: _FallbackContext) -> None:
-    # Не авария, а наш дефект: кривой запрос, протухший ключ, несуществующая модель.
+    # Не авария, а наш дефект: кривой запрос, несуществующая модель. Протухший ключ — это
+    # 401/403, и с BOB-116 он для маршрутизации недоступность, а не дефект.
     fallback_context.request = replace(fallback_context.request, tier1=BAD_REQUEST)
 
 
@@ -298,6 +312,22 @@ def log_names_the_cause(fallback_context: _FallbackContext) -> None:
     switch = next(message for message in warnings if "falling back to the local model" in message)
     assert "Primary LLM failed" in switch
     assert "TimeoutError" in switch
+
+
+@then("в предупреждении о переключении на дублёра видно «403»")
+def switch_warning_names_403(fallback_context: _FallbackContext) -> None:
+    assert "403" in _switch_warning(fallback_context.outcome)
+
+
+@then("в предупреждении о переключении на дублёра видно «401»")
+def switch_warning_names_401(fallback_context: _FallbackContext) -> None:
+    assert "401" in _switch_warning(fallback_context.outcome)
+
+
+def _switch_warning(outcome: TurnOutcome) -> str:
+    # Оператор должен увидеть не только факт ухода на дублёра, но и КОД отказа облака:
+    # 403 и 503 чинятся по-разному (ключ/аккаунт против ожидания).
+    return next(m for m in outcome.warnings if "falling back to the local model" in m)
 
 
 @then("в логе оператора видно, что поломку Tier-1 не стали прятать")

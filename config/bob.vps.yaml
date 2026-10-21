@@ -1,0 +1,75 @@
+# Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+# SPDX-License-Identifier: BUSL-1.1
+#
+# config/bob.vps.yaml — ПОЛНЫЙ конфиг Боба на VPS (BOB-116), трекаемый в репозитории.
+#
+# Деплой копирует этот файл в /opt/bob/config/bob.yaml и сверяет sha256 обоих: действующий
+# конфиг на сервере равен репозиторию. Правка конфига прода — это коммит сюда, а не правка
+# на сервере. Порядок слоёв прежний: встроенные дефолты <- этот файл <- окружение.
+#
+# 🔴 Репозиторий ПУБЛИЧНЫЙ. Здесь нет ни секретов, ни идентификаторов — ни значением, ни в
+# комментарии. Их держит только /opt/bob/.env (600, владелец bob), и в конфиг они попадают
+# через окружение: BOB_<секция>__<ключ>, вложенность — двойным подчёркиванием, регистр
+# любой. Лоадер приводит значение к типу дефолта: id — int, список — числа через запятую.
+# Гард: tests/infrastructure/config/test_vps_config_is_clean.py.
+#
+# Обязательные переменные /opt/bob/.env:
+#   BOB_TELEGRAM__CHAT_ID           -> telegram.chat_id         (id группы, int)
+#   BOB_TELEGRAM__OWNER_ID          -> telegram.owner_id        (id владельца, int)
+#   BOB_TELEGRAM__ALLOWED_CHAT_IDS  -> telegram.allowed_chat_ids (id через запятую)
+#   BOB_TELEGRAM__BOB__TOPIC_ID     -> telegram.bob.topic_id    (топик Боба, int)
+#   BOB_TELEGRAM__TOKEN             -> telegram.bob.token       (явное отображение)
+#   GUPPI_TELEGRAM__TOKEN           -> telegram.guppi.token     (префикс без BOB_)
+#   BOB_LLM__TIER0_API_KEY          -> llm.tier0_api_key
+#   BOB_LLM__TIER1_API_KEY          -> llm.tier1_api_key
+# Необязательные:
+#   BOB_TELEGRAM__OWNER_NAME        -> telegram.owner_name      (имя для бэкфилла BOB-045)
+#   BOB_TELEGRAM__OWNER_DM_CHAT_ID  -> telegram.owner_dm_chat_id (по умолчанию = owner_id)
+
+runtime:
+  log_level: INFO
+  heartbeat_seconds: 30
+  # BOB-103: приложение само владеет логом и ротирует его по размеру.
+  log_file: logs/bob.log
+  log_max_bytes: 33554432      # 32 MiB на файл до ротации
+  log_backup_count: 5
+  # BOB-094: Боб объявляет уход на обновление и возвращение при рестарте.
+  restart_notice: true
+
+llm:
+  # Tier-0 и Tier-1 — облако Qwen (Alibaba Model Studio, сингапурский регион).
+  tier0_base_url: https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
+  tier0_model: qwen3.6-flash
+  tier1_base_url: https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
+  tier1_model: qwen3.7-plus
+  timeout_seconds: 180
+  disable_thinking: true
+  # BOB-072: потолок одновременных вызовов Tier-1.
+  tier1_max_concurrency: 4
+  # Аварийный дублёр Tier-0 на локальном Ollama.
+  # 2026-10-21: выключен до решения по spike D9 (BOB-116). Пустое значение = выключен.
+  tier0_fallback: ""
+  # Здоровье провайдера (BOB-116): дефолты лоадера, выписанные явно.
+  health:
+    failures_threshold: 5            # отказов подряд до «провайдер лёг»
+    duration_threshold_seconds: 180  # или столько секунд отказов подряд, что раньше
+    reminders_seconds: [600, 3600, 21600, 86400]  # напоминания владельцу, последний повторяется
+    probe_seconds: [60, 120, 300]    # зонд лёгшего провайдера, последний повторяется
+    owner_alert: true                # сигнал владельцу в личку; false — только лог
+
+embeddings:
+  # Локальный Ollama на VPS ради эмбеддера (bge-m3, 1024-dim).
+  base_url: http://localhost:11434
+  model: bge-m3
+  dim: 1024
+
+telegram:
+  poll_timeout: 10
+  # BOB-094: столько неудачных поллингов подряд считаются «оглох» (диагноз в лог).
+  outage_threshold: 5
+  # chat_id, owner_id, allowed_chat_ids, bob.topic_id, owner_dm_chat_id, owner_name и оба
+  # токена — только из /opt/bob/.env (список в шапке).
+
+# Секция закомментирована целиком: пустая секция в YAML читается как null и валит лоадер.
+# memory:
+#   autobiography:  # значение — по Q5 RFC BOB-116, проверяется при миграции

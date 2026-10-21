@@ -14,7 +14,10 @@ plus the cross-module seams several contexts BELOW their old owner read (BOB-113
 the memory read ports (:class:`EpisodeReader`, :class:`MemoryRecall`), the outgoing
 reply channel (:class:`ReplyGateway`), Bob's own id (:class:`BobUserIdSource`) and the
 LLM tool-calling vocabulary (:data:`ToolDefinition`, :class:`ToolCall`,
-:class:`ToolCallResult`, :class:`ToolCallingProvider` — beside :data:`ToolLoopMessage`).
+:class:`ToolCallResult`, :class:`ToolCallingProvider` — beside :data:`ToolLoopMessage`);
+and the LLM provider-health seams both ``application`` and ``infrastructure`` speak
+(BOB-116): :class:`HealthObserver`, :class:`HealthReader`, :class:`OwnerAlertSink` and the
+:class:`HealthView` snapshot.
 These are *interfaces only*: structural :class:`typing.Protocol` definitions with
 no implementations. The kernel is deliberately dependency-free of the modules —
 every module (``capabilities`` / ``social`` / …) imports *from here*, never the
@@ -30,6 +33,10 @@ from datetime import (
     datetime,  # noqa: TC003 — runtime-resolvable for get_type_hints on the Clock port
 )
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+from bob.kernel.provider_health import (
+    HealthState,  # noqa: TC001 — runtime-resolvable for get_type_hints on HealthView
+)
 
 if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
@@ -256,4 +263,71 @@ class ToolCallingProvider(Protocol):
         tools: Sequence[ToolDefinition],
     ) -> ToolCallResult:
         """Complete a turn that may request tool calls."""
+        ...
+
+
+# --- LLM provider health (BOB-116: read by application AND infrastructure) ------------
+
+
+@dataclass(frozen=True)
+class HealthView:
+    """Read-only snapshot of one provider's health, for ``/status`` and the lane gates.
+
+    ``failing_since`` is the timezone-aware start of the current failure run (``None``
+    while nothing has failed); ``failure_class`` is the latest failure class the caller
+    reported (``auth`` / ``rate`` / ``server`` / ``timeout`` / ``connection`` /
+    ``shape`` / ``contract``).
+    """
+
+    state: HealthState
+    consecutive_failures: int = 0
+    failure_class: str | None = None
+    failing_since: datetime | None = None
+
+
+@runtime_checkable
+class HealthObserver(Protocol):
+    """Where the router and the understudy wrapper report the outcome of every call.
+
+    ``provider_id`` is ``tier0-primary`` / ``tier0-understudy`` / ``tier1``. The calls are
+    async because a transition may message the owner; an implementation swallows its own
+    delivery errors — reporting an outcome never fails the call being reported.
+    """
+
+    async def record_success(self, provider_id: str) -> None:
+        """The provider answered."""
+        ...
+
+    async def record_failure(self, provider_id: str, failure_class: str) -> None:
+        """The provider failed with ``failure_class``."""
+        ...
+
+
+@runtime_checkable
+class HealthReader(Protocol):
+    """Read side of provider health: the ``/status`` snapshot and the heartbeat lane gate."""
+
+    def snapshot(self) -> Mapping[str, HealthView]:
+        """Every known provider's health, keyed by ``provider_id``."""
+        ...
+
+    def is_degraded(self, provider_id: str) -> bool:
+        """Whether ``provider_id`` is currently declared out of service."""
+        ...
+
+    def probe_due(self, provider_id: str) -> bool:
+        """Whether a call to ``provider_id`` may go now (always, unless degraded)."""
+        ...
+
+
+@runtime_checkable
+class OwnerAlertSink(Protocol):
+    """A direct message to the owner that does not go through the LLM.
+
+    Distinct from the restart announcement (different meaning, BOB-116 CONTEXT): this path
+    must work precisely when the model stack is what broke.
+    """
+
+    async def notify_owner(self, text: str) -> None:
+        """Deliver ``text`` to the owner's private chat."""
         ...

@@ -26,6 +26,16 @@ mid-iteration, after tokens may already have reached the reader, so re-running t
 on another model would duplicate output rather than rescue it. Nothing streams Tier-0
 today, and the honest narrow behaviour is better than a broken-by-design retry.
 
+**Health reporting (BOB-116).** The composite reports every attempt to the injected
+:class:`~bob.kernel.ports.HealthObserver` — the cloud as ``tier0-primary``, the stand-in as
+``tier0-understudy`` — each with its own outcome, classified by
+:func:`~bob.application.router.fallback_policy.classify_failure`. Separately, because a dead
+cloud key behind a LIVE stand-in must still reach the owner: the caller sees a fine answer,
+only this report can tell. The router does not report a call that goes through this
+composite (one HTTP call — one record). A failure is recorded before it propagates (the
+heartbeat lane gate reads the snapshot right after the tick). The stream path is not
+reported: nothing streams Tier 0, and a stream's outcome is only known mid-iteration.
+
 **Capability mirroring (BOB-087.E1b).** A wrapper must not quietly change what the
 wrapped tier can do. :class:`~bob.kernel.ports.ToolCallingProvider` is an
 *optional* companion of the ``LLMProvider`` port, and the tool seam
@@ -42,13 +52,19 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, TypeVar
 
-from bob.application.router.fallback_policy import should_fall_back
+from bob.application.router.fallback_policy import classify_failure, should_fall_back
+from bob.application.router.health_monitor import (
+    TIER0_PRIMARY,
+    TIER0_UNDERSTUDY,
+    NoopHealthObserver,
+)
 from bob.kernel.ports import ToolCallingProvider
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Sequence
 
     from bob.kernel.ports import (
+        HealthObserver,
         LLMMessage,
         LLMProvider,
         ToolCallResult,
@@ -76,9 +92,16 @@ class FallbackLLMProvider:
     Tier1 → Tier0 fallback, bob-41o — one policy for both floors of the tiering).
     """
 
-    def __init__(self, *, primary: LLMProvider, fallback: LLMProvider) -> None:
+    def __init__(
+        self,
+        *,
+        primary: LLMProvider,
+        fallback: LLMProvider,
+        health: HealthObserver | None = None,
+    ) -> None:
         self._primary = primary
         self._fallback = fallback
+        self._health: HealthObserver = health if health is not None else NoopHealthObserver()
 
     def without_understudy(self) -> LLMProvider:
         """The primary alone — this composite minus its stand-in (BOB-087.E-M1).
@@ -101,8 +124,9 @@ class FallbackLLMProvider:
         if stream:
             return await self._primary.complete(messages, stream=True)
         try:
-            return await self._primary.complete(messages, stream=False)
+            result = await self._primary.complete(messages, stream=False)
         except Exception as error:
+            await self._health.record_failure(TIER0_PRIMARY, classify_failure(error))
             if not should_fall_back(error):
                 raise
             return await self._degrade_to_local(
@@ -110,6 +134,8 @@ class FallbackLLMProvider:
                 error=error,
                 turn=_CHAT_TURN,
             )
+        await self._health.record_success(TIER0_PRIMARY)
+        return result
 
     async def _degrade_to_local(
         self,
@@ -130,14 +156,17 @@ class FallbackLLMProvider:
             error,
         )
         try:
-            return await local_attempt
+            result = await local_attempt
         except Exception as local_error:
+            await self._health.record_failure(TIER0_UNDERSTUDY, classify_failure(local_error))
             logger.warning(
                 "Local fallback LLM failed too (%s: %s); re-raising the primary failure",
                 type(local_error).__name__,
                 local_error,
             )
             raise error from local_error
+        await self._health.record_success(TIER0_UNDERSTUDY)
+        return result
 
 
 class ToolCallingFallbackLLMProvider(FallbackLLMProvider):
@@ -155,13 +184,19 @@ class ToolCallingFallbackLLMProvider(FallbackLLMProvider):
     silently wrong — one, and the tool loop has no way to tell.
     """
 
-    def __init__(self, *, primary: LLMProvider, fallback: LLMProvider) -> None:
+    def __init__(
+        self,
+        *,
+        primary: LLMProvider,
+        fallback: LLMProvider,
+        health: HealthObserver | None = None,
+    ) -> None:
         if not isinstance(primary, ToolCallingProvider):
             raise TypeError(
                 "ToolCallingFallbackLLMProvider needs a tool-calling primary; "
                 "use build_fallback_provider() to pick the right composite"
             )
-        super().__init__(primary=primary, fallback=fallback)
+        super().__init__(primary=primary, fallback=fallback, health=health)
         self._tool_primary: ToolCallingProvider = primary
 
     async def complete_with_tools(
@@ -172,8 +207,9 @@ class ToolCallingFallbackLLMProvider(FallbackLLMProvider):
     ) -> ToolCallResult:
         """Complete a tool turn, degrading to the local model on a transport failure."""
         try:
-            return await self._tool_primary.complete_with_tools(messages, tools=tools)
+            result = await self._tool_primary.complete_with_tools(messages, tools=tools)
         except Exception as error:
+            await self._health.record_failure(TIER0_PRIMARY, classify_failure(error))
             if not should_fall_back(error):
                 raise
             local = self._fallback
@@ -191,12 +227,15 @@ class ToolCallingFallbackLLMProvider(FallbackLLMProvider):
                 error=error,
                 turn=_TOOL_TURN,
             )
+        await self._health.record_success(TIER0_PRIMARY)
+        return result
 
 
 def build_fallback_provider(
     *,
     primary: LLMProvider,
     fallback: LLMProvider,
+    health: HealthObserver | None = None,
 ) -> FallbackLLMProvider:
     """Compose ``primary`` + ``fallback`` into the variant that mirrors ``primary``.
 
@@ -207,5 +246,5 @@ def build_fallback_provider(
     the ``hasattr``-based tool seam.
     """
     if isinstance(primary, ToolCallingProvider):
-        return ToolCallingFallbackLLMProvider(primary=primary, fallback=fallback)
-    return FallbackLLMProvider(primary=primary, fallback=fallback)
+        return ToolCallingFallbackLLMProvider(primary=primary, fallback=fallback, health=health)
+    return FallbackLLMProvider(primary=primary, fallback=fallback, health=health)

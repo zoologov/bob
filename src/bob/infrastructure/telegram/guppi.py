@@ -18,7 +18,9 @@ dispatches its two BEAD-02 drop-hooks here:
 * :meth:`GuppiHandler.handle_general_command` — an owner-only command in General:
   ``/authorize <id>`` / ``/deauthorize <id>`` mutate the allowlist through the
   shared :class:`~bob.social.usecases.Authorizer` (no duplicated authz),
-  ``/status`` answers a short whoami line, and — when a proactivity store is wired
+  ``/status`` answers a short whoami line (plus the LLM-provider health snapshot,
+  :mod:`~bob.infrastructure.telegram.health_status`, when a ``HealthReader`` is wired —
+  BOB-116), and — when a proactivity store is wired
   in — ``/quiet`` (optionally ``/quiet 2h`` for a timed mute) / ``/wake`` toggle
   Bob's per-persona proactivity flag (and its timed-mute expiry). A command from
   anyone but the owner, a non-command message, or any chat other than the General
@@ -35,6 +37,7 @@ from dataclasses import replace
 from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol
 
+from bob.infrastructure.telegram.health_status import render_health_status
 from bob.proactivity.goals.state import GoalState, can_transition
 from bob.proactivity.rule_announcement import (
     is_undelivered_proposal,
@@ -53,7 +56,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from bob.infrastructure.telegram.gateway import AuthorizerLike, BotLike
-    from bob.kernel.ports import Clock
+    from bob.kernel.ports import Clock, HealthReader
     from bob.proactivity.goals.graph import GoalGraph
     from bob.proactivity.self_improvement import ImprovementRule
     from bob.proactivity.state import ProactivityState
@@ -281,6 +284,7 @@ class GuppiHandler:
         rule_max_magnitude: float = MAGNITUDE_RANGE_TOP,
         coding_assistant: CodingAssistantLike | None = None,
         coding_configured: bool = False,
+        health: HealthReader | None = None,
     ) -> None:
         self._bot = bot
         self._authorizer = authorizer
@@ -304,6 +308,9 @@ class GuppiHandler:
         # instead of silently falling through.
         self._coding_assistant = coding_assistant
         self._coding_configured = coding_configured or coding_assistant is not None
+        # Снимок здоровья LLM-провайдеров для ``/status`` (BOB-116 D6). ``None`` — монитор
+        # не подключён: ``/status`` отвечает прежним текстом байт-в-байт.
+        self._health = health
 
     async def reject(self, *, chat_id: int, thread_id: int | None) -> None:
         """Send the visible "unauthorized" reject into ``chat_id``/``thread_id``.
@@ -360,9 +367,19 @@ class GuppiHandler:
             await self._grant(chat_id, argument, grant=False)
             return True
         if command == _STATUS_COMMAND:
-            await self._reply(chat_id, _STATUS_TEXT)
+            await self._reply(chat_id, self._status_text())
             return True
         return False
+
+    def _status_text(self) -> str:
+        """Ответ ``/status``: whoami-строка и, если подключён монитор, снимок здоровья LLM.
+
+        Снимок читается в момент команды, а не при сборке: ``/status`` показывает то, что
+        монитор знает сейчас.
+        """
+        if self._health is None:
+            return _STATUS_TEXT
+        return f"{_STATUS_TEXT}\n\n{render_health_status(self._health.snapshot())}"
 
     async def _dispatch_proactivity(self, chat_id: int, command: str, argument: str) -> bool:
         """Handle the /quiet, /wake owner commands when a proactivity store is wired."""

@@ -2183,6 +2183,33 @@ ignore = [
 "src/bob/kernel/poll_outage.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/domain/kernel/test_poll_outage.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/infrastructure/telegram/test_multibot_poll_outage.py" = ["RUF001", "RUF002", "RUF003"]
+# BOB-116 D1 (bob-i83.1): ядро здоровья LLM-провайдера и его тест объясняют по-русски,
+# почему деградация — по числу ИЛИ по длительности и почему одиночный 5xx не будит
+# владельца; кириллические похожие символы намеренны → RUF001/RUF002/RUF003 не применяются.
+"src/bob/kernel/provider_health.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/kernel/test_provider_health.py" = ["RUF001", "RUF002", "RUF003"]
+# BOB-116 D3 (bob-i83.6): монитор здоровья провайдеров, тексты владельцу от первого лица
+# и их тесты — русские строки сигнала и русские докстринги; кириллические похожие
+# символы намеренны → RUF001/RUF002/RUF003 не применяются.
+"src/bob/application/router/health_monitor.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/application/router/health_messages.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/application/router/test_health_monitor.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/application/router/test_health_messages.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/application/router/test_llm_router_health.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/llm/test_fallback_provider_health.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/llm/test_health_reporting_loopback.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/llm/test_understudy_probe.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/infrastructure/llm/understudy_probe.py" = ["RUF001", "RUF002", "RUF003"]
+# BOB-116 D4 (bob-i83.7): адаптер сигнала владельцу о простое и его тест — русские
+# докстринги и русский текст сигнала; кириллические похожие символы намеренны.
+"src/bob/infrastructure/telegram/owner_alert.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/telegram/test_owner_alert.py" = ["RUF001", "RUF002", "RUF003"]
+# BOB-116 D6 (bob-i83.9): снимок здоровья LLM в GUPPI /status — русские строки для
+# владельца («деградирован с …», «дублёр — нет») и русские докстринги; кириллические
+# похожие символы намеренны → RUF001/RUF002/RUF003 не применяются.
+"src/bob/infrastructure/telegram/health_status.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/telegram/test_guppi_health_status.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/telegram/test_multibot_guppi.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/memory/digest_provenance.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/memory/adapters/sqlite_memory_repo.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/domain/kernel/test_visibility.py" = ["S101", "RUF001", "RUF002", "RUF003"]
@@ -2717,6 +2744,13 @@ source_paths = [
     # MUTATION.md «Порог и честность» — методы декорированных классов (§0.3 п.6-7).
     "src/bob/kernel/relationship.py",
     "src/bob/kernel/modulators.py",
+    # BOB-116 D1 (bob-i83.1): здоровье LLM-провайдера — чистая развилка «DEGRADED по числу
+    # ИЛИ по длительности, один раз; REMINDER по расписанию с потолком; RECOVERED только из
+    # DEGRADED; зонд по расписанию». Подмени ``or`` на ``and`` — и мёртвый ключ, который
+    # отказывает раз в минуту, никогда не дойдёт до сигнала; сдвинь индекс расписания — и
+    # владельца завалит напоминаниями. Логика — в функциях модульного уровня (методы
+    # ``@dataclass`` mutmut не мутирует), файл перечислен точечно (§0.3 п.6-7).
+    "src/bob/kernel/provider_health.py",
 ]
 # Deny the impure sub-trees inside those packages: adapters (I/O), ports (protocols),
 # and package __init__ re-exports carry no deterministic verdict logic to mutate.

@@ -70,6 +70,8 @@ ANSWERS: Final = "answers"
 REFUSES: Final = "refuses"
 BROKEN_SHAPE: Final = "broken_shape"
 BAD_REQUEST: Final = "bad_request"
+UNAUTHORIZED: Final = "unauthorized"
+FORBIDDEN: Final = "forbidden"
 SERVER_ERROR: Final = "server_error"
 HANGS: Final = "hangs"
 DISCONNECTS: Final = "disconnects"
@@ -175,6 +177,16 @@ async def _bad_request(_request: web.Request, _reply: str) -> web.StreamResponse
     return web.json_response({"error": "unknown model"}, status=400)
 
 
+async def _unauthorized(_request: web.Request, _reply: str) -> web.StreamResponse:
+    # A revoked / expired key: the cloud refuses US (BOB-116) — not our malformed request.
+    return web.json_response({"error": "invalid api key"}, status=401)
+
+
+async def _forbidden(_request: web.Request, _reply: str) -> web.StreamResponse:
+    # The BOB-116 production shape: an exhausted account / access denied, ten days of 403.
+    return web.json_response({"error": "access denied"}, status=403)
+
+
 async def _server_error(_request: web.Request, _reply: str) -> web.StreamResponse:
     return web.json_response({"error": "upstream exploded"}, status=503)
 
@@ -203,6 +215,8 @@ _REACTIONS: Final[dict[str, _Reaction]] = {
     ANSWERS: _answer,
     REFUSES: _refuse,
     BAD_REQUEST: _bad_request,
+    UNAUTHORIZED: _unauthorized,
+    FORBIDDEN: _forbidden,
     SERVER_ERROR: _server_error,
     BROKEN_SHAPE: _broken_shape,
     HANGS: _hang,

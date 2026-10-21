@@ -3,7 +3,10 @@
 #
 # Example Bob configuration. Copy to config/bob.yaml and fill in.
 # Precedence: built-in defaults <- this YAML <- environment (BOB_* with __ nesting,
-# e.g. BOB_LLM__TIER1_API_KEY).
+# e.g. BOB_LLM__TIER1_API_KEY). An env value takes the type of the built-in default at
+# its path: int, float, bool (true/false, 1/0, yes/no, on/off), a comma-separated list
+# (BOB_TELEGRAM__ALLOWED_CHAT_IDS=-100123,-100456); a value that does not fit stops the
+# start with an error naming the variable. The production config is config/bob.vps.yaml.
 #
 # SECRETS (the two bot tokens, llm.tier1_api_key) — prefer environment variables
 # over committing them here. Never commit a real token/key. The bot tokens are
@@ -71,6 +74,20 @@ llm:
   # tier0_fallback: ollama
   # tier0_fallback_base_url: http://localhost:11434/v1
   # tier0_fallback_model: qwen2.5:0.5b
+
+  # Здоровье провайдера (BOB-116). Боб был нем десять дней на 403 облачного Tier-0, и об
+  # этом знал только лог. Провайдер, который отказывает подряд, объявляется лёгшим по
+  # числу отказов ИЛИ по их длительности — что наступит раньше; владелец получает один
+  # сигнал в личку, затем напоминания по расписанию (последний интервал повторяется), а
+  # лёгший провайдер проверяется зондом по своему расписанию. Значения ниже — дефолты
+  # лоадера; блок можно не писать вовсе. Из окружения: BOB_LLM__HEALTH__OWNER_ALERT=false,
+  # BOB_LLM__HEALTH__PROBE_SECONDS=60,120,300 — значение приводится к типу дефолта.
+  health:
+    failures_threshold: 5            # отказов подряд до «провайдер лёг»
+    duration_threshold_seconds: 180  # или столько секунд отказов подряд
+    reminders_seconds: [600, 3600, 21600, 86400]  # 10 мин, 1 ч, 6 ч, затем раз в сутки
+    probe_seconds: [60, 120, 300]    # зонд: 1 мин, 2 мин, затем раз в 5 мин
+    owner_alert: true                # false — только строка в логе, без сообщения владельцу
 
 # memory:
   # Рабочая память dev-действий + защита личного общения от её протечки (BOB-087.B+C).

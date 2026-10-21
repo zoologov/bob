@@ -34,7 +34,15 @@ GUPPI's policy layer over the provider-agnostic :class:`LLMProvider` ports
    :mod:`bob.application.router.voice_integrity` core: a turn that is «the voice that
    STAYS» (BOB-096.4 — the door both speaks AS BOB and is kept) keeps the stand-in out and
    escalates **UP** to Tier 1 (one hop, same redaction), or fails honestly.
-5. **Carries the VOICE canon to every door** (BOB-096.3). The ban on role-playing GUPPI
+5. **Reports every provider outcome to the health monitor** (BOB-116). Each attempt on a
+   tier is reported to the injected :class:`~bob.kernel.ports.HealthObserver` — ``tier1``
+   always, Tier 0 as ``tier0-primary`` ONLY when the provider actually called is not the
+   understudy wrapper (:class:`~bob.kernel.ports.UnderstudyBackedProvider`): the wrapper
+   reports its primary and its stand-in itself, so one HTTP call is one record, never two.
+   Bob's own voice on Tier 0 goes to the BARE primary (``without_understudy``), past the
+   wrapper — that call the router reports. 🔴 A failure is recorded BEFORE it propagates:
+   the heartbeat lane gate reads the snapshot right after the tick (BOB-116 D5).
+6. **Carries the VOICE canon to every door** (BOB-096.3). The ban on role-playing GUPPI
    stood on ONE door out of sixteen — the conversational turn — while the reflection,
    its reappraisal, the consolidation digest, the proactive line, the work journal and
    ``extract_facts`` all walked past it and wrote canon-breaking few-shot INTO memory,
@@ -59,17 +67,18 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from bob.application.router.fallback_policy import should_fall_back
+from bob.application.router.fallback_policy import classify_failure, should_fall_back
 from bob.application.router.generation_door import TaskType, door_for
+from bob.application.router.health_monitor import TIER0_PRIMARY, TIER1, NoopHealthObserver
 from bob.application.router.voice_canon import fold_voice_canon
 from bob.application.router.voice_integrity import OutageVoice, who_may_answer_for_bob
-from bob.kernel.ports import UnderstudyBackedProvider
+from bob.kernel.ports import HealthReader, UnderstudyBackedProvider
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from bob.application.router.voice_canon import VoiceCanon
-    from bob.kernel.ports import LLMMessage, LLMProvider
+    from bob.kernel.ports import HealthObserver, LLMMessage, LLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -182,6 +191,7 @@ class LLMRouter:
         providers: Mapping[int, LLMProvider],
         tier1_max_concurrency: int | None = None,
         voice_canon: VoiceCanon | None = None,
+        health: HealthObserver | None = None,
     ) -> None:
         if _TIER_LOCAL not in providers:
             raise ValueError("LLMRouter requires a Tier 0 (local) provider")
@@ -209,6 +219,12 @@ class LLMRouter:
         self._tier0_has_understudy = isinstance(
             self._providers[_TIER_LOCAL], UnderstudyBackedProvider
         )
+        # Provider health (BOB-116): every attempt's outcome goes here. ``None`` → a no-op,
+        # so a hand-built router and every existing test are byte-identical. When the same
+        # object can also READ health (the monitor does), a Tier-0 failure during an outage
+        # the monitor already declared is logged as one line instead of a fresh stack.
+        self._health: HealthObserver = health if health is not None else NoopHealthObserver()
+        self._health_reader = health if isinstance(health, HealthReader) else None
 
     async def run(self, request: LLMRequest) -> str:
         """Complete ``request`` on its preferred tier, with ONE rescue attempt on failure.
@@ -308,6 +324,17 @@ class LLMRouter:
                 request.task_type.value,
             )
             return _TIER_API
+        if self._health_reader is not None and self._health_reader.is_degraded(TIER0_PRIMARY):
+            # The outage is already declared — the monitor logged the transition once and
+            # told the owner; a stack per failed turn would only bury that line.
+            logger.warning(
+                "Tier 0 completion failed with no fallback on %s while %s is degraded (%s: %s)",
+                request.task_type.value,
+                TIER0_PRIMARY,
+                type(error).__name__,
+                error,
+            )
+            return None
         logger.exception("Tier 0 completion failed with no fallback")
         return None
 
@@ -428,7 +455,30 @@ class LLMRouter:
         self, tier: int, messages: Sequence[LLMMessage], voice: OutageVoice
     ) -> str:
         provider = self._provider_for(tier, voice)
-        result = await provider.complete(messages, stream=False)
+        provider_id = self._reported_id(tier, provider)
+        try:
+            result = await provider.complete(messages, stream=False)
+        except Exception as error:
+            if provider_id is not None:
+                # Awaited BEFORE the error propagates: the lane gate compares snapshots
+                # around the tick and must already see this failure (BOB-116 D5).
+                await self._health.record_failure(provider_id, classify_failure(error))
+            raise
+        if provider_id is not None:
+            await self._health.record_success(provider_id)
         if not isinstance(result, str):
             raise TypeError("non-stream completion must return str")
         return result
+
+    @staticmethod
+    def _reported_id(tier: int, provider: LLMProvider) -> str | None:
+        """Under which id the router reports a call to ``provider`` — ``None``: not its to report.
+
+        The understudy wrapper reports ``tier0-primary`` and ``tier0-understudy`` itself, so
+        a call that goes THROUGH it is left to it; reporting it here as well would count one
+        HTTP call twice. The decision is made on the provider actually called, so the bare
+        primary behind Bob's own voice (``without_understudy``) is reported here.
+        """
+        if isinstance(provider, UnderstudyBackedProvider):
+            return None
+        return TIER0_PRIMARY if tier == _TIER_LOCAL else TIER1

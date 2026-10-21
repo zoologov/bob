@@ -55,7 +55,9 @@ backups/
 *.pem
 *.key
 
-# Local run config (may reference secrets; bob.example.yaml is the tracked template)
+# Local run config (may reference secrets; bob.example.yaml is the tracked template).
+# config/bob.vps.yaml is TRACKED on purpose: the production config with no secrets and
+# no ids (BOB-116), guarded by tests/infrastructure/config/test_vps_config_is_clean.py.
 config/bob.yaml
 
 # Ollama models (large binaries)
