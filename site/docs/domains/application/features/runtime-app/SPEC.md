@@ -1,7 +1,7 @@
 <!-- beadloom:badge-start -->
 > ✅ **fresh**
 > 
-> last synced 2026-10-21T21:04:41.376096+00:00 · coverage 100% (`runtime-app`)
+> last synced 2026-10-22T03:33:25.936344+00:00 · coverage 100% (`runtime-app`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
 <!-- beadloom:badge-end -->
@@ -69,6 +69,14 @@ async-примитивы приложения, а не корень сборки
   С BOB-116 D13 судья устаревания может не ответить (`StalenessJudge.assess` → `None`, когда
   провайдер недоступен — `LLMRouter.run_optional`), и тогда черновик отправляется, а не
   теряется.
+- **serial_queue.py** — `SerialQueue[T]`, очередь с одним фоновым воркером (BOB-126, ревью
+  M1): `submit` синхронный и возвращается сразу, элементы обрабатываются строго по одному в
+  порядке поступления, отказ обработчика логируется и воркер не останавливает. Сборка ставит
+  её между шиной и `PerceiveReaction`: подписчик `BOB_MESSAGE_REACTION` вызывается из цикла
+  поллинга Telegram, а судья реакции — вызов Tier-0, который с дублёром может думать до 180 с.
+  Элемент живёт в памяти процесса (at-most-once, как сообщение в `ChatDispatcher`); `aclose`
+  не ждёт медленный обработчик — отменяет текущий элемент, сбрасывает очередь и пишет в лог,
+  сколько брошено.
 - **intake/** — concurrency-развязка между поллером и Бобом (BOB-066 Срез 2.1):
   - `dispatcher.py` — `ChatDispatcher`, быстрый неблокирующий `submit` + по воркеру на
     `chat_id`, сериализующий каждый чат (`wait_for_idle`, `aclose`).
@@ -92,6 +100,7 @@ async-примитивы приложения, а не корень сборки
 - `retry_with_backoff` ретраит **только** транзиентные сбои (перманентные пробрасывает).
 - `AsyncEventBus` изолирует ошибку одного обработчика — она не роняет доставку остальным.
 - `ChatDispatcher` сериализует ходы в пределах одного `chat_id`; разные чаты идут конкурентно.
+- `SerialQueue` обрабатывает элементы по одному и по порядку; вызывающий её не ждёт.
 - `TurnScope.rng` — единственный источник seeded-случайности хода (детерминизм под intake).
 
 ## API
@@ -104,6 +113,8 @@ async-примитивы приложения, а не корень сборки
   gate_id: str | None = None)` → `Tick` — тик под гейтом здоровья LLM (BOB-116).
 - `retry_with_backoff(...)` / `is_transient(...)` — ретрай транзиентных сбоев.
 - `ChatDispatcher.submit(...)` / `.wait_for_idle()` / `.aclose()` — intake-развязка.
+- `SerialQueue(handle, *, name)`; `.submit(item)` / `.wait_for_idle()` / `.aclose()` — работа
+  вне пути вызывающего, по одному элементу.
 - `new_turn_scope(...)` → `TurnScope` — изолированный per-turn контекст.
 
 ## Тестирование
@@ -111,7 +122,8 @@ async-примитивы приложения, а не корень сборки
 Тесты: `tests/application/runtime/test_agent.py`, `test_event_bus.py`, `test_retry.py`,
 `test_heartbeat_scheduler.py`, `test_delayed_turn.py`, `test_share_of_voice_gate.py`,
 `test_catch_up_reentry.py`, `test_staleness_reassessor.py`,
-`test_bob_message_reaction_event.py`, и `tests/application/runtime/intake/` (dispatcher,
+`test_bob_message_reaction_event.py`, `test_serial_queue.py`, и
+`tests/application/runtime/intake/` (dispatcher,
 inbox, focus, scope, room_stream_reader). Гейт здоровья (BOB-116):
 `tests/application/runtime/test_heartbeat_health_gated.py` (фейковый читатель: пропуск,
 зонд, `INFO` без стека, ошибка БД в деградации логируется со стеком через настоящий

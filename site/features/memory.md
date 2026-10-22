@@ -13,6 +13,7 @@ Memory module («Bob remembers») — the full vertical capability in one place:
 
 ## Public symbols
 
+- `BackfillTally`
 - `CasualFloorRecall`
 - `ClassifyWorkTalk`
 - `ConsolidateMemory`
