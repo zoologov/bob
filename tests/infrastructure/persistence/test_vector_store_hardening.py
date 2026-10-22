@@ -13,6 +13,7 @@ temp SQLite connection with the sqlite-vec extension loaded.
 
 from __future__ import annotations
 
+import sqlite3
 from typing import TYPE_CHECKING
 
 import aiosqlite
@@ -122,6 +123,36 @@ async def test_embed_row_is_idempotent_for_same_source_and_id(tmp_path: Path) ->
         await store.embed_row("semantic", 7, "again")
 
         # Assert: exactly one vector for that row (idempotent under retries).
+        assert await store.count(source="semantic") == 1
+    finally:
+        await conn.close()
+
+
+class _MisconfiguredThenFixedEmbedder:
+    """Returns a wrong-width vector on the first call, a correct one afterwards."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        self.calls += 1
+        width = _DIM - 1 if self.calls == 1 else _DIM
+        return [[1.0] * width for _ in texts]
+
+
+async def test_rejected_vector_is_not_counted_as_embedded(tmp_path: Path) -> None:
+    # Arrange: the first embedding has the wrong width, so sqlite-vec rejects the
+    # insert; the store remembers which rows are embedded and must not remember this one.
+    conn = await _open(tmp_path)
+    store = MemoryVectorStore(conn, embedder=_MisconfiguredThenFixedEmbedder())
+    try:
+        with pytest.raises(sqlite3.OperationalError, match=r"[Dd]imension"):
+            await store.embed_row("semantic", 7, "first try")
+
+        # Act: the same row again, now with a correct vector.
+        await store.embed_row("semantic", 7, "second try")
+
+        # Assert: the retry embedded it — the rejected attempt left no false "done".
         assert await store.count(source="semantic") == 1
     finally:
         await conn.close()

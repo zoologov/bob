@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from bob.infrastructure.persistence.connection import SqliteConnection
@@ -105,8 +106,26 @@ class SqliteMemoryRepo:
         await self._backfill_episodic_sender_id()
         await self._repair_digest_visibility()
         await self._db().commit()
-        await self._vector_store().backfill()
+        await self._backfill_vectors()
         logger.info("SqliteMemoryRepo initialised at %s", self._connection.db_path)
+
+    async def _backfill_vectors(self) -> None:
+        """Embed the un-embedded archive and log one line of what the boot found.
+
+        The backfill runs before Bob polls Telegram, so its duration is the boot's
+        silence; the line (rows and missing vectors per source, seconds) makes a
+        long boot readable in the journal (BOB-124).
+        """
+        started = time.perf_counter()
+        tallies = await self._vector_store().backfill()
+        elapsed = time.perf_counter() - started
+        if not tallies:
+            logger.info("vector backfill: no embedder wired, skipped in %.2f s", elapsed)
+            return
+        per_source = ", ".join(
+            f"{t.source} {t.rows} rows ({t.missing} missing)" for t in tallies
+        )
+        logger.info("vector backfill: %s in %.2f s", per_source, elapsed)
 
     async def _migrate_episodic_consolidated(self) -> None:
         """Add ``episodic_log.consolidated`` to a pre-existing DB (idempotent, BOB-021).

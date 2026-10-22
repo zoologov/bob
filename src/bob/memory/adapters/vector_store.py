@@ -18,6 +18,10 @@ facts/episodes on :meth:`backfill`, and **on-write** embedding of a freshly
 saved fact/episode via :meth:`embed_row`. With no embedder injected it is inert
 (graceful keyword-only fallback) — the vector table still exists, just empty.
 
+Which rows already have a vector is answered from an id set read once per
+source and kept in step on insert: vec0 cannot index ``src_id``, so any SQL
+lookup by it is a full table scan (BOB-124).
+
 It also serves the *read* side of semantic recall: :meth:`knn` runs a sqlite-vec
 KNN over ``memory_vec``, joins each hit back to its source row's content, and
 returns the nearest neighbours (vector distance, ascending). The RRF fusion of
@@ -28,6 +32,7 @@ from __future__ import annotations
 
 import logging
 import struct
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 import sqlite_vec
@@ -67,6 +72,15 @@ _SOURCE_FILTERS: dict[VectorSource, str] = {
 }
 
 
+@dataclass(frozen=True)
+class BackfillTally:
+    """What one source's boot backfill found: its rows and how many lacked a vector."""
+
+    source: VectorSource
+    rows: int
+    missing: int
+
+
 def _pack(vector: Sequence[float]) -> bytes:
     """Pack a float vector into sqlite-vec's little-endian float32 blob format."""
     return struct.pack(f"<{len(vector)}f", *vector)
@@ -83,6 +97,11 @@ class MemoryVectorStore:
     def __init__(self, conn: aiosqlite.Connection, embedder: Embedder | None) -> None:
         self._conn = conn
         self._embedder = embedder
+        # Per-source ids that already have a vector, read once from ``memory_vec``
+        # and kept in step by :meth:`_insert` — this store is the table's only
+        # writer. vec0 cannot index ``src_id``, so every SQL lookup by it is a
+        # full table scan (BOB-124); the set replaces one scan per check.
+        self._embedded: dict[VectorSource, set[int]] = {}
 
     async def load_extension(self) -> None:
         """Load sqlite-vec onto the underlying connection (before schema apply).
@@ -98,17 +117,20 @@ class MemoryVectorStore:
         finally:
             await self._conn.enable_load_extension(False)
 
-    async def backfill(self) -> None:
+    async def backfill(self) -> tuple[BackfillTally, ...]:
         """Embed every fact/episode that has no vector yet (idempotent, batched).
 
-        A no-op when no embedder is injected. Mirrors the FTS backfill pattern:
-        run on each boot so a db written before embeddings existed (or before an
-        embedder was wired) catches up without ever duplicating a vector.
+        A no-op when no embedder is injected (empty result). Mirrors the FTS
+        backfill pattern: run on each boot so a db written before embeddings
+        existed (or before an embedder was wired) catches up without ever
+        duplicating a vector. Returns one tally per source for the boot log.
         """
         if self._embedder is None:
-            return
-        await self._backfill_source(_SEMANTIC, "semantic_memory")
-        await self._backfill_source(_EPISODIC, "episodic_log")
+            return ()
+        return (
+            await self._backfill_source(_SEMANTIC, "semantic_memory"),
+            await self._backfill_source(_EPISODIC, "episodic_log"),
+        )
 
     async def embed_row(self, source: VectorSource, src_id: int, content: str) -> None:
         """Embed one freshly-saved row's ``content`` and insert its vector.
@@ -126,32 +148,60 @@ class MemoryVectorStore:
             await self._insert(source, src_id, vectors[0])
             await self._conn.commit()
 
-    async def _backfill_source(self, source: VectorSource, table: str) -> None:
+    async def _backfill_source(self, source: VectorSource, table: str) -> BackfillTally:
         """Backfill all un-embedded rows of one source table in batches."""
-        pending = await self._pending_rows(source, table)
+        rows, pending = await self._pending_rows(source, table)
         for start in range(0, len(pending), _BACKFILL_BATCH):
             batch = pending[start : start + _BACKFILL_BATCH]
             await self._embed_batch(source, batch)
         if pending:
             await self._conn.commit()
+        return BackfillTally(source=source, rows=rows, missing=len(pending))
 
     async def _pending_rows(
         self, source: VectorSource, table: str
-    ) -> list[tuple[int, str]]:
-        """Rows of ``table`` (id, content) that have no vector for ``source`` yet.
+    ) -> tuple[int, list[tuple[int, str]]]:
+        """Row count of ``table`` and its rows (id, content) with no vector yet.
+
+        The anti-join runs in Python, never in SQL against ``memory_vec``: ``src_id``
+        is a vec0 metadata column with no index, so a ``LEFT JOIN`` on it re-scans
+        the table for every source row — quadratic, hours of CPU on a 27 k-row
+        archive at every boot (BOB-124). Instead the embedded ids are read once,
+        linearly, into a set, and each source row is checked against it.
 
         ``table`` is a fixed internal literal (``semantic_memory`` /
-        ``episodic_log``), never user input, so interpolating it into the LEFT
-        JOIN is safe; the partition-key value stays parameterised.
+        ``episodic_log``), never user input, so interpolating it is safe; the
+        partition-key value stays parameterised.
         """
-        sql = (
-            f"SELECT t.id AS id, t.content AS content FROM {table} t "  # noqa: S608
-            "LEFT JOIN memory_vec v ON v.source = ? AND v.src_id = t.id "
-            "WHERE v.src_id IS NULL ORDER BY t.id"
-        )
-        async with self._conn.execute(sql, (source,)) as cursor:
-            rows = await cursor.fetchall()
-        return [(int(row["id"]), str(row["content"])) for row in rows]
+        embedded = await self._embedded_ids(source)
+        sql = f"SELECT id, content FROM {table} ORDER BY id"  # noqa: S608
+        async with self._conn.execute(sql) as cursor:
+            rows = list(await cursor.fetchall())
+        pending = [
+            (int(row["id"]), str(row["content"]))
+            for row in rows
+            if int(row["id"]) not in embedded
+        ]
+        return len(rows), pending
+
+    async def _embedded_ids(self, source: VectorSource) -> set[int]:
+        """Source-row ids that already have a vector for ``source`` (cached).
+
+        Read on first use with one linear pass over ``memory_vec``. Outside a KNN
+        query the partition-key filter does not narrow that pass: measured on the
+        production db, the 45-vector ``semantic`` partition costs 85 ms and the
+        27 502-vector ``episodic`` one 131 ms, so a pass is paid once per source,
+        never per row or per write.
+        """
+        cached = self._embedded.get(source)
+        if cached is None:
+            async with self._conn.execute(
+                "SELECT src_id FROM memory_vec WHERE source = ?", (source,)
+            ) as cursor:
+                rows = await cursor.fetchall()
+            cached = {int(row[0]) for row in rows}
+            self._embedded[source] = cached
+        return cached
 
     async def _embed_batch(
         self, source: VectorSource, batch: list[tuple[int, str]]
@@ -191,21 +241,27 @@ class MemoryVectorStore:
             return []
 
     async def _has_vector(self, source: VectorSource, src_id: int) -> bool:
-        """Whether a vector for ``(source, src_id)`` already exists."""
-        async with self._conn.execute(
-            "SELECT 1 FROM memory_vec WHERE source = ? AND src_id = ? LIMIT 1",
-            (source, src_id),
-        ) as cursor:
-            return await cursor.fetchone() is not None
+        """Whether a vector for ``(source, src_id)`` already exists.
+
+        Answered from the cached id set: a ``WHERE src_id = ?`` lookup on vec0 is a
+        full table scan (119 ms per saved message on the production db, BOB-124).
+        """
+        return src_id in await self._embedded_ids(source)
 
     async def _insert(
         self, source: VectorSource, src_id: int, vector: Sequence[float]
     ) -> None:
-        """Insert one packed vector for ``(source, src_id)`` (dimension enforced)."""
+        """Insert one packed vector for ``(source, src_id)`` (dimension enforced).
+
+        The id joins the cached set only after the insert succeeded, so a rejected
+        vector (wrong width) never reads as embedded.
+        """
+        embedded = await self._embedded_ids(source)
         await self._conn.execute(
             "INSERT INTO memory_vec (source, src_id, embedding) VALUES (?, ?, ?)",
             (source, src_id, _pack(vector)),
         )
+        embedded.add(src_id)
 
     async def knn(self, vector: Sequence[float], k: int) -> list[dict[str, object]]:
         """Top-``k`` nearest neighbours of ``vector`` across both sources.

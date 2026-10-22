@@ -6,7 +6,7 @@
 > Потенциальные проблемы и улучшения, собираемые в процессе разработки (по образцу
 > beadloom `BDL-UX-Issues.md`). Фиксируем находки — фиксим планово.
 >
-> **Total:** 72 · **Open:** 32 · **Closed:** 40 · _2026-10-21 (BOB-116): **#64 закрыт** работой
+> **Total:** 73 · **Open:** 33 · **Closed:** 40 · _2026-10-22: **#73** старт Боба квадратичный (P0 → BOB-124)_ · _2026-10-21 (BOB-116): **#64 закрыт** работой
 > BOB-116; добавлены **#71** (уведомление GUPPI о недоступности уходит в тему группы, а не туда,
 > откуда пришёл ход — открыт, `bob-hod`) и **#72** (сервисная дверь роняла ход раньше уведомления
 > GUPPI — закрыт в BOB-116 D13)._ _2026-10-21 (BOB-115): добавлены **#64–#70** — находки
@@ -1091,3 +1091,20 @@ xfail снят.
 - ✅ **#18** [удалить шим `domain/ports.py`] + ✅ **#8-флип** [no-monster «зубы»] — транзитный re-export-шим `domain/ports/` удалён; 7 kernel-контрактов (`Clock`/`EventBus`/`EventHandler`/`DomainEvent`/`LLMProvider`/`LLMMessage`/`JsonValue`) переехали в shared kernel `src/bob/kernel/ports.py` (инфра-нейтральный inward-safe leaf; правила `kernel-no-*`: модули→kernel легально, kernel↛модули). 109 импортёров переведены на канон (`bob.<module>.ports` / `bob.kernel.ports`), `from bob.domain.ports` не резолвится, вырожденная `src/bob/domain/` удалена целиком. `no-monster-modules` flip warn→error (0 warnings); char-class-дыра генератора границ (`[!au]*`/`[!u]*`) закрыта explicit-path'ами. Поведение неизменно (pytest/ruff/mypy ПОЛНЫЙ зелёные), `reindex --full && lint --strict` EXIT 0. Две мёртвые `domain-*` правила (ссылались на удалённый `src/bob/domain/**`) убраны из `rules.yml` (интент покрыт `kernel-no-*` + границами модулей).
 - ✅ **#4** [ужать `architecture.md`] + ✅ **#5** [getting-started] + ✅ **#1/#2/#3** [аннотации/граф/доки-финиш] — `docs/architecture.md` ужат 4318→260 строк (nav-shell: слои+kernel обзор, таблица 10 модулей + runtime-сервис со ссылками на SPEC, курированный Mermaid из `beadloom graph`, сквозной поток «обработка сообщения» + карта 14 коллабораторов). Добавлен `docs/getting-started.md` (first-run: uv/Ollama/config/`./bob`). 11 per-module SPEC освежены под .8 (канон-импорты портов; `domains/domain/README.md` переписан из описания удалённой `src/bob/domain/` в навигационную карту domain-слоя = kernel + domain-слои модулей). 203 doc↔code пары `bob`-узла переаттестованы. `beadloom ci` EXIT 0 (reindex/lint/sync-check/docs-audit/config-check/doctor — все PASS); `setup-rules --refresh` синхронизировал auto-managed CLAUDE.md/AGENTS.md (kernel-модуль, no domain).
 - 🔴 **ЭПИК BOB-062 → Done.** Эпик закрыт (#1–#6, #9–#18, #30). Остаток в бэклоге вне эпика: #25–28 clean-code, #31/#32 групповая нагрузка.
+
+### #73 [2026-10-22] [CRITICAL] 🔴 Старт Боба квадратичный: бэкфилл векторов джойнит vec0 без индекса — часы немоты на каждый рестарт
+
+**Area:** memory / persistence / reliability · **Context:** выкатка BOB-116 на VPS 2026-10-22 и смоук §10.1:
+после `systemctl restart bob` в 03:33:58 Боб в 04:27 всё ещё в инициализации памяти (53 мин CPU, 98 %),
+0 соединений с Telegram; то же после выкатки в 03:24. Старт 2026-08-18 занимал 2 мин (18:21 → 18:23).
+**Issue:** `memory/adapters/vector_store.py:141-152` `_pending_rows`: `LEFT JOIN memory_vec v ON v.source = ?
+AND v.src_id = t.id WHERE v.src_id IS NULL` — `memory_vec` это `vec0` (sqlite-vec), индекса по `src_id` нет, и
+джойн = полный скан партиции на каждую строку источника: `episodic_log` 27 373 × `memory_vec` 27 418 ≈ 750 млн
+обращений `vec0Column` с `sqlite3_prepare_v2` в каждом (py-spy `--native`, 2026-10-22). Код не менялся с
+v1.0.0 — выросла память; рост квадратичный. Под конкуренцией за CPU (замер Ollama) старт не завершился и за
+10 мин. Пока Боб стартует, он нем — класс, который BOB-116 закрыл для отказов облака, остался открытым для
+рестартов; смоук BOB-116 §10.1 (два рестарта) из-за этого отложен.
+**Expected:** бэкфилл — линейный: один запрос `SELECT src_id FROM memory_vec WHERE source = ?` в множество и
+анти-джойн без vec0; `AgentRuntime started` ≤ 2 мин от `Bob GUPPI starting`; строка прогресса бэкфилла в
+журнале; регресс-тест на масштаб на настоящем sqlite-vec.
+**Status:** ⬜ открыт → **BOB-124 (P0, `bob-11o`)**, BRIEF утверждён 2026-10-22.
