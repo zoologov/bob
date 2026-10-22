@@ -115,7 +115,14 @@ jobs:
             # копия конфига, ollama и restart — от root.
             step "код: ${DEPLOY_REF}"
             sudo -u bob git -C "$BOB_HOME" fetch --tags --prune
-            sudo -u bob git -C "$BOB_HOME" checkout "$DEPLOY_REF"
+            # BOB-125: имя ВЕТКИ берётся из origin, а не из локальной ветки VPS — fetch её не
+            # двигает, и `checkout main` дважды (22.10) выкатил старый код. Тег и SHA — как прежде.
+            if sudo -u bob git -C "$BOB_HOME" show-ref --verify --quiet "refs/remotes/origin/${DEPLOY_REF}"; then
+              sudo -u bob git -C "$BOB_HOME" checkout -B "$DEPLOY_REF" "origin/${DEPLOY_REF}"
+            else
+              sudo -u bob git -C "$BOB_HOME" checkout "$DEPLOY_REF"
+            fi
+            echo "код на диске: $(sudo -u bob git -C "$BOB_HOME" rev-parse --short HEAD)"
             sudo -u bob bash -lc "cd '$BOB_HOME' && '$UV_BIN' sync"
 
             step "1/4 предусловие: в .env есть все обязательные переменные"
