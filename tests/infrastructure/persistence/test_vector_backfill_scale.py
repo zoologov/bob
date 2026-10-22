@@ -34,14 +34,22 @@ if TYPE_CHECKING:
 
 _DIM = 1024  # schema.sql: memory_vec.embedding float[1024]
 _ROWS = 30_000
-# Budgets are ~5x the time measured on the dev machine (Apple-silicon mac,
-# 2026-10-22, best of 5): the boot backfill over 30 000 embedded episodes took
-# 0.25 s, and 20 on-write embeds into that archive took 0.15 s. The old SQL
-# (LEFT JOIN / point lookup on the unindexable vec0 ``src_id``) blows both.
-_BUDGET_S = 1.25
+# A fully embedded fact partition next to the episodes: the old join cost
+# facts x the whole vec0 table (the partition filter does not narrow it), so a
+# regression confined to the semantic side must break the boot budget too.
+_FACTS = 500
+# Budgets: medians measured on the dev machine (Apple-silicon mac, 2026-10-22, 5 runs
+# each, idle, fresh store per run): the boot backfill over this archive takes
+# 0.26 s, and 100 on-write embeds plus the count 0.30 s — almost all of it the one
+# initial pass over vec0, not the inserts.
+# Review measured 0.50 s for 20 writes under load (20 processes on 10 cores);
+# the 2-core CI runner is slower per core still. The budgets keep >= 10x headroom
+# over the idle medians, while the old SQL costs minutes for the backfill and at
+# least 100 x 0.14 s = 14 s for the writes, so both still bite.
+_BUDGET_S = 5.0
 # Fresh episodes saved after boot; each one used to pay a full vec0 scan on write.
-_FRESH = 20
-_WRITE_BUDGET_S = 0.75
+_FRESH = 100
+_WRITE_BUDGET_S = 3.0
 _TS = "2026-10-22T00:00:00+00:00"
 # A handful of distinct vectors, cycled: the cost under test is the id lookup, not
 # the vector content, and packing 30 000 x 1024 floats would dominate the setup.
@@ -90,11 +98,14 @@ async def _seed_vectors(
 
 
 async def _embedded_archive(tmp_path: Path) -> aiosqlite.Connection:
-    """A real db holding ``_ROWS`` episodes, every one with its vector."""
+    """A real db: ``_ROWS`` episodes and ``_FACTS`` facts, every one with its vector."""
     conn = await _open(tmp_path)
     ids = range(1, _ROWS + 1)
     await _seed_episodes(conn, ids)
     await _seed_vectors(conn, "episodic", ids)
+    fact_ids = range(1, _FACTS + 1)
+    await _seed_facts(conn, fact_ids)
+    await _seed_vectors(conn, "semantic", fact_ids)
     await conn.commit()
     return conn
 
@@ -102,8 +113,9 @@ async def _embedded_archive(tmp_path: Path) -> aiosqlite.Connection:
 async def test_backfill_of_a_fully_embedded_archive_fits_the_boot_budget(
     tmp_path: Path,
 ) -> None:
-    # Arrange: 30 000 episodes, every one already embedded (the steady state of a
-    # long-lived Bob: the boot backfill has nothing to do and must find that out fast).
+    # Arrange: 30 000 episodes and 500 facts, every one already embedded (the steady
+    # state of a long-lived Bob: the boot backfill has nothing to do and must find
+    # that out fast, for BOTH sources).
     conn = await _embedded_archive(tmp_path)
     embedder = _CountingEmbedder()
     store = MemoryVectorStore(conn, embedder)
@@ -116,7 +128,8 @@ async def test_backfill_of_a_fully_embedded_archive_fits_the_boot_budget(
     except TimeoutError:
         await conn.interrupt()
         pytest.fail(
-            f"backfill over {_ROWS} embedded episodes exceeded the {_BUDGET_S} s boot budget"
+            f"backfill over {_ROWS} episodes + {_FACTS} facts, all embedded, exceeded "
+            f"the {_BUDGET_S} s boot budget"
         )
     finally:
         await conn.close()
@@ -130,7 +143,7 @@ async def test_backfill_of_a_fully_embedded_archive_fits_the_boot_budget(
 async def test_embedding_fresh_episodes_into_a_large_archive_fits_the_write_budget(
     tmp_path: Path,
 ) -> None:
-    # Arrange: the same 30 000-episode archive; Bob now saves new episodes, and each
+    # Arrange: the same embedded archive; Bob now saves new episodes, and each
     # save embeds its row on write after checking that no vector exists yet. That
     # check must not cost a scan of the whole archive per message.
     conn = await _embedded_archive(tmp_path)
