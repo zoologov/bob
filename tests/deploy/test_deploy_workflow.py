@@ -21,10 +21,17 @@ itself (with the live file and ``.env`` valid) must stop the deploy, and a broke
 file must not stop a valid tracked one (review M4: before those two cases, validating the
 live file instead of the tracked one kept every test here green).
 
+BOB-126 adds two systemd files the deploy owns: the Ollama keep-alive drop-in and Bob's
+own unit. Each is installed only when its content differs from what the server has, the
+drop-in before the understudy model is pulled (with ``daemon-reload`` and a restart of
+Ollama), the unit before Bob is restarted (``daemon-reload``, no restart of its own). An
+unchanged file must cause none of that — a deploy that restarts Ollama every time unloads
+both models on every release.
+
 What it does NOT hold: the real ssh hop, the real systemd and Ollama, and the server's
-paths — the remote script reads ``BOB_HOME``/``UV_BIN``/``UV_TOOLS``/``UV_TOOL_BINS``
-from the environment only so that this test can point them at a temporary directory;
-over real ssh none of them is passed, and the production defaults apply.
+paths — the remote script reads ``BOB_HOME``/``UV_BIN``/``UV_TOOLS``/``UV_TOOL_BINS``/
+``SYSTEMD_DIR`` from the environment only so that this test can point them at a temporary
+directory; over real ssh none of them is passed, and the production defaults apply.
 """
 
 from __future__ import annotations
@@ -59,6 +66,13 @@ _DEPLOY_STEP = "Deploy & restart on VPS"
 _DEPLOY_REF = "v9.9.9"
 _OLD_LIVE_CONFIG = "# рукописный конфиг до BOB-116\ntelegram:\n  poll_timeout: 10\n"
 _TIMEOUT_S = 120
+_UNIT_SOURCE = REPO_ROOT / "deploy" / "bob.service"
+_KEEP_ALIVE_SOURCE = REPO_ROOT / "deploy" / "ollama-keep-alive.conf"
+# Where the deploy installs them, relative to the systemd directory.
+_UNIT = "bob.service"
+_KEEP_ALIVE = "ollama.service.d/keep-alive.conf"
+_OLD_UNIT = "[Service]\nEnvironmentFile=/opt/bob/.env\n"
+_OLD_KEEP_ALIVE = "[Service]\nEnvironment=OLLAMA_KEEP_ALIVE=5m\n"
 
 @dataclass(frozen=True)
 class DeployRun:
@@ -67,6 +81,9 @@ class DeployRun:
     calls: list[str]
     live_config: bytes
     tracked_config: bytes
+    # What the fake systemd directory holds after the run; ``None`` — the file is absent.
+    installed_unit: bytes | None
+    installed_keep_alive: bytes | None
     # Never in the repr: a failed assertion prints the dataclass, and these hold secrets.
     env_before: bytes = field(repr=False)
     env_after: bytes = field(repr=False)
@@ -96,6 +113,8 @@ def _server(tmp_path: Path, tracked: str, live: str) -> Path:
     (home / "config").mkdir()
     (home / ".venv" / "bin").mkdir(parents=True)
     shutil.copyfile(CHECK_SCRIPT, home / "deploy" / "check_config.py")
+    shutil.copyfile(_UNIT_SOURCE, home / "deploy" / "bob.service")
+    shutil.copyfile(_KEEP_ALIVE_SOURCE, home / "deploy" / "ollama-keep-alive.conf")
     (home / "config" / "bob.vps.yaml").write_text(tracked, encoding="utf-8")
     (home / "config" / "bob.yaml").write_text(live, encoding="utf-8")
     write_executable(home / ".venv" / "bin" / "python", f'exec "{sys.executable}" "$@"\n')
@@ -109,8 +128,15 @@ def _deploy(
     tracked: str | None = None,
     live: str = _OLD_LIVE_CONFIG,
     stub_env: dict[str, str] | None = None,
+    installed: dict[str, str] | None = None,
 ) -> DeployRun:
+    """Run the deploy step; ``installed`` — files already in the server's systemd directory."""
     home = _server(tmp_path, tracked or VPS_CONFIG.read_text(encoding="utf-8"), live)
+    systemd = tmp_path / "etc-systemd-system"
+    systemd.mkdir()
+    for relative, content in (installed or {}).items():
+        (systemd / relative).parent.mkdir(parents=True, exist_ok=True)
+        (systemd / relative).write_text(content, encoding="utf-8")
     env_values = PRODUCTION_ENV if env is None else env
     env_file = write_env_file(home / ".env", env_values)
     env_before = env_file.read_bytes()
@@ -136,6 +162,7 @@ def _deploy(
         "UV_BIN": str(bin_dir / "uv"),
         "UV_TOOLS": str(tools),
         "UV_TOOL_BINS": str(bin_dir),
+        "SYSTEMD_DIR": str(systemd),
         **(stub_env or {}),
     }
     result = subprocess.run(  # noqa: S603 — host bash runs the workflow's own step
@@ -153,9 +180,15 @@ def _deploy(
         calls=log.read_text(encoding="utf-8").splitlines(),
         live_config=(home / "config" / "bob.yaml").read_bytes(),
         tracked_config=(home / "config" / "bob.vps.yaml").read_bytes(),
+        installed_unit=_read_if_present(systemd / _UNIT),
+        installed_keep_alive=_read_if_present(systemd / _KEEP_ALIVE),
         env_before=env_before,
         env_after=env_file.read_bytes(),
     )
+
+
+def _read_if_present(path: Path) -> bytes | None:
+    return path.read_bytes() if path.is_file() else None
 
 
 def _host_bash() -> str:
@@ -302,11 +335,22 @@ def test_a_copy_that_differs_from_the_tracked_file_stops_the_restart(tmp_path: P
 
 
 def test_with_the_understudy_off_the_deploy_pulls_no_model(tmp_path: Path) -> None:
-    run = _deploy(tmp_path)
+    run = _deploy(tmp_path, tracked=_tracked_variant(tier0_fallback=""))
 
     assert run.returncode == 0, run.output
     assert "дублёр выключен в конфиге — модель не тянем" in run.output
-    assert run.ran("ollama ") == -1, run.calls
+    assert run.index(lambda call: call.startswith(("ollama pull", "ollama list"))) == -1, (
+        run.calls
+    )
+
+
+def test_the_tracked_config_has_the_deploy_pull_the_understudy_model(tmp_path: Path) -> None:
+    # BOB-126: the production config itself turns the understudy on.
+    run = _deploy(tmp_path)
+
+    assert run.returncode == 0, run.output
+    assert "модель дублёра на месте: qwen3.5:4b" in run.output
+    assert -1 < run.ran("ollama pull qwen3.5:4b") < run.ran("systemctl restart bob"), run.calls
 
 
 def test_with_the_understudy_on_the_deploy_pulls_its_model_before_the_restart(
@@ -329,6 +373,125 @@ def test_a_model_missing_after_the_pull_stops_the_restart(tmp_path: Path) -> Non
 
     assert run.returncode != 0
     assert "qwen3:8b" in run.output
+    assert not _restarted(run), run.calls
+
+
+# --- systemd files the deploy owns (BOB-126) ---------------------------------------------
+
+
+def _installs(run: DeployRun, target: str) -> int:
+    """Position of the ``install`` call that writes ``target``; -1 when there is none."""
+    return run.index(lambda call: call.startswith("install ") and call.endswith(target))
+
+
+def _up_to_date() -> dict[str, str]:
+    """The server already holds exactly what the repository ships."""
+    return {
+        _UNIT: _UNIT_SOURCE.read_text(encoding="utf-8"),
+        _KEEP_ALIVE: _KEEP_ALIVE_SOURCE.read_text(encoding="utf-8"),
+    }
+
+
+def test_a_fresh_server_gets_the_keep_alive_and_ollama_restarts_before_the_pull(
+    tmp_path: Path,
+) -> None:
+    run = _deploy(tmp_path)
+
+    assert run.returncode == 0, run.output
+    assert run.installed_keep_alive == _KEEP_ALIVE_SOURCE.read_bytes()
+    install = _installs(run, _KEEP_ALIVE)
+    reload_ = run.ran("systemctl daemon-reload")
+    restart_ollama = run.ran("systemctl restart ollama")
+    pull = run.ran("ollama pull")
+    assert -1 < install < reload_ < restart_ollama < pull < run.ran("systemctl restart bob"), (
+        run.calls
+    )
+
+
+def test_a_fresh_server_gets_bobs_unit_reloaded_before_bob_restarts(tmp_path: Path) -> None:
+    run = _deploy(tmp_path)
+
+    assert run.returncode == 0, run.output
+    assert run.installed_unit == _UNIT_SOURCE.read_bytes()
+    install = _installs(run, _UNIT)
+    restart = run.ran("systemctl restart bob")
+    reloads = [i for i, call in enumerate(run.calls) if call == "systemctl daemon-reload"]
+    assert install > -1, run.calls
+    # A reload BETWEEN the install and the restart: one before the install would not count.
+    assert any(install < i < restart for i in reloads), run.calls
+
+
+def test_unchanged_systemd_files_are_neither_reinstalled_nor_reloaded(tmp_path: Path) -> None:
+    run = _deploy(tmp_path, installed=_up_to_date())
+
+    assert run.returncode == 0, run.output
+    assert "keep-alive: без изменений" in run.output
+    assert "unit bob: без изменений" in run.output
+    assert _installs(run, _KEEP_ALIVE) == -1, run.calls
+    assert _installs(run, _UNIT) == -1, run.calls
+    assert run.ran("systemctl daemon-reload") == -1, run.calls
+    assert run.ran("systemctl restart ollama") == -1, run.calls
+    assert _restarted(run), run.calls
+
+
+def test_a_changed_keep_alive_is_reinstalled_and_ollama_restarted(tmp_path: Path) -> None:
+    run = _deploy(tmp_path, installed={**_up_to_date(), _KEEP_ALIVE: _OLD_KEEP_ALIVE})
+
+    assert run.returncode == 0, run.output
+    assert run.installed_keep_alive == _KEEP_ALIVE_SOURCE.read_bytes()
+    assert -1 < _installs(run, _KEEP_ALIVE) < run.ran("systemctl restart ollama"), run.calls
+    assert _installs(run, _UNIT) == -1, run.calls
+
+
+def test_a_changed_unit_alone_reloads_systemd_without_touching_ollama(tmp_path: Path) -> None:
+    run = _deploy(tmp_path, installed={**_up_to_date(), _UNIT: _OLD_UNIT})
+
+    assert run.returncode == 0, run.output
+    assert run.installed_unit == _UNIT_SOURCE.read_bytes()
+    install = _installs(run, _UNIT)
+    assert -1 < install < run.ran("systemctl daemon-reload") < run.ran("systemctl restart bob")
+    assert run.ran("systemctl restart ollama") == -1, run.calls
+    assert "keep-alive: без изменений" in run.output
+
+
+def test_the_keep_alive_is_installed_even_with_the_understudy_off(tmp_path: Path) -> None:
+    # The embedder bge-m3 reloads every ~5 minutes without it (BOB-121) — the understudy
+    # is not the only model the drop-in serves.
+    run = _deploy(tmp_path, tracked=_tracked_variant(tier0_fallback=""))
+
+    assert run.returncode == 0, run.output
+    assert run.installed_keep_alive == _KEEP_ALIVE_SOURCE.read_bytes()
+    assert run.ran("systemctl restart ollama") > -1, run.calls
+
+
+def test_the_pull_waits_until_the_restarted_ollama_answers(tmp_path: Path) -> None:
+    # systemctl returns as soon as the process is started, not when it listens: a pull
+    # straight after the restart would hit a closed port.
+    run = _deploy(tmp_path, stub_env={"STUB_OLLAMA_DOWN_FOR": "3"})
+
+    assert run.returncode == 0, run.output
+    answered = max(i for i, call in enumerate(run.calls) if call == "ollama ps")
+    tries = [call for call in run.calls if call == "ollama ps"]
+    assert len(tries) == 4, run.calls
+    assert run.ran("systemctl restart ollama") < answered < run.ran("ollama pull"), run.calls
+
+
+def test_ollama_that_never_answers_after_the_restart_stops_the_deploy(tmp_path: Path) -> None:
+    run = _deploy(tmp_path, stub_env={"STUB_OLLAMA_DOWN_FOR": "-1"})
+
+    assert run.returncode != 0
+    assert "Ollama" in run.output
+    assert run.ran("ollama pull") == -1, run.calls
+    assert not _restarted(run), run.calls
+
+
+def test_ollama_that_does_not_come_back_stops_the_deploy_before_bob_restarts(
+    tmp_path: Path,
+) -> None:
+    run = _deploy(tmp_path, stub_env={"STUB_SYSTEMCTL_FAIL": "restart ollama"})
+
+    assert run.returncode != 0
+    assert "Ollama" in run.output
     assert not _restarted(run), run.calls
 
 

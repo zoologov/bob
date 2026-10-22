@@ -56,22 +56,34 @@ exec "$@"
     "uv": 'echo "uv $*" >> "$STUB_LOG"\n',
     "beadloom": 'echo "beadloom $*" >> "$STUB_LOG"\n',
     "sleep": "exit 0\n",
+    # STUB_SYSTEMCTL_FAIL="<args>" makes exactly that call fail (e.g. "restart ollama").
     "systemctl": """
 echo "systemctl $*" >> "$STUB_LOG"
+if [ -n "${STUB_SYSTEMCTL_FAIL:-}" ] && [ "$*" = "$STUB_SYSTEMCTL_FAIL" ]; then exit 1; fi
 if [ "$1" = "is-active" ]; then echo active; fi
 """,
-    # Copies like install(1); STUB_INSTALL_CORRUPT=1 makes the copy differ from its source.
+    # Copies like install(1), ``-D`` included (creates the destination's directory);
+    # STUB_INSTALL_CORRUPT=1 makes the copy differ from its source.
     "install": """
 echo "install $*" >> "$STUB_LOG"
 for arg in "$@"; do src="$dst"; dst="$arg"; done
+mkdir -p "$(dirname "$dst")"
 cp -f "$src" "$dst"
 if [ "${STUB_INSTALL_CORRUPT:-0}" = "1" ]; then printf 'x' >> "$dst"; fi
 """,
     # STUB_OLLAMA_PULL_NOOP=1: the pull "succeeds" but the model never appears in the list.
+    # STUB_OLLAMA_DOWN_FOR=N: the server is not listening for the first N calls of ``ps``
+    # (a just-restarted Ollama); ``-1`` — never.
     "ollama": """
 echo "ollama $*" >> "$STUB_LOG"
 models="$STUB_STATE/ollama_models"
 touch "$models"
+if [ "$1" = "ps" ]; then
+  n=$(( $(cat "$STUB_STATE/ollama_ps" 2>/dev/null || echo 0) + 1 ))
+  echo "$n" > "$STUB_STATE/ollama_ps"
+  down="${STUB_OLLAMA_DOWN_FOR:-0}"
+  if [ "$down" = "-1" ] || [ "$n" -le "$down" ]; then exit 1; fi
+fi
 case "$1" in
   pull) if [ "${STUB_OLLAMA_PULL_NOOP:-0}" != "1" ]; then echo "$2" >> "$models"; fi ;;
   list)

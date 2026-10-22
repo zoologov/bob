@@ -96,7 +96,9 @@ Genesis, загружает soul и резолвит идентичности б
   именем переменной;
 - канал сигнала — `build_owner_alert_sink`: `OwnerAlert` ботом Боба в личку
   `telegram.owner_id`; `NoopOwnerAlert`, если `llm.health.owner_alert: false` (ключ не задан —
-  включён) или `owner_id ≤ 0`. Обращение в тексте — `telegram.owner_name`;
+  включён) или `owner_id ≤ 0`. Обращение в тексте — `health_owner_address`:
+  `telegram.owner_address`, без него — первое слово `telegram.owner_name` (BOB-126); оба
+  пусты — без обращения;
 - `has_understudy` — `understudy_endpoint(config) is not None`;
 - колбэк восстановления — `wiring/self_action.build_outage_episode_writer(recorder)`: эпизод
   `SelfActionKind.OUTAGE_RECOVERED` с `OutageSpan` во времени пояса процесса, `sender_id=None`,
@@ -231,7 +233,7 @@ path-ридеры (`_db_path`, `_soul_dir`, `_templates_dir`, `_backfill_name_ma
 - `bob.runtime.wiring.health` (BOB-116): `LlmHealth(monitor, sink)`, `build_llm_health(config,
   *, clock, bot, recorder)`, `build_health_policy`, `build_owner_alert_sink`,
   `build_understudy_stand_down(*, router, monitor)` → `UnderstudyStandDown`,
-  `configured_understudy`, `health_owner_name`; `LlmHealth`, `build_llm_health` и
+  `configured_understudy`, `health_owner_address`; `LlmHealth`, `build_llm_health` и
   `build_understudy_stand_down` реэкспортированы из `bob.runtime.wiring`.
 - `bob.runtime.wiring.tool_health.report_understudy(config, *, sink, stand_down=None)` →
   `UnderstudyCheck | None` (async).

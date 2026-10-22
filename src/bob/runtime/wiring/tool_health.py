@@ -45,7 +45,7 @@ from bob.capabilities.tool_availability import (
 )
 from bob.infrastructure.llm.understudy_probe import probe_understudy
 from bob.runtime.config import _flag, _section, _str
-from bob.runtime.wiring.health import configured_understudy, health_owner_name
+from bob.runtime.wiring.health import configured_understudy, health_owner_address
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -178,7 +178,7 @@ async def report_understudy(
             logger.exception("снять дублёр Tier-0 не вышло — он остаётся в сборке")
     logger.warning("%s", check.summary)
     if sink is not None:
-        text = understudy_missing_text(reason, health_owner_name(config))
+        text = understudy_missing_text(reason, health_owner_address(config))
         try:
             await sink.notify_owner(text)
         except Exception as error:  # доставка — не повод валить старт

@@ -637,6 +637,10 @@ DEFAULT_CONFIG: Config = {
         # attribute legacy NULL-sender episodes whose content prefix is this name to
         # owner_id. Empty (the default) -> the backfill is a graceful no-op.
         "owner_name": "",
+        # How Bob addresses the owner in his own signals («Вова, я …», BOB-126). Empty (the
+        # default) -> the first word of ``owner_name``; both empty -> no address at all.
+        # A string default keeps BOB_TELEGRAM__OWNER_ADDRESS a string after coercion.
+        "owner_address": "",
         "allowed_chat_ids": [],
         "bob": {
             "token": "",

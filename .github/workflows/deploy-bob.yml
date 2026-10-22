@@ -75,16 +75,24 @@ jobs:
         #      deploy/RUNBOOK.md §9)
         #   -> 2/4 config/bob.vps.yaml собирается лоадером Боба с этим .env и полон
         #   -> 3/4 копия в config/bob.yaml + sha256 обоих в лог и сравнение
+        #   -> keep-alive Ollama (BOB-126): drop-in deploy/ollama-keep-alive.conf ставится,
+        #      только если отличается от поставленного, и тогда daemon-reload + restart ollama;
+        #      ДО pull — иначе рестарт выгрузил бы только что загруженную модель
         #   -> 4/4 дублёр Tier-0: модель тянется, только если ДЕЙСТВУЮЩАЯ конфигурация его
         #      включает (решает тот же understudy_endpoint, что и фабрика провайдеров)
-        #   -> beadloom (BOB-110) -> restart.
+        #   -> beadloom (BOB-110)
+        #   -> юнит bob (BOB-126): deploy/bob.service ставится, только если отличается, и
+        #      тогда daemon-reload — до рестарта, чтобы рестарт поднял Боба с новым юнитом
+        #   -> restart.
+        # Без изменений файлы не трогаются: рестарт Ollama на каждой выкатке выгружал бы обе
+        # модели, и первая дверь после релиза платила бы холодную загрузку.
         # Проверка идёт ДО копирования, а не после: отказ оставляет действующий
         # config/bob.yaml нетронутым, и упавший сам по себе Боб поднимется на прежнем;
         # равенство sha переносит вердикт проверки на скопированный файл.
         # .env выкатка не пишет никогда. Значения из него в лог не попадают: проверки
         # печатают имена переменных и пути настроек (deploy/check_config.py).
         # Поведение шага держит tests/deploy/test_deploy_workflow.py — он ИСПОЛНЯЕТ этот
-        # скрипт с заглушками вместо сервера. BOB_HOME/UV_BIN/UV_TOOLS/UV_TOOL_BINS
+        # скрипт с заглушками вместо сервера. BOB_HOME/UV_BIN/UV_TOOLS/UV_TOOL_BINS/SYSTEMD_DIR
         # переопределяет только тест: по ssh окружение не передаётся, действуют пути прода.
         run: |
           set -euo pipefail
@@ -105,11 +113,17 @@ jobs:
             UV_BIN="${UV_BIN:-/usr/local/bin/uv}"
             UV_TOOLS="${UV_TOOLS:-/usr/local/share/uv-tools}"
             UV_TOOL_BINS="${UV_TOOL_BINS:-/usr/local/bin}"
+            SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
             PY="$BOB_HOME/.venv/bin/python"
             CHECK="$BOB_HOME/deploy/check_config.py"
             TRACKED="$BOB_HOME/config/bob.vps.yaml"
             LIVE="$BOB_HOME/config/bob.yaml"
             ENV_FILE="$BOB_HOME/.env"
+            KEEP_ALIVE_SRC="$BOB_HOME/deploy/ollama-keep-alive.conf"
+            KEEP_ALIVE="$SYSTEMD_DIR/ollama.service.d/keep-alive.conf"
+            UNIT_SRC="$BOB_HOME/deploy/bob.service"
+            UNIT="$SYSTEMD_DIR/bob.service"
+            OLLAMA_READY_TRIES=30  # секунд ждать Ollama после её рестарта
 
             # git/uv и проверки — от пользователя bob (владелец /opt/bob и .env 600);
             # копия конфига, ollama и restart — от root.
@@ -139,6 +153,27 @@ jobs:
             [ "$(sha256sum < "$TRACKED")" = "$(sha256sum < "$LIVE")" ] \
               || fail "sha256 config/bob.yaml не равен config/bob.vps.yaml. Боб не перезапущен."
 
+            # install — вне условия if: внутри него set -e не остановил бы выкатку на отказе.
+            step "keep-alive Ollama: модели в памяти, не больше двух (BOB-126)"
+            if cmp -s "$KEEP_ALIVE_SRC" "$KEEP_ALIVE"; then
+              echo "keep-alive: без изменений"
+            else
+              install -D -m 0644 "$KEEP_ALIVE_SRC" "$KEEP_ALIVE"
+              systemctl daemon-reload
+              systemctl restart ollama \
+                || fail "keep-alive поставлен, а Ollama не перезапустилась. Боб не перезапущен."
+              # systemctl возвращается, когда процесс запущен, а не когда он слушает порт:
+              # pull сразу после рестарта ушёл бы в закрытый порт.
+              local tries=0
+              until ollama ps >/dev/null 2>&1; do
+                tries=$((tries + 1))
+                [ "$tries" -lt "$OLLAMA_READY_TRIES" ] \
+                  || fail "Ollama не ответила за ${OLLAMA_READY_TRIES} с после рестарта. Боб не перезапущен."
+                sleep 1
+              done
+              echo "keep-alive: поставлен, Ollama перезапущена и отвечает"
+            fi
+
             step "4/4 дублёр Tier-0"
             local model
             model="$(sudo -u bob "$PY" "$CHECK" understudy-model \
@@ -159,6 +194,15 @@ jobs:
               "$UV_BIN" tool install --force beadloom==9.0.0
             chmod -R a+rX "$UV_TOOLS"
             sudo -u bob bash -lc "cd '$BOB_HOME' && beadloom reindex"
+
+            step "юнит bob (BOB-126)"
+            if cmp -s "$UNIT_SRC" "$UNIT"; then
+              echo "unit bob: без изменений"
+            else
+              install -D -m 0644 "$UNIT_SRC" "$UNIT"
+              systemctl daemon-reload
+              echo "unit bob: поставлен, systemd перечитал юниты"
+            fi
 
             step "рестарт"
             systemctl restart bob

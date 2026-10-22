@@ -17,6 +17,8 @@ BOB_USER="${BOB_USER:-bob}"
 BOB_HOME="${BOB_HOME:-/opt/bob}"
 BOB_REPO="${BOB_REPO:-https://github.com/zoologov/bob.git}"
 APT_PACKAGES="${APT_PACKAGES:-python3.12 python3.12-venv git curl sqlite3 ca-certificates}"
+# Каталог юнитов systemd; переопределяет только тест (tests/deploy/test_bootstrap.py).
+SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 
 # Каталог самого этого скрипта (deploy/ внутри клона) — источник юнит-файлов.
 DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -111,7 +113,45 @@ ensure_config() {
   }
 }
 
-# 6b. Модель дублёра Tier-0 (BOB-116) — по той же конфигурации и тем же решением, что
+# 6b. keep-alive Ollama (BOB-126): drop-in deploy/ollama-keep-alive.conf — модели не
+# выгружаются после простоя и их не больше двух на этой RAM. Тот же шаг, что в выкатке
+# (deploy-bob.yml), и до модели дублёра: рестарт Ollama после pull выгрузил бы её.
+# Ставится только при отличии (idempotent), иначе Ollama не трогаем. Ollama ещё нет —
+# drop-in ждёт в ollama.service.d и вступит в силу с её собственным юнитом.
+# systemctl возвращается, когда процесс запущен, а не когда он слушает порт: модель дублёра,
+# которую тянет следующий шаг, ушла бы в закрытый порт.
+OLLAMA_READY_TRIES=30  # секунд ждать Ollama после её рестарта
+wait_for_ollama() {
+  local tries=0
+  until ollama ps >/dev/null 2>&1; do
+    tries=$((tries + 1))
+    if [ "$tries" -ge "$OLLAMA_READY_TRIES" ]; then
+      echo "❌ Ollama не ответила за ${OLLAMA_READY_TRIES} с после рестарта" >&2
+      exit 1
+    fi
+    sleep 1
+  done
+}
+
+ensure_ollama_keep_alive() {
+  local src="$DEPLOY_DIR/ollama-keep-alive.conf"
+  local dst="$SYSTEMD_DIR/ollama.service.d/keep-alive.conf"
+  if cmp -s "$src" "$dst"; then
+    skip "keep-alive: без изменений"
+    return
+  fi
+  log "ставлю keep-alive Ollama: $dst"
+  install -D -m 0644 "$src" "$dst"
+  systemctl daemon-reload
+  if command -v ollama >/dev/null 2>&1; then
+    systemctl restart ollama
+    wait_for_ollama
+  else
+    log "ollama не установлен — drop-in вступит в силу при его установке"
+  fi
+}
+
+# 6c. Модель дублёра Tier-0 (BOB-116) — по той же конфигурации и тем же решением, что
 # выкатка (deploy-bob.yml, шаг 4/4): deploy/check_config.py спрашивает действующую
 # конфигурацию (config/bob.vps.yaml + .env, если он уже лежит) через understudy_endpoint
 # фабрики провайдеров. Дублёр выключен -> модель не тянем. Включён -> нужен Ollama и модель
@@ -154,13 +194,22 @@ ensure_dirs() {
   sudo -u "$BOB_USER" mkdir -p "$BOB_HOME/data" "$BOB_HOME/logs" "$BOB_HOME/backups"
 }
 
-# 8. systemd-юниты: копируем из deploy/, daemon-reload (idempotent: cp -f + reload).
+# 8. systemd-юниты из deploy/: ставится только изменившийся, daemon-reload — только если
+# что-то поставлено (idempotent; тот же приём, что у юнита bob в выкатке, BOB-126).
 ensure_units() {
-  log "устанавливаю systemd-юниты из $DEPLOY_DIR"
-  install -m 0644 "$DEPLOY_DIR/bob.service"        /etc/systemd/system/bob.service
-  install -m 0644 "$DEPLOY_DIR/bob-backup.service" /etc/systemd/system/bob-backup.service
-  install -m 0644 "$DEPLOY_DIR/bob-backup.timer"   /etc/systemd/system/bob-backup.timer
-  systemctl daemon-reload
+  local unit changed=0
+  for unit in bob.service bob-backup.service bob-backup.timer; do
+    if cmp -s "$DEPLOY_DIR/$unit" "$SYSTEMD_DIR/$unit"; then
+      skip "юнит $unit без изменений"
+    else
+      log "ставлю юнит $unit из $DEPLOY_DIR"
+      install -D -m 0644 "$DEPLOY_DIR/$unit" "$SYSTEMD_DIR/$unit"
+      changed=1
+    fi
+  done
+  if [ "$changed" -eq 1 ]; then
+    systemctl daemon-reload
+  fi
   # Таймер бэкапа можно включить сразу — он не запускает самого Боба.
   systemctl enable --now bob-backup.timer || true
 }
@@ -244,6 +293,7 @@ main() {
   ensure_renderer
   ensure_venv
   ensure_config
+  ensure_ollama_keep_alive
   ensure_understudy_model
   ensure_dirs
   ensure_units

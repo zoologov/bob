@@ -2,8 +2,12 @@
 Description=Bob — живой Telegram-компаньон (BOB-094: переезд на VPS)
 # Боб держит только исходящие соединения (Telegram long-poll + Qwen MaaS),
 # поэтому ждём именно поднятую сеть, а не просто network.target.
-After=network-online.target
-Wants=network-online.target
+# И локальную Ollama (BOB-126): на ней эмбеддер bge-m3 и дублёр Tier-0, а первое, что делает
+# старт Боба, — спрашивает у дублёра его модели. После перезагрузки VPS этот вопрос не должен
+# уйти в порт, который ещё никто не слушает: дублёр был бы снят до следующего рестарта.
+# Wants=, а не Requires=: без Ollama Боб всё равно стартует и говорит, что дублёра нет.
+After=network-online.target ollama.service
+Wants=network-online.target ollama.service
 
 [Service]
 Type=simple
@@ -23,6 +27,12 @@ WorkingDirectory=/opt/bob
 # кладёт owner отдельно (см. RUNBOOK), права 600 bob:bob. Ни bootstrap, ни этот
 # юнит секретов не касаются.
 EnvironmentFile=/opt/bob/.env
+
+# Пояс процесса (BOB-126, bob-ol3): владелец в Москве, а пояс VPS — Asia/Kolkata, и тексты
+# Боба («молчал с 06:37 до 06:38 +05:30»), /status и журнал говорили чужим временем. Часы
+# Боба идут в UTC; пояс нужен только словам — kernel/local_time переводит момент в пояс
+# процесса. Выкатка ставит изменённый юнит сама (install + daemon-reload до рестарта).
+Environment=TZ=Europe/Moscow
 
 # Тот же вход, что и в лаунчере ./bob (LAUNCH):
 #   main(config_path=Path("config/bob.yaml"))

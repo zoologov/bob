@@ -54,6 +54,7 @@ _SENSITIVE_MARKERS = (
     "allowed_chat_ids",
     "owner_dm_chat_id",
     "owner_name",
+    "owner_address",
 )
 
 # The names the header of the tracked file tells the owner to keep in /opt/bob/.env.

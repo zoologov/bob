@@ -240,6 +240,18 @@ def test_tier0_fallback_turned_on_via_env() -> None:
     assert llm["tier0_fallback"] == "ollama"
 
 
+def test_owner_address_defaults_to_empty_and_comes_from_env_as_text() -> None:
+    # BOB-126: «как обращаться к владельцу» — необязательная строка из .env; пусто — по
+    # первому слову owner_name. Строковый дефолт держит тип: «Вова» не превращается в число.
+    default = ConfigLoader(yaml_path=None, env={}).load()["telegram"]
+    configured = ConfigLoader(
+        yaml_path=None, env={"BOB_TELEGRAM__OWNER_ADDRESS": "Вова"}
+    ).load()["telegram"]
+
+    assert default["owner_address"] == ""
+    assert configured["owner_address"] == "Вова"
+
+
 def test_embeddings_defaults_are_local_bge_m3_1024() -> None:
     # Arrange
     loader = ConfigLoader(yaml_path=None, env={})

@@ -122,14 +122,14 @@ class ProviderHealthMonitor:
         sink: OwnerAlertSink,
         on_recovered: OutageRecovered | None = None,
         has_understudy: bool = False,
-        owner_name: str | None = None,
+        owner_address: str | None = None,
     ) -> None:
         self._clock = clock
         self._policy = policy
         self._sink = sink
         self._on_recovered = on_recovered
         self._has_understudy = has_understudy
-        self._owner_name = owner_name
+        self._owner_address = owner_address
         # Известные провайдеры видны в снимке с первой секунды — /status не гадает, есть ли
         # дублёр: его нет в снимке ровно тогда, когда он не подключён.
         wired: tuple[str, ...] = (TIER0_PRIMARY, TIER1)
@@ -308,7 +308,7 @@ class ProviderHealthMonitor:
             next_reminder_s=reminders[step],
             probe_s=next_probe_interval(health, self._policy),
             has_understudy=self._has_understudy,
-            owner_name=self._owner_name,
+            owner_address=self._owner_address,
         )
 
     def _log_streak(

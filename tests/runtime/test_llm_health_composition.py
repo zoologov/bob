@@ -127,6 +127,7 @@ def _config(
     *,
     llm: Mapping[str, object] | None = None,
     autobiography: bool = False,
+    owner: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     config: dict[str, object] = {
         "runtime": {"log_level": "INFO", "heartbeat_seconds": 1},
@@ -137,6 +138,7 @@ def _config(
             "owner_name": "Вова",
             "bob": {"token": "bob-tok", "topic_id": _TOPIC_ID},
             "guppi": {"token": "guppi-tok"},
+            **(owner or {}),
         },
         "persistence": {
             "db_path": str(tmp_path / "bob.db"),
@@ -157,12 +159,13 @@ def _build(
     clock: _Clock,
     llm: Mapping[str, object] | None = None,
     autobiography: bool = False,
+    owner: Mapping[str, object] | None = None,
 ) -> Application:
     # SOUL заранее — иначе Genesis на старте позвал бы фейк и не разобрал бы ответ.
     SoulStore(tmp_path / "soul").write_soul("# SOUL\n\nBob.\n")
     providers: dict[int, LLMProvider] = {0: tier0, 1: _Tier1()}
     return build_application(
-        config=_config(tmp_path, llm=llm, autobiography=autobiography),
+        config=_config(tmp_path, llm=llm, autobiography=autobiography, owner=owner),
         providers=providers,
         bob_bot=cast("BotLike", bob_bot),
         guppi_bot=cast("BotLike", _Bot()),
@@ -218,6 +221,43 @@ async def test_default_config_tells_the_owner_in_bobs_dm_when_tier0_dies(
     dms = bob_bot.owner_dms()
     assert len(dms) == 1
     assert "Вова" in dms[0]
+
+
+async def _first_owner_dm(tmp_path: Path, owner: Mapping[str, object]) -> str:
+    """Первое сообщение владельцу о немоте Tier-0 при данных ``telegram.owner_*``."""
+    bob_bot, tier0, clock = _Bot(), _Tier0(), _Clock()
+    app = _build(tmp_path, tier0=tier0, bob_bot=bob_bot, clock=clock, owner=owner)
+    async with _running(app):
+        bob_bot.sends.clear()
+        await _think(app, _THRESHOLD)
+    dms = bob_bot.owner_dms()
+    assert len(dms) == 1, dms
+    return dms[0]
+
+
+async def test_the_owner_is_addressed_by_the_first_word_of_the_full_name(
+    tmp_path: Path,
+) -> None:
+    """BOB-126: «Владимир Зоологов, я …» — не по-человечески; без адреса — первое слово имени."""
+    text = await _first_owner_dm(tmp_path, {"owner_name": "Владимир Зоологов"})
+
+    assert text.startswith("Владимир, я не могу думать"), text
+    assert "Зоологов" not in text
+
+
+async def test_the_owner_address_wins_over_the_name(tmp_path: Path) -> None:
+    """``telegram.owner_address`` — как обращаться; имя для бэкфилла остаётся полным."""
+    text = await _first_owner_dm(
+        tmp_path, {"owner_name": "Владимир Зоологов", "owner_address": "Вова"}
+    )
+
+    assert text.startswith("Вова, я не могу думать"), text
+
+
+async def test_without_name_and_address_the_signal_has_no_address(tmp_path: Path) -> None:
+    text = await _first_owner_dm(tmp_path, {"owner_name": "", "owner_address": ""})
+
+    assert text.startswith("Я не могу думать"), text
 
 
 async def test_owner_alert_off_keeps_the_owner_dm_silent(tmp_path: Path) -> None:
@@ -746,6 +786,27 @@ async def test_not_ready_understudy_is_stood_down_once_with_the_reason() -> None
     assert reasons[0].startswith(f"{url} не отвечает")
     assert len(sink.texts) == 1
     assert reasons[0] in sink.texts[0]
+
+
+async def test_the_understudy_missing_signal_uses_the_same_owner_address() -> None:
+    """Сигнал при старте обращается так же, как сигнал о здоровье: адрес, иначе первое слово."""
+    url = f"http://127.0.0.1:{_dead_port()}/v1"
+    by_name, by_address = _OwnerSink(), _OwnerSink()
+
+    await report_understudy(
+        {"llm": _understudy_llm(url), "telegram": {"owner_name": "Владимир Зоологов"}},
+        sink=by_name,
+    )
+    await report_understudy(
+        {
+            "llm": _understudy_llm(url),
+            "telegram": {"owner_name": "Владимир Зоологов", "owner_address": "Вова"},
+        },
+        sink=by_address,
+    )
+
+    assert by_name.texts[0].startswith("Владимир, я стартовал без дублёра"), by_name.texts
+    assert by_address.texts[0].startswith("Вова, я стартовал без дублёра"), by_address.texts
 
 
 async def test_ready_or_absent_understudy_is_not_stood_down() -> None:

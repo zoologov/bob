@@ -82,17 +82,17 @@ class HealthNotice:
     next_reminder_s: float
     probe_s: float
     has_understudy: bool
-    owner_name: str | None = None
+    owner_address: str | None = None
 
 
 _REQUEST_FORMS = ("запрос", "запроса", "запросов")
 
 
-def _addressed(owner_name: str | None, sentence: str) -> str:
-    """«Вова, я …» с именем; без имени — то же предложение с заглавной буквы."""
-    name = (owner_name or "").strip()
-    if name:
-        return f"{name}, {sentence}"
+def _addressed(owner_address: str | None, sentence: str) -> str:
+    """«Вова, я …» с обращением; без него — то же предложение с заглавной буквы."""
+    address = (owner_address or "").strip()
+    if address:
+        return f"{address}, {sentence}"
     return sentence[:1].upper() + sentence[1:]
 
 
@@ -131,7 +131,7 @@ def degraded_text(notice: HealthNotice) -> str:
             sentence = f"{streak}. {_VOICE_DOWN_CONSEQUENCE} {remind}"
         case Situation.OTHER:
             sentence = f"{streak}. {remind}"
-    return _addressed(notice.owner_name, sentence)
+    return _addressed(notice.owner_address, sentence)
 
 
 def _mute_company(notice: HealthNotice) -> str:
@@ -168,7 +168,7 @@ def reminder_text(notice: HealthNotice) -> str:
     speaker = provider_speaker(notice.provider_id)
     opening = _REMINDER_OPENINGS.get(notice.situation, f"{speaker.nominative} всё ещё не работает")
     sentence = f"{opening}: {_streak(notice)}. {_remind_later(notice)}"
-    return _addressed(notice.owner_name, sentence)
+    return _addressed(notice.owner_address, sentence)
 
 
 def recovered_text(notice: HealthNotice, *, tz: tzinfo | None = None) -> str:
@@ -195,10 +195,10 @@ def recovered_text(notice: HealthNotice, *, tz: tzinfo | None = None) -> str:
                 f"{speaker.nominative} снова отвечает. "
                 f"Не работал{speaker.past_ending} {lasted} ({when})."
             )
-    return _addressed(notice.owner_name, sentence)
+    return _addressed(notice.owner_address, sentence)
 
 
-def understudy_missing_text(reason: str, owner_name: str | None) -> str:
+def understudy_missing_text(reason: str, owner_address: str | None) -> str:
     """Сигнал при старте: дублёр включён, но работать не может — и до перезапуска его нет.
 
     Честно про границу: сборка снимает дублёр на всё время процесса, поэтому модель,
@@ -209,4 +209,4 @@ def understudy_missing_text(reason: str, owner_name: str | None) -> str:
         f"Если облако откажет, подстраховать будет некому. "
         f"Работаю без дублёра до перезапуска: даже если модель появится, сам я его не подхвачу."
     )
-    return _addressed(owner_name, sentence)
+    return _addressed(owner_address, sentence)
