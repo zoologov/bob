@@ -228,7 +228,11 @@ path-ридеры (`_db_path`, `_soul_dir`, `_templates_dir`, `_backfill_name_ma
 - `main(*, config_path=None) -> None` (`src/bob/runtime/main.py`) — process entrypoint.
 - `_as_dispatch_handler` / `_as_reaction_handler` — обёртки под `EventHandler`:
   `_as_dispatch_handler` адаптирует `ChatDispatcher.submit` (быстрый неблокирующий подписчик
-  `MESSAGE_RECEIVED`, intake-развязка BOB-066), `_as_reaction_handler` — реакцию.
+  `MESSAGE_RECEIVED`, intake-развязка BOB-066), `_as_reaction_handler` — реакцию: с BOB-126
+  он только ставит её в `Application.reaction_queue` (`SerialQueue`, один воркер, порядок
+  поступления), потому что шина зовёт подписчика из цикла поллинга Telegram, а судья реакции —
+  вызов Tier-0, который с дублёром может думать до 180 с. `shutdown` закрывает очередь после
+  intake-диспетчера и до закрытия соединения, не дожидаясь медленного судьи.
 - `wiring/*` — внутренние `_build_*` фабрики (не публичный контракт; ре-экспортятся для тестов через `app.py`-shim).
 - `bob.runtime.wiring.health` (BOB-116): `LlmHealth(monitor, sink)`, `build_llm_health(config,
   *, clock, bot, recorder)`, `build_health_policy`, `build_owner_alert_sink`,

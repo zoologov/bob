@@ -122,3 +122,12 @@ def test_bob_still_waits_for_the_network() -> None:
 
     assert "network-online.target" in _unit_directive(text, "After")
     assert "network-online.target" in _unit_directive(text, "Wants")
+
+
+def test_bob_does_not_die_or_refuse_to_start_with_ollama() -> None:
+    # Wants=, never a hard tie: without Ollama Bob starts and says the understudy is gone,
+    # and stopping or failing Ollama must not stop Bob (review m3).
+    text = _UNIT.read_text(encoding="utf-8")
+
+    for hard_tie in ("Requires", "Requisite", "BindsTo", "PartOf"):
+        assert "ollama.service" not in _unit_directive(text, hard_tie), hard_tie

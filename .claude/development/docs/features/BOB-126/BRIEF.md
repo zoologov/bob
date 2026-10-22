@@ -42,9 +42,24 @@
 
 ## Axes
 
-Код: узел `telegram`/`router` (адрес владельца — `health_messages.py`, лоадер `config`), остальное — конфиг,
-`deploy/*`, systemd. Оси по `beadloom impact` для `health_messages.py` названы в RFC BOB-116 (узел `router`);
-новых узлов нет; маршрут `chore`.
+> **Derived by:** `beadloom impact src/bob/runtime/wiring/health.py` и
+> `beadloom impact src/bob/application/router/health_messages.py`; строки по узлам, которые работа
+> трогает, размечены вручную 2026-10-22 по ревью `bob-9kk` (Minor 6), строка `runtime-app` и
+> `composition.py` добавлены вместе с фиксом ревью M1 (очередь восприятия реакций).
+> **Seed:** `health_owner_address` (обращение к владельцу) и подписчик `BOB_MESSAGE_REACTION`
+> в `composition.py`.
+
+| Axis | Node | Sites | Owns unread | In scope | Why |
+|---|---|---|---|---|---|
+| callers | runtime | `src/bob/runtime/wiring/health.py`, `src/bob/runtime/wiring/tool_health.py`, `src/bob/runtime/composition.py` | none | yes | обращение `owner_address` в сигналах здоровья и при старте; очередь реакций вне цикла поллинга (ревью M1) |
+| callers | router | `src/bob/application/router/health_messages.py`, `src/bob/application/router/health_monitor.py` | none | yes | поле и параметр `owner_address` вместо `owner_name` |
+| co-writers | config | `src/bob/infrastructure/config/loader.py` | none | yes | дефолт `telegram.owner_address` |
+| callers | telegram | `src/bob/infrastructure/telegram/health_status.py` | none | yes | только докстринг: пояс на VPS задаёт юнит |
+| callers | runtime-app | `src/bob/application/runtime/serial_queue.py`, `src/bob/application/runtime/__init__.py` | none | yes | очередь с одним воркером для восприятия реакций (ревью M1) |
+| co-writers | social | `src/bob/social/usecases/run_genesis.py:139` | none | no | найдено деривацией по совпадению эффекта записи YAML, работа его не трогает |
+
+Остальное — конфигурация, `deploy/*`, systemd и документы; узлов они не имеют. Новых узлов нет,
+маршрут `chore`.
 
 ## Что НЕ входит
 

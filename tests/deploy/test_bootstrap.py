@@ -328,3 +328,46 @@ def test_bootstrap_main_sets_the_keep_alive_before_it_pulls_the_understudy(
     assert run.returncode == 0, run.output
     keep_alive = run.calls.index("ensure_ollama_keep_alive")
     assert keep_alive < run.calls.index("ensure_understudy_model"), run.calls
+
+
+def test_bootstrap_removes_a_keep_alive_whose_reload_failed(tmp_path: Path) -> None:
+    # Review m1: otherwise the next bootstrap sees the file in place and skips it.
+    run = _run_step(
+        tmp_path, "ensure_ollama_keep_alive", stub_env={"STUB_SYSTEMCTL_FAIL": "daemon-reload"}
+    )
+
+    assert run.returncode != 0
+    assert not (_systemd(tmp_path) / _KEEP_ALIVE).exists()
+
+
+def test_bootstrap_removes_a_keep_alive_whose_ollama_restart_failed(tmp_path: Path) -> None:
+    run = _run_step(
+        tmp_path, "ensure_ollama_keep_alive", stub_env={"STUB_SYSTEMCTL_FAIL": "restart ollama"}
+    )
+
+    assert run.returncode != 0
+    assert not (_systemd(tmp_path) / _KEEP_ALIVE).exists()
+
+
+def test_bootstrap_puts_back_the_units_when_the_reload_fails(tmp_path: Path) -> None:
+    old_unit = "[Service]\nEnvironmentFile=/opt/bob/.env\n"
+    installed = {unit: _source(unit) for unit in _UNITS}
+    installed["bob.service"] = old_unit
+
+    run = _run_step(
+        tmp_path,
+        "ensure_units",
+        installed=installed,
+        stub_env={"STUB_SYSTEMCTL_FAIL": "daemon-reload"},
+    )
+
+    assert run.returncode != 0
+    assert (_systemd(tmp_path) / "bob.service").read_text(encoding="utf-8") == old_unit
+    assert sorted(p.name for p in _systemd(tmp_path).iterdir() if p.is_file()) == sorted(_UNITS)
+
+
+def test_bootstrap_removes_new_units_when_the_reload_fails(tmp_path: Path) -> None:
+    run = _run_step(tmp_path, "ensure_units", stub_env={"STUB_SYSTEMCTL_FAIL": "daemon-reload"})
+
+    assert run.returncode != 0
+    assert [p for p in _systemd(tmp_path).iterdir() if p.is_file()] == []

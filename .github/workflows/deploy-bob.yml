@@ -159,9 +159,12 @@ jobs:
               echo "keep-alive: без изменений"
             else
               install -D -m 0644 "$KEEP_ALIVE_SRC" "$KEEP_ALIVE"
-              systemctl daemon-reload
-              systemctl restart ollama \
-                || fail "keep-alive поставлен, а Ollama не перезапустилась. Боб не перезапущен."
+              # Отказ после install: drop-in убирается, иначе следующая выкатка увидит
+              # «без изменений», а Ollama так и будет работать без него.
+              if ! { systemctl daemon-reload && systemctl restart ollama; }; then
+                rm -f "$KEEP_ALIVE"
+                fail "keep-alive не применился (daemon-reload или restart ollama), drop-in убран. Боб не перезапущен."
+              fi
               # systemctl возвращается, когда процесс запущен, а не когда он слушает порт:
               # pull сразу после рестарта ушёл бы в закрытый порт.
               local tries=0
@@ -199,8 +202,17 @@ jobs:
             if cmp -s "$UNIT_SRC" "$UNIT"; then
               echo "unit bob: без изменений"
             else
+              # Отказ daemon-reload: на диске возвращается прежний юнит — тот, что systemd ещё
+              # держит загруженным, — и следующая выкатка снова увидит отличие.
+              local unit_before="$UNIT.before-deploy"
+              rm -f "$unit_before"
+              if [ -f "$UNIT" ]; then cp -pf "$UNIT" "$unit_before"; fi
               install -D -m 0644 "$UNIT_SRC" "$UNIT"
-              systemctl daemon-reload
+              if ! systemctl daemon-reload; then
+                if [ -f "$unit_before" ]; then mv -f "$unit_before" "$UNIT"; else rm -f "$UNIT"; fi
+                fail "daemon-reload после нового юнита bob не прошёл, прежний юнит возвращён. Боб не перезапущен."
+              fi
+              rm -f "$unit_before"
               echo "unit bob: поставлен, systemd перечитал юниты"
             fi
 

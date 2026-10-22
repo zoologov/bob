@@ -142,13 +142,23 @@ ensure_ollama_keep_alive() {
   fi
   log "ставлю keep-alive Ollama: $dst"
   install -D -m 0644 "$src" "$dst"
-  systemctl daemon-reload
-  if command -v ollama >/dev/null 2>&1; then
-    systemctl restart ollama
-    wait_for_ollama
-  else
-    log "ollama не установлен — drop-in вступит в силу при его установке"
+  # Отказ после install: drop-in убирается, иначе повторный bootstrap увидит «без изменений»,
+  # а Ollama так и будет работать без него.
+  if ! systemctl daemon-reload; then
+    rm -f "$dst"
+    echo "❌ daemon-reload после keep-alive не прошёл, drop-in убран" >&2
+    exit 1
   fi
+  if ! command -v ollama >/dev/null 2>&1; then
+    log "ollama не установлен — drop-in вступит в силу при его установке"
+    return
+  fi
+  if ! systemctl restart ollama; then
+    rm -f "$dst"
+    echo "❌ Ollama не перезапустилась с keep-alive, drop-in убран" >&2
+    exit 1
+  fi
+  wait_for_ollama
 }
 
 # 6c. Модель дублёра Tier-0 (BOB-116) — по той же конфигурации и тем же решением, что
@@ -196,20 +206,37 @@ ensure_dirs() {
 
 # 8. systemd-юниты из deploy/: ставится только изменившийся, daemon-reload — только если
 # что-то поставлено (idempotent; тот же приём, что у юнита bob в выкатке, BOB-126).
+# Отказ daemon-reload возвращает каждый поставленный юнит к прежнему виду (или убирает новый):
+# на диске остаётся то, что systemd держит загруженным, и повтор снова увидит отличие.
 ensure_units() {
-  local unit changed=0
+  local unit changed=()
   for unit in bob.service bob-backup.service bob-backup.timer; do
     if cmp -s "$DEPLOY_DIR/$unit" "$SYSTEMD_DIR/$unit"; then
       skip "юнит $unit без изменений"
     else
       log "ставлю юнит $unit из $DEPLOY_DIR"
+      rm -f "$SYSTEMD_DIR/$unit.before-bootstrap"
+      if [ -f "$SYSTEMD_DIR/$unit" ]; then
+        cp -pf "$SYSTEMD_DIR/$unit" "$SYSTEMD_DIR/$unit.before-bootstrap"
+      fi
       install -D -m 0644 "$DEPLOY_DIR/$unit" "$SYSTEMD_DIR/$unit"
-      changed=1
+      changed+=("$unit")
     fi
   done
-  if [ "$changed" -eq 1 ]; then
-    systemctl daemon-reload
+  if [ "${#changed[@]}" -gt 0 ] && ! systemctl daemon-reload; then
+    for unit in "${changed[@]}"; do
+      if [ -f "$SYSTEMD_DIR/$unit.before-bootstrap" ]; then
+        mv -f "$SYSTEMD_DIR/$unit.before-bootstrap" "$SYSTEMD_DIR/$unit"
+      else
+        rm -f "$SYSTEMD_DIR/$unit"
+      fi
+    done
+    echo "❌ daemon-reload после новых юнитов не прошёл, прежние юниты возвращены" >&2
+    exit 1
   fi
+  for unit in ${changed[@]+"${changed[@]}"}; do
+    rm -f "$SYSTEMD_DIR/$unit.before-bootstrap"
+  done
   # Таймер бэкапа можно включить сразу — он не запускает самого Боба.
   systemctl enable --now bob-backup.timer || true
 }

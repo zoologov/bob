@@ -485,6 +485,69 @@ def test_ollama_that_never_answers_after_the_restart_stops_the_deploy(tmp_path: 
     assert not _restarted(run), run.calls
 
 
+def _left_behind(run: DeployRun) -> dict[str, str]:
+    """The systemd files a run left on the server — the next deploy starts from them."""
+    left: dict[str, str] = {}
+    if run.installed_unit is not None:
+        left[_UNIT] = run.installed_unit.decode()
+    if run.installed_keep_alive is not None:
+        left[_KEEP_ALIVE] = run.installed_keep_alive.decode()
+    return left
+
+
+def test_a_keep_alive_whose_reload_failed_is_installed_again_by_the_next_deploy(
+    tmp_path: Path,
+) -> None:
+    # Review m1: install succeeded, daemon-reload failed — the copy on disk must not make
+    # the next deploy say «без изменений» while Ollama runs without it.
+    failed = _deploy(tmp_path / "first", stub_env={"STUB_SYSTEMCTL_FAIL": "daemon-reload"})
+
+    assert failed.returncode != 0
+    assert not _restarted(failed), failed.calls
+    assert failed.installed_keep_alive is None
+
+    retry = _deploy(tmp_path / "second", installed=_left_behind(failed))
+
+    assert retry.returncode == 0, retry.output
+    assert _installs(retry, _KEEP_ALIVE) > -1, retry.calls
+    assert retry.ran("systemctl restart ollama") > -1, retry.calls
+
+
+def test_a_keep_alive_whose_ollama_restart_failed_is_installed_again_by_the_next_deploy(
+    tmp_path: Path,
+) -> None:
+    failed = _deploy(tmp_path / "first", stub_env={"STUB_SYSTEMCTL_FAIL": "restart ollama"})
+
+    assert failed.returncode != 0
+    assert failed.installed_keep_alive is None
+
+    retry = _deploy(tmp_path / "second", installed=_left_behind(failed))
+
+    assert retry.returncode == 0, retry.output
+    assert retry.ran("systemctl restart ollama") > -1, retry.calls
+
+
+def test_a_unit_whose_reload_failed_is_put_back_and_installed_again_next_time(
+    tmp_path: Path,
+) -> None:
+    failed = _deploy(
+        tmp_path / "first",
+        installed={**_up_to_date(), _UNIT: _OLD_UNIT},
+        stub_env={"STUB_SYSTEMCTL_FAIL": "daemon-reload"},
+    )
+
+    assert failed.returncode != 0
+    assert not _restarted(failed), failed.calls
+    # The previous unit is back: the file matches what systemd still has loaded.
+    assert failed.installed_unit == _OLD_UNIT.encode()
+
+    retry = _deploy(tmp_path / "second", installed=_left_behind(failed))
+
+    assert retry.returncode == 0, retry.output
+    assert retry.installed_unit == _UNIT_SOURCE.read_bytes()
+    assert -1 < _installs(retry, _UNIT) < retry.ran("systemctl restart bob"), retry.calls
+
+
 def test_ollama_that_does_not_come_back_stops_the_deploy_before_bob_restarts(
     tmp_path: Path,
 ) -> None:
