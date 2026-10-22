@@ -40,7 +40,7 @@ Composition root (`src/bob/runtime/` package + the thin `app.py` shim) — the o
 - `build_work_journal_recorder`
 - `collect_requirements`
 - `configured_understudy`
-- `health_owner_name`
+- `health_owner_address`
 - `known_destinations`
 - `main`
 - `report_tool_health`

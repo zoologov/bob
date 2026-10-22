@@ -24,6 +24,7 @@ Application runtime — AgentRuntime, AsyncEventBus, and resilient heartbeat tic
 - `RetryPolicy`
 - `RoomStreamReader`
 - `RuntimeState`
+- `SerialQueue`
 - `ShareOfVoiceGate`
 - `StalenessReassessor`
 - `TurnScope`

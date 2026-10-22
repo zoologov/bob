@@ -39,7 +39,7 @@ def _notice(
     failures: int = 5,
     elapsed: timedelta = timedelta(minutes=3),
     has_understudy: bool = False,
-    owner_name: str | None = "Вова",
+    owner_address: str | None = "Вова",
     next_reminder_s: float = 600.0,
     probe_s: float = 60.0,
 ) -> HealthNotice:
@@ -53,7 +53,7 @@ def _notice(
         next_reminder_s=next_reminder_s,
         probe_s=probe_s,
         has_understudy=has_understudy,
-        owner_name=owner_name,
+        owner_address=owner_address,
     )
 
 
@@ -74,13 +74,13 @@ def test_mute_without_understudy_matches_the_approved_wording() -> None:
     )
 
 
-def test_without_owner_name_the_message_starts_with_a_capital() -> None:
-    text = degraded_text(_notice(owner_name=None))
+def test_without_owner_address_the_message_starts_with_a_capital() -> None:
+    text = degraded_text(_notice(owner_address=None))
     assert text.startswith("Я не могу думать: облако")
 
 
-def test_blank_owner_name_is_treated_as_no_name() -> None:
-    assert degraded_text(_notice(owner_name="  ")).startswith("Я не могу думать")
+def test_blank_owner_address_is_treated_as_no_address() -> None:
+    assert degraded_text(_notice(owner_address="  ")).startswith("Я не могу думать")
 
 
 def test_cloud_dead_while_understudy_holds_says_so() -> None:
@@ -227,7 +227,7 @@ def test_reminder_opening_follows_the_situation(
 
 def test_recovered_after_muteness_matches_the_approved_wording() -> None:
     text = recovered_text(
-        _notice(owner_name=None, elapsed=timedelta(days=9, hours=23, minutes=32)), tz=UTC
+        _notice(owner_address=None, elapsed=timedelta(days=9, hours=23, minutes=32)), tz=UTC
     )
     assert text == (
         "Я вернулся: облако ответило. Молчал 9 дней 23 часа "
@@ -253,7 +253,7 @@ def test_recovered_period_from_the_second_takes_so() -> None:
         next_reminder_s=600.0,
         probe_s=60.0,
         has_understudy=False,
-        owner_name=None,
+        owner_address=None,
     )
     assert recovered_text(notice, tz=UTC).endswith(
         "Молчал сутки (со 2 октября 06:10 по 3 октября 06:10 +00:00)."
@@ -326,7 +326,7 @@ def test_period_across_years_carries_the_years() -> None:
         next_reminder_s=600.0,
         probe_s=60.0,
         has_understudy=False,
-        owner_name=None,
+        owner_address=None,
     )
     assert "(с 31 декабря 2026 23:00 по 1 января 2027 01:00 +00:00)" in recovered_text(
         notice, tz=UTC
@@ -345,7 +345,7 @@ def test_naive_times_carry_no_zone_label() -> None:
         next_reminder_s=600.0,
         probe_s=60.0,
         has_understudy=False,
-        owner_name=None,
+        owner_address=None,
     )
     assert recovered_text(notice, tz=timezone(timedelta(hours=3))).endswith(
         "(1 октября с 06:10 до 06:15)."

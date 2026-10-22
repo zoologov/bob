@@ -309,15 +309,16 @@ source `src/bob/application/router/`) — единственная точка, �
 
 Модуль `src/bob/application/router/health_monitor.py`:
 - `ProviderHealthMonitor(*, clock, policy, sink, on_recovered=None, has_understudy=False,
-  owner_name=None)` — монитор; `record_success(provider_id)` / `record_failure(provider_id,
-  failure_class)` (async), `snapshot()` → `Mapping[str, HealthView]`, `is_degraded(provider_id)`,
+  owner_address=None)` — монитор (`owner_address` — обращение к владельцу в тексте,
+  BOB-126); `record_success(provider_id)` / `record_failure(provider_id, failure_class)`
+  (async), `snapshot()` → `Mapping[str, HealthView]`, `is_degraded(provider_id)`,
   `probe_due(provider_id)`, `stand_down_understudy(reason)`.
 - `OutageRecovered` — тип колбэка `(provider_id, since, until, failure_class) -> Awaitable[None]`.
 - `NoopHealthObserver`; реэкспорт `TIER0_PRIMARY`, `TIER0_UNDERSTUDY`, `TIER1`, `TIER0_EFFECTIVE`.
 
 Модуль `src/bob/application/router/health_messages.py`:
 - `Situation`, `HealthNotice`; `degraded_text(notice)`, `reminder_text(notice)`,
-  `recovered_text(notice, *, tz=None)`, `understudy_missing_text(reason, owner_name)` → `str`.
+  `recovered_text(notice, *, tz=None)`, `understudy_missing_text(reason, owner_address)` → `str`.
 
 Модуль `src/bob/application/router/reply_tier_selector.py`:
 - `select_reply_tier(...)` — гибридный выбор быстрого/качественного тира под сообщение.

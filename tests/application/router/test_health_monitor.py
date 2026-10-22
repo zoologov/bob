@@ -71,7 +71,7 @@ def _monitor(
     has_understudy: bool = False,
     sink: _Sink | None = None,
     recovered: _Recovered | None = None,
-    owner_name: str | None = None,
+    owner_address: str | None = None,
 ) -> tuple[ProviderHealthMonitor, _Clock, _Sink, _Recovered]:
     clock = _Clock()
     sink = sink if sink is not None else _Sink()
@@ -82,7 +82,7 @@ def _monitor(
         sink=sink,
         on_recovered=recovered,
         has_understudy=has_understudy,
-        owner_name=owner_name,
+        owner_address=owner_address,
     )
     return monitor, clock, sink, recovered
 
@@ -218,7 +218,7 @@ async def test_reaching_the_threshold_signals_once_and_logs_one_line(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.DEBUG, logger=_LOGGER)
-    monitor, clock, sink, _ = _monitor(owner_name="Вова")
+    monitor, clock, sink, _ = _monitor(owner_address="Вова")
     await _fail(monitor, clock, TIER0_PRIMARY, 5)
     assert monitor.is_degraded(TIER0_PRIMARY)
     assert len(sink.texts) == 1

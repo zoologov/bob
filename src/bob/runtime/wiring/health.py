@@ -57,7 +57,7 @@ __all__ = [
     "build_owner_alert_sink",
     "build_understudy_stand_down",
     "configured_understudy",
-    "health_owner_name",
+    "health_owner_address",
 ]
 
 
@@ -92,7 +92,7 @@ def build_llm_health(
         sink=sink,
         on_recovered=build_outage_episode_writer(recorder),
         has_understudy=configured_understudy(config) is not None,
-        owner_name=health_owner_name(config),
+        owner_address=health_owner_address(config),
     )
     return LlmHealth(monitor=monitor, sink=sink)
 
@@ -150,9 +150,19 @@ def configured_understudy(config: Mapping[str, object]) -> UnderstudyEndpoint | 
     return understudy_endpoint(config)
 
 
-def health_owner_name(config: Mapping[str, object]) -> str | None:
-    """Как обращаться к владельцу в сигнале; пустое имя — без обращения."""
-    return _str(_section(config, "telegram"), "owner_name", "") or None
+def health_owner_address(config: Mapping[str, object]) -> str | None:
+    """Как обращаться к владельцу в сигнале (BOB-126); ``None`` — без обращения.
+
+    ``telegram.owner_address`` («Вова»), а без него — первое слово ``telegram.owner_name``:
+    полное имя «Владимир Зоологов» в начале фразы звучит как протокол, а не как речь.
+    Само ``owner_name`` не меняется — его полным читает бэкфилл BOB-045.
+    """
+    telegram = _section(config, "telegram")
+    address = _str(telegram, "owner_address", "").strip()
+    if address:
+        return address
+    name_words = _str(telegram, "owner_name", "").split()
+    return name_words[0] if name_words else None
 
 
 def _health_section(config: Mapping[str, object]) -> Mapping[str, object]:

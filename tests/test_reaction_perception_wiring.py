@@ -25,6 +25,8 @@ never crashes the bus or moves Bob.
 
 from __future__ import annotations
 
+import asyncio
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
 from bob.app import Application, build_application
@@ -204,6 +206,133 @@ def _reaction() -> BobMessageReaction:
     )
 
 
+# --- off the poll path (BOB-126 review M1) ---------------------------------------------
+#
+# The reaction judge is a Tier-0 call. With the understudy on and the cloud down it goes to
+# a slow local model (up to timeout_seconds = 180 s): perceived INSIDE the poll loop, one
+# reaction stalled get_updates for both bots. Here the whole graph runs on the REAL
+# MultiBotGateway poll loop; the judge blocks on an event the test controls.
+
+_POLL_WAIT_S = 5.0  # generous: a poll that is not blocked returns in milliseconds
+
+
+@dataclass
+class _Emoji:
+    emoji: str
+
+
+@dataclass
+class _Chat:
+    id: int
+    type: str = "supergroup"
+
+
+@dataclass
+class _User:
+    id: int
+    full_name: str = "Хозяин"
+    username: str | None = None
+
+
+@dataclass
+class _MessageReaction:
+    chat: _Chat
+    message_id: int
+    old_reaction: list[_Emoji]
+    new_reaction: list[_Emoji]
+    user: _User | None = None
+
+
+@dataclass
+class _ReactionUpdate:
+    update_id: int
+    message: object | None = None
+    effective_chat: _Chat | None = None
+    effective_user: _User | None = None
+    message_reaction: _MessageReaction | None = None
+    message_reaction_count: object | None = None
+
+
+@dataclass
+class _PollingBot(_FakeBot):
+    """A fake bot that hands out update batches and counts every ``get_updates``."""
+
+    batches: list[list[_ReactionUpdate]] = field(default_factory=list)
+    polls: int = 0
+
+    async def get_updates(  # type: ignore[override]  # batches of the reaction-shaped fake
+        self, *, offset: int, timeout: int
+    ) -> Sequence[_ReactionUpdate]:
+        self.polls += 1
+        return self.batches.pop(0) if self.batches else []
+
+
+class _BlockingJudgeProvider:
+    """Tier-0 whose reaction judgment waits until the test releases it."""
+
+    def __init__(self) -> None:
+        self.judging = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def complete(
+        self,
+        messages: Sequence[Mapping[str, str]],
+        *,
+        stream: bool = False,
+    ) -> str | AsyncIterator[str]:
+        if any(_REACTION_MARKER in str(m.get("content", "")) for m in messages):
+            self.judging.set()
+            await self.release.wait()
+            return _WARM_JUDGMENT
+        return "neutral"
+
+
+def _reaction_update_on_bobs_message() -> _ReactionUpdate:
+    return _ReactionUpdate(
+        update_id=900,
+        message_reaction=_MessageReaction(
+            chat=_Chat(id=_CHAT_ID),
+            message_id=_BOB_MESSAGE_ID,
+            old_reaction=[],
+            new_reaction=[_Emoji("❤")],
+            user=_User(id=_OWNER_ID),
+        ),
+    )
+
+
+async def test_a_slow_reaction_judge_does_not_hold_the_next_poll(tmp_path: Path) -> None:
+    tier0 = _BlockingJudgeProvider()
+    bob_bot = _PollingBot(batches=[[_reaction_update_on_bobs_message()]])
+    app = build_application(
+        config=_config(tmp_path),
+        providers={0: tier0, 1: _ScriptedProvider(reaction_reply="", default="reply")},
+        bob_bot=cast("BotLike", bob_bot),
+        guppi_bot=cast("BotLike", _PollingBot()),
+    )
+    await app.memory_repo.initialize()
+    try:
+        await _seed_bobs_message(app)
+
+        # The poll that carries the reaction returns while the judge is still thinking ...
+        await asyncio.wait_for(app.multibot.poll_once(), _POLL_WAIT_S)
+        await asyncio.wait_for(tier0.judging.wait(), _POLL_WAIT_S)
+        # ... and the NEXT get_updates goes out with the judge still blocked.
+        await asyncio.wait_for(app.multibot.poll_once(), _POLL_WAIT_S)
+        assert bob_bot.polls == 2
+        assert not tier0.release.is_set()
+
+        # Released, the reaction is still felt: it was deferred, not dropped.
+        tier0.release.set()
+        await asyncio.wait_for(app.reaction_queue.wait_for_idle(), _POLL_WAIT_S)
+        episodes = await app.memory_repo.load_episodes(limit=10)
+        assert any(e["event_type"] == "reaction_received" for e in episodes)
+    finally:
+        # A failed assertion must not leave the db thread alive: pytest would hang on exit.
+        tier0.release.set()
+        await app.reaction_queue.aclose()
+        await app.memory_repo.close()
+
+
 async def test_published_reaction_reaches_perception_and_writes_shared_note(
     tmp_path: Path,
 ) -> None:
@@ -213,8 +342,10 @@ async def test_published_reaction_reaches_perception_and_writes_shared_note(
     await _seed_bobs_message(app)
     before = app.personality.soul.mood.valence
 
-    # Act: publish a reaction on Bob's message through the REAL EventBus.
+    # Act: publish a reaction on Bob's message through the REAL EventBus; perception runs
+    # on the reaction queue, off the publisher's path (BOB-126), so wait for it.
     await app.event_bus.publish(_reaction())
+    await app.reaction_queue.wait_for_idle()
 
     # Assert: PerceiveReaction ran end-to-end — mood lifted (BOB-033 band) ...
     assert app.personality.soul.mood.valence > before
@@ -243,6 +374,7 @@ async def test_reaction_perception_is_decorative_and_never_crashes_the_bus(
 
     # Act: publishing must NOT raise even though the judge fails.
     await app.event_bus.publish(_reaction())
+    await app.reaction_queue.wait_for_idle()
 
     # Assert: Bob is untouched and nothing notable was recorded (failure was dropped).
     assert app.personality.soul.mood.valence == before

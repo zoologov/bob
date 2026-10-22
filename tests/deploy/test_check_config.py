@@ -200,8 +200,20 @@ def test_validate_fails_on_a_config_file_that_is_not_there(tmp_path: Path, env_f
 # --- understudy-model --------------------------------------------------------------------
 
 
-def test_understudy_model_is_empty_while_the_tracked_config_keeps_it_off(env_file: Path) -> None:
+def test_understudy_model_names_the_model_the_tracked_config_turns_on(env_file: Path) -> None:
+    # BOB-126: the tracked production config turns the understudy on (qwen3.5:4b).
     result = _run("understudy-model", "--config", str(VPS_CONFIG), "--env-file", str(env_file))
+
+    assert result.returncode == 0, _output(result)
+    assert result.stdout == "qwen3.5:4b\n"
+
+
+def test_understudy_model_is_empty_while_the_config_keeps_it_off(
+    tmp_path: Path, env_file: Path
+) -> None:
+    config = _variant_config(tmp_path, tier0_fallback="")
+
+    result = _run("understudy-model", "--config", str(config), "--env-file", str(env_file))
 
     assert result.returncode == 0, _output(result)
     assert result.stdout == ""
@@ -229,7 +241,9 @@ def test_understudy_model_honours_an_env_override_of_the_flag(tmp_path: Path) ->
         },
     )
 
-    result = _run("understudy-model", "--config", str(VPS_CONFIG), "--env-file", str(env_file))
+    config = _variant_config(tmp_path, tier0_fallback="")
+
+    result = _run("understudy-model", "--config", str(config), "--env-file", str(env_file))
 
     assert result.stdout == "m:1\n"
 

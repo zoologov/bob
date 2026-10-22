@@ -40,7 +40,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from bob.application.router import LLMRouter
-from bob.application.runtime import AgentRuntime, AsyncEventBus
+from bob.application.runtime import AgentRuntime, AsyncEventBus, SerialQueue
 from bob.application.runtime.intake import (
     ChatDispatcher,
     RoomStreamReader,
@@ -262,6 +262,9 @@ class Application:
     # subscriber. ``shutdown`` drains it (awaits the in-flight workers) so a graceful stop
     # still delivers the buffered replies.
     intake_dispatcher: ChatDispatcher
+    # Reaction perception off the poll path (BOB-126): one worker, arrival order. ``shutdown``
+    # closes it without waiting on a slow judge — perception is decorative.
+    reaction_queue: SerialQueue[BobMessageReaction]
     multibot: MultiBotGateway
     authorizer: Authorizer
     registry: CapabilityRegistry
@@ -380,6 +383,7 @@ class Application:
             await self.restart_announcer.announce_leaving()
         await self.runtime.stop()
         await self.intake_dispatcher.aclose()
+        await self.reaction_queue.aclose()
         await self.connection.close()
 
 
@@ -1238,7 +1242,15 @@ def build_application(
         clock=resolved_clock,
         disposition=_disposition_from(soul_store.read_json("disposition")),
     )
-    event_bus.subscribe(BOB_MESSAGE_REACTION, _as_reaction_handler(perceive_reaction))
+    # 🔴 BOB-126 (ревью M1): восприятие реакции — ОФФ пути поллинга. Подписчик шины
+    # вызывается из цикла поллинга Telegram, а судья реакции — вызов Tier-0, который с
+    # дублёром может думать до 180 с; пока он думал, get_updates не уходил ни для одного
+    # бота. Очередь с одним воркером сохраняет порядок и последовательность, на которых
+    # стоит use-case (load → судья → save отношения без гонки с соседней реакцией).
+    reaction_queue: SerialQueue[BobMessageReaction] = SerialQueue(
+        perceive_reaction.perceive, name="reaction-perception"
+    )
+    event_bus.subscribe(BOB_MESSAGE_REACTION, _as_reaction_handler(reaction_queue))
 
     # The persona language pins self-generated text (proactive/monologue/reflection)
     # so Bob does not drift to English when there is no user message to mirror (BOB-012).
@@ -1439,6 +1451,7 @@ def build_application(
         personality=personality,
         handle_message=handle_message,
         intake_dispatcher=intake_dispatcher,
+        reaction_queue=reaction_queue,
         multibot=multibot,
         authorizer=authorizer,
         registry=registry,
@@ -1476,16 +1489,17 @@ def _as_dispatch_handler(dispatcher: ChatDispatcher) -> EventHandler:
     return handler
 
 
-def _as_reaction_handler(perceive_reaction: PerceiveReaction) -> EventHandler:
-    """Adapt :meth:`PerceiveReaction.perceive` to the EventBus handler signature.
+def _as_reaction_handler(queue: SerialQueue[BobMessageReaction]) -> EventHandler:
+    """Adapt the reaction queue's :meth:`~SerialQueue.submit` to the EventBus handler signature.
 
-    Only a :class:`BobMessageReaction` is routed in; the use-case is decorative and
-    already swallows its own failures, so a published reaction is felt without ever
-    being able to break the bus or Bob's normal replies.
+    Only a :class:`BobMessageReaction` is routed in, and it is only QUEUED: the bus calls
+    this from the Telegram poll loop, so the handler returns at once and the perception
+    (a Tier-0 judge call) runs on the queue's worker (BOB-126). The use-case is decorative
+    and swallows its own failures, so a reaction never breaks the bus or Bob's replies.
     """
 
     async def handler(event: DomainEvent) -> None:
         if isinstance(event, BobMessageReaction):
-            await perceive_reaction.perceive(event)
+            queue.submit(event)
 
     return handler
