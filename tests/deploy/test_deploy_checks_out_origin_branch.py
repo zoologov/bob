@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -19,10 +19,15 @@ from tests.deploy.conftest import STUBS
 
 from .test_deploy_workflow import _deploy
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
+_GIT = shutil.which("git") or "git"
+
 
 def _git(cwd: Path, *args: str) -> str:
     result = subprocess.run(  # noqa: S603 — real git on a throwaway repo
-        ["git", *args], cwd=cwd, capture_output=True, text=True, check=True
+        [_GIT, *args], cwd=cwd, capture_output=True, text=True, check=True
     )
     return result.stdout.strip()
 

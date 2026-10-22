@@ -183,7 +183,8 @@ def test_the_deploy_checks_then_copies_then_restarts_in_that_order(tmp_path: Pat
     run = _deploy(tmp_path)
 
     assert run.returncode == 0, run.output
-    checkout = run.ran(f"checkout {_DEPLOY_REF}")
+    # BOB-125: a branch lands as `checkout -B <ref> origin/<ref>`, a tag/SHA as `checkout <ref>`.
+    checkout = run.index(lambda call: "checkout" in call and _DEPLOY_REF in call)
     require_env = run.ran("check_config.py require-env")
     validate = run.ran("check_config.py validate")
     install = run.index(lambda call: call.startswith("install ") and "bob.vps.yaml" in call)
